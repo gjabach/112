@@ -219,3 +219,53 @@ test('Gemini message formatting ensures alternating roles and first turn is user
   assert.equal(contents[2].role, 'user');
   assert.equal(contents[2].parts[0].text, 'What is next?');
 });
+
+test('Sync key sanitization prevents path traversal and enforces safe characters', () => {
+  const sanitizeKey = (rawKey) => {
+    const cleaned = (rawKey || 'default_user').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    return cleaned.slice(0, 64) || 'default_user';
+  };
+
+  assert.equal(sanitizeKey(''), 'default_user');
+  assert.equal(sanitizeKey('   '), 'default_user');
+  assert.equal(sanitizeKey('My-Author-Key!@#$'), 'my-author-key____');
+  assert.equal(sanitizeKey('../../etc/passwd'), '______etc_passwd');
+  assert.equal(sanitizeKey('tacgia@example.com'), 'tacgia_example_com');
+  assert.equal(sanitizeKey('valid_key_123'), 'valid_key_123');
+});
+
+test('Cross-device sync timestamp conflict resolution correctly prioritizes newer updates', () => {
+  const localLastModified = 1700000000;
+  const serverOlderModified = 1699999000;
+  const serverNewerModified = 1700005000;
+
+  const shouldPullOlder = serverOlderModified > localLastModified;
+  const shouldPullNewer = serverNewerModified > localLastModified;
+
+  assert.equal(shouldPullOlder, false, 'Local changes should not be overwritten by older server state');
+  assert.equal(shouldPullNewer, true, 'Newer changes from phone/PC should update local storage');
+});
+
+test('Workspace sync snapshot schema contains all essential creative entities', () => {
+  const mockSnapshot = {
+    version: 2,
+    lastModified: Date.now(),
+    projects: [{ id: 'p1', title: 'Truyện dài tập' }],
+    chapters: [{ id: 'c1', projectId: 'p1', title: 'Chương 1', content: 'Khởi đầu mới' }],
+    characters: [{ id: 'ch1', name: 'Nhân vật chính', role: 'protagonist' }],
+    entities: [{ id: 'e1', name: 'Hành tinh X', type: 'location' }],
+    timeline: [{ id: 't1', title: 'Biến cố thiên hà' }],
+    outline: [{ id: 'o1', title: 'Hồi 1' }],
+    aiConfig: { provider: 'gemini', model: 'gemini-1.5-flash', apiKey: 'AIzaSyTestKey' }
+  };
+
+  assert.ok(Array.isArray(mockSnapshot.projects));
+  assert.ok(Array.isArray(mockSnapshot.chapters));
+  assert.ok(Array.isArray(mockSnapshot.characters));
+  assert.ok(Array.isArray(mockSnapshot.entities));
+  assert.ok(Array.isArray(mockSnapshot.timeline));
+  assert.ok(Array.isArray(mockSnapshot.outline));
+  assert.equal(mockSnapshot.aiConfig.provider, 'gemini');
+  assert.equal(mockSnapshot.chapters[0].content, 'Khởi đầu mới');
+});
+

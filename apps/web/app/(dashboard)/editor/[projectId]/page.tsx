@@ -53,6 +53,9 @@ export default function ProjectEditorPage() {
   useEffect(() => {
     setCurrentProjectId(projectId);
     fetchData();
+    const handleSync = () => fetchData();
+    window.addEventListener('novelist-sync-updated', handleSync);
+    return () => window.removeEventListener('novelist-sync-updated', handleSync);
   }, [projectId]);
 
   const fetchData = async () => {

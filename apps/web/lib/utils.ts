@@ -226,6 +226,10 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
   const setStorage = (key: string, val: any) => {
     try {
       localStorage.setItem(key, JSON.stringify(val));
+      localStorage.setItem('novelist_last_modified', String(Date.now()));
+      if (typeof window !== 'undefined') {
+        import('./sync').then(m => m.triggerAutoPush()).catch(() => {});
+      }
     } catch {}
   };
 
@@ -1154,7 +1158,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   // 2. In browser, try relative path on the same host (e.g. Next.js API routes on Vercel)
-  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings'))) {
+  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings') || path.startsWith('/api/sync'))) {
     try {
       const res = await fetch(path, {
         ...options,

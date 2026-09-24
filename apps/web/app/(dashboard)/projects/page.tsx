@@ -55,7 +55,12 @@ export default function ProjectsPage() {
     }
   };
 
-  useEffect(() => { fetchProjects(); }, []);
+  useEffect(() => { 
+    fetchProjects(); 
+    const handleSyncUpdated = () => fetchProjects();
+    window.addEventListener('novelist-sync-updated', handleSyncUpdated);
+    return () => window.removeEventListener('novelist-sync-updated', handleSyncUpdated);
+  }, []);
 
   const createProject = async () => {
     if (!newProject.title.trim()) {
