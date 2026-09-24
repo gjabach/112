@@ -293,8 +293,9 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
       user.aiModel = body.aiModel;
     }
     if (body.aiApiKey !== undefined) {
-      localStorage.setItem('ai_api_key', body.aiApiKey);
-      user.aiApiKey = body.aiApiKey;
+      const cleanKey = (body.aiApiKey || '').trim();
+      localStorage.setItem('ai_api_key', cleanKey);
+      user.aiApiKey = cleanKey;
     }
 
     setStorage('novelist_current_user', user);

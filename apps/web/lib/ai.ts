@@ -12,8 +12,8 @@ export function getAISettings(): AISettings {
     return { provider: 'gemini', model: 'gemini-1.5-flash', apiKey: '' };
   }
   const provider = (localStorage.getItem('ai_provider') as AIProviderName) || 'gemini';
-  const apiKey = localStorage.getItem('ai_api_key') || '';
-  let model = localStorage.getItem('ai_model') || '';
+  const apiKey = (localStorage.getItem('ai_api_key') || '').trim();
+  let model = (localStorage.getItem('ai_model') || '').trim();
 
   if (!model) {
     if (provider === 'gemini') model = 'gemini-1.5-flash';
@@ -30,7 +30,10 @@ export function saveAISettings(settings: Partial<AISettings>): void {
   if (typeof window === 'undefined') return;
   if (settings.provider) localStorage.setItem('ai_provider', settings.provider);
   if (settings.model) localStorage.setItem('ai_model', settings.model);
-  if (settings.apiKey !== undefined) localStorage.setItem('ai_api_key', settings.apiKey);
+  if (settings.apiKey !== undefined) {
+    const cleanedKey = settings.apiKey.trim();
+    localStorage.setItem('ai_api_key', cleanedKey);
+  }
 
   // Sync to novelist_current_user
   try {
@@ -39,7 +42,9 @@ export function saveAISettings(settings: Partial<AISettings>): void {
       const user = JSON.parse(userStr);
       user.aiProvider = settings.provider || user.aiProvider || 'gemini';
       user.aiModel = settings.model || user.aiModel || 'gemini-1.5-flash';
-      user.aiApiKey = settings.apiKey !== undefined ? settings.apiKey : user.aiApiKey;
+      if (settings.apiKey !== undefined) {
+        user.aiApiKey = settings.apiKey.trim();
+      }
       localStorage.setItem('novelist_current_user', JSON.stringify(user));
     }
   } catch {}
@@ -104,8 +109,8 @@ export function buildProjectContext(projectId?: string, chapterId?: string): Ski
 export async function executeAIChat(params: StreamChatParams): Promise<string> {
   const settings = getAISettings();
   const providerName = params.overrideProvider || settings.provider || 'gemini';
-  const model = params.overrideModel || settings.model || (providerName === 'gemini' ? 'gemini-1.5-flash' : 'gpt-4o-mini');
-  const apiKey = params.overrideApiKey || settings.apiKey;
+  const model = (params.overrideModel || settings.model || (providerName === 'gemini' ? 'gemini-1.5-flash' : 'gpt-4o-mini')).trim();
+  const apiKey = (params.overrideApiKey || settings.apiKey || '').trim();
 
   if (!apiKey && providerName !== 'ollama') {
     throw new Error(`Chưa có API key cho ${providerName.toUpperCase()}. Vui lòng vào Cài đặt (Settings) để thêm API key.`);
@@ -127,6 +132,7 @@ export async function executeAIChat(params: StreamChatParams): Promise<string> {
   }
 
   // 1. Try Next.js server route first (on Vercel or local Next dev)
+  let serverRouteAttempted = false;
   try {
     const res = await fetch('/api/ai/chat', {
       method: 'POST',
@@ -141,60 +147,92 @@ export async function executeAIChat(params: StreamChatParams): Promise<string> {
       })
     });
 
-    if (res.ok) {
-      if (params.stream !== false && res.body) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let full = '';
+    serverRouteAttempted = true;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = decoder.decode(value);
-          const lines = text.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.content) {
-                  full += data.content;
-                  params.onChunk?.(data.content);
-                }
-              } catch {}
+    if (!res.ok) {
+      let errorMsg = `Lỗi máy chủ AI (${res.status})`;
+      try {
+        const errJson = await res.json();
+        if (errJson?.error) errorMsg = errJson.error;
+      } catch {
+        const t = await res.text();
+        if (t) errorMsg = t;
+      }
+      throw new Error(errorMsg);
+    }
+
+    if (params.stream !== false && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value);
+        const lines = text.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.error) {
+                throw new Error(data.error);
+              }
+              if (data.content) {
+                full += data.content;
+                params.onChunk?.(data.content);
+              }
+            } catch (err: any) {
+              if (err.message && !err.message.includes('Unexpected end of JSON')) {
+                throw err;
+              }
             }
           }
         }
-        return full;
-      } else {
-        const data = await res.json();
-        const result = data.content || '';
-        params.onChunk?.(result);
-        return result;
       }
+      return full;
+    } else {
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const result = data.content || '';
+      params.onChunk?.(result);
+      return result;
     }
-  } catch {
-    // If route handler is unavailable or failed, fallback to client-side direct calling
+  } catch (err: any) {
+    // If the server route returned an explicit response (4xx, 5xx, or stream error),
+    // throw it directly so the user gets the true error instead of a confusing "Failed to fetch"
+    if (serverRouteAttempted) {
+      throw err;
+    }
+    // If the endpoint is completely unreachable (e.g. offline static export), continue to fallback below
   }
 
-  // 2. Direct client-side invocation using @novelist/ai-core
-  const provider = createAIProvider(providerName);
-  const messages: any[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: promptContent }
-  ];
+  // 2. Direct client-side invocation fallback using @novelist/ai-core
+  try {
+    const provider = createAIProvider(providerName);
+    const messages: any[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: promptContent }
+    ];
 
-  if (params.stream !== false) {
-    let full = '';
-    for await (const chunk of provider.chatStream({ model, messages, apiKey, stream: true })) {
-      if (chunk.content) {
-        full += chunk.content;
-        params.onChunk?.(chunk.content);
+    if (params.stream !== false) {
+      let full = '';
+      for await (const chunk of provider.chatStream({ model, messages, apiKey, stream: true })) {
+        if (chunk.content) {
+          full += chunk.content;
+          params.onChunk?.(chunk.content);
+        }
       }
+      return full;
+    } else {
+      const result = await provider.chat({ model, messages, apiKey });
+      params.onChunk?.(result);
+      return result;
     }
-    return full;
-  } else {
-    const result = await provider.chat({ model, messages, apiKey });
-    params.onChunk?.(result);
-    return result;
+  } catch (err: any) {
+    if (err.name === 'TypeError' && err.message?.includes('fetch')) {
+      throw new Error(`Không thể kết nối đến máy chủ AI (Failed to fetch). Nguyên nhân có thể do trình duyệt bật chặn quảng cáo/tracker (như Brave Shields, uBlock Origin) chặn tên miền AI, hoặc kết nối mạng bị gián đoạn.`);
+    }
+    throw err;
   }
 }

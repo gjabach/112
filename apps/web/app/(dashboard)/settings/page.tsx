@@ -8,13 +8,13 @@ import { useAuthStore } from '@/lib/store';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
-import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, Sun, Moon, Monitor } from 'lucide-react';
+import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, CheckCircle2, Sun, Moon, Monitor } from 'lucide-react';
 
 const providers = [
+  { id: 'gemini', name: 'Google Gemini (Khuyên dùng)', models: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'] },
+  { id: 'groq', name: 'Groq (miễn phí, nhanh)', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
   { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'] },
   { id: 'anthropic', name: 'Anthropic Claude', models: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'] },
-  { id: 'gemini', name: 'Google Gemini', models: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'] },
-  { id: 'groq', name: 'Groq (miễn phí, nhanh)', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
   { id: 'ollama', name: 'Ollama Local', models: ['llama3.2', 'mistral', 'gemma2'] }
 ];
 
@@ -25,6 +25,8 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [testingKey, setTestingKey] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [profileName, setProfileName] = useState(user?.name || '');
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -50,7 +52,8 @@ export default function SettingsPage() {
   }, [user]);
 
   const saveAISettings = async () => {
-    if (!apiKey && aiProvider !== 'ollama') {
+    const cleanKey = apiKey.trim();
+    if (!cleanKey && aiProvider !== 'ollama') {
       toast.error('Vui lòng nhập API key của ' + aiProvider.toUpperCase());
       return;
     }
@@ -59,7 +62,7 @@ export default function SettingsPage() {
       // 1. Save directly to localStorage for instant reliability
       localStorage.setItem('ai_provider', aiProvider);
       localStorage.setItem('ai_model', aiModel);
-      if (apiKey) localStorage.setItem('ai_api_key', apiKey);
+      if (cleanKey) localStorage.setItem('ai_api_key', cleanKey);
 
       // 2. Sync to auth store
       if (user) {
@@ -67,7 +70,7 @@ export default function SettingsPage() {
           ...user,
           aiProvider,
           aiModel,
-          aiApiKey: apiKey
+          aiApiKey: cleanKey
         });
       }
 
@@ -77,7 +80,7 @@ export default function SettingsPage() {
         body: JSON.stringify({
           aiProvider,
           aiModel,
-          aiApiKey: apiKey || undefined
+          aiApiKey: cleanKey || undefined
         })
       });
 
@@ -86,6 +89,41 @@ export default function SettingsPage() {
       toast.error('Lỗi khi lưu: ' + (e.message || 'Không xác định'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const testAIConnection = async () => {
+    const cleanKey = apiKey.trim();
+    if (!cleanKey && aiProvider !== 'ollama') {
+      toast.error('Vui lòng nhập API key trước khi kiểm tra');
+      return;
+    }
+    setTestingKey(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/ai/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: aiProvider,
+          model: aiModel,
+          apiKey: cleanKey
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTestResult({ success: true, message: data.message });
+        toast.success(data.message);
+      } else {
+        setTestResult({ success: false, message: data.error || 'Kiểm tra thất bại' });
+        toast.error(data.error || 'Kiểm tra kết nối thất bại');
+      }
+    } catch (err: any) {
+      const msg = err.message || 'Lỗi khi gửi yêu cầu kiểm tra';
+      setTestResult({ success: false, message: msg });
+      toast.error(msg);
+    } finally {
+      setTestingKey(false);
     }
   };
 
@@ -281,9 +319,39 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            <Button onClick={saveAISettings} disabled={loading} className="w-full md:w-auto">
-              <Save className="w-4 h-4 mr-2" /> Lưu cài đặt AI
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={saveAISettings} disabled={loading || testingKey} className="w-full sm:w-auto">
+                <Save className="w-4 h-4 mr-2" /> Lưu cài đặt AI
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={testAIConnection}
+                disabled={testingKey || loading || (!apiKey.trim() && aiProvider !== 'ollama')}
+                className="w-full sm:w-auto border-primary/40 hover:bg-primary/10"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${testingKey ? 'animate-spin' : ''}`} />
+                {testingKey ? 'Đang kiểm tra...' : '⚡ Kiểm tra kết nối'}
+              </Button>
+            </div>
+
+            {testResult && (
+              <div className={`p-3.5 rounded-lg border text-sm flex items-start gap-3 transition-all ${
+                testResult.success
+                  ? 'bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-300'
+                  : 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300'
+              }`}>
+                {testResult.success ? (
+                  <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0 text-green-600 dark:text-green-400" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 mt-0.5 shrink-0 text-red-600 dark:text-red-400" />
+                )}
+                <div>
+                  <div className="font-semibold">{testResult.success ? '✅ Kết nối thành công!' : '❌ Kết nối thất bại:'}</div>
+                  <div className="text-xs mt-1 opacity-90 leading-relaxed font-mono whitespace-pre-wrap">{testResult.message}</div>
+                </div>
+              </div>
+            )}
 
             <div className="bg-muted p-4 rounded-lg text-sm">
               <div className="font-medium mb-1">🔒 Bảo mật</div>

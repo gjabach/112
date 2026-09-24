@@ -167,51 +167,90 @@ export class AnthropicProvider implements AIProvider {
 export class GeminiProvider implements AIProvider {
   name: AIProviderName = 'gemini';
 
-  async chat(options: AICompletionOptions): Promise<string> {
-    const chunks: string[] = [];
-    for await (const chunk of this.chatStream(options)) {
-      if (!chunk.done) chunks.push(chunk.content);
-    }
-    return chunks.join('');
-  }
+  private formatGeminiMessages(messages: AIMessageInput[]): {
+    systemInstruction: string;
+    contents: { role: string; parts: { text: string }[] }[];
+  } {
+    const systemInstruction = messages
+      .filter(m => m.role === 'system')
+      .map(m => m.content.trim())
+      .filter(Boolean)
+      .join('\n\n');
 
-  async *chatStream(options: AICompletionOptions): AsyncGenerator<AIStreamChunk> {
-    const systemInstruction = options.messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
-    const rawContents = options.messages
+    const rawContents = messages
       .filter(m => m.role !== 'system')
       .map(m => ({
         role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content || '' }]
-      }));
+        parts: [{ text: (m.content || '').trim() }]
+      }))
+      .filter(m => m.parts[0].text.length > 0);
 
-    // Combine consecutive messages with the same role for Gemini API requirement
     const contents: { role: string; parts: { text: string }[] }[] = [];
     for (const c of rawContents) {
-      if (!c.parts[0]?.text) continue;
       if (contents.length > 0 && contents[contents.length - 1].role === c.role) {
         contents[contents.length - 1].parts[0].text += '\n\n' + c.parts[0].text;
       } else {
         contents.push({ role: c.role, parts: [{ text: c.parts[0].text }] });
       }
     }
+
+    if (contents.length > 0 && contents[0].role === 'model') {
+      contents.unshift({ role: 'user', parts: [{ text: 'Bắt đầu' }] });
+    }
+
     if (contents.length === 0) {
       contents.push({ role: 'user', parts: [{ text: 'Xin chào' }] });
     }
 
-    const model = (options.model || 'gemini-1.5-flash').replace(/^models\//, '');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${options.apiKey}`;
+    return { systemInstruction, contents };
+  }
+
+  private handleGeminiError(status: number, message: string): never {
+    const cleanMsg = (message || '').trim();
+    if (status === 400) {
+      if (cleanMsg.includes('API_KEY_INVALID') || cleanMsg.includes('API key not valid')) {
+        throw new Error('API Key Gemini không hợp lệ. Vui lòng kiểm tra lại key tại aistudio.google.com/app/apikey');
+      }
+      throw new Error(`[Gemini] Lỗi yêu cầu (400): ${cleanMsg}`);
+    }
+    if (status === 403) {
+      throw new Error(`[Gemini] Quyền truy cập bị từ chối (403): ${cleanMsg}. Vui lòng kiểm tra tài khoản Google AI Studio.`);
+    }
+    if (status === 404) {
+      throw new Error(`[Gemini] Không tìm thấy Model (404): ${cleanMsg}. Vui lòng chọn gemini-1.5-flash trong Cài đặt.`);
+    }
+    if (status === 429) {
+      throw new Error('Đã vượt quá hạn mức gọi Gemini (Rate limit / Quota exceeded 429). Thử lại sau ít phút.');
+    }
+    throw new Error(`[Gemini] Lỗi ${status}: ${cleanMsg}`);
+  }
+
+  async chat(options: AICompletionOptions): Promise<string> {
+    const apiKey = (options.apiKey || '').trim();
+    if (!apiKey) throw new Error('API Key Gemini không được để trống. Hãy nhập key trong Cài đặt.');
+    const model = (options.model || 'gemini-1.5-flash').trim().replace(/^models\//, '');
+    const { systemInstruction, contents } = this.formatGeminiMessages(options.messages);
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+    const bodyPayload: any = {
+      contents,
+      generationConfig: {
+        temperature: options.temperature ?? 0.7,
+        maxOutputTokens: options.maxTokens ?? 4096
+      }
+    };
+    if (systemInstruction) {
+      bodyPayload.system_instruction = { parts: [{ text: systemInstruction }] };
+    }
 
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: systemInstruction.trim() ? { parts: [{ text: systemInstruction }] } : undefined,
-        contents,
-        generationConfig: {
-          temperature: options.temperature ?? 0.7,
-          maxOutputTokens: options.maxTokens ?? 4096
-        }
-      })
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
+      body: JSON.stringify(bodyPayload)
     });
 
     if (!res.ok) {
@@ -221,13 +260,49 @@ export class GeminiProvider implements AIProvider {
         const errJson = JSON.parse(text);
         errorMsg = errJson.error?.message || text;
       } catch {}
-      if (res.status === 400 && (errorMsg.includes('API_KEY_INVALID') || errorMsg.includes('API key not valid'))) {
-        throw new Error('API Key Gemini không hợp lệ. Vui lòng kiểm tra lại key tại aistudio.google.com');
+      this.handleGeminiError(res.status, errorMsg);
+    }
+
+    const json = await res.json();
+    return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  }
+
+  async *chatStream(options: AICompletionOptions): AsyncGenerator<AIStreamChunk> {
+    const apiKey = (options.apiKey || '').trim();
+    if (!apiKey) throw new Error('API Key Gemini không được để trống. Hãy nhập key trong Cài đặt.');
+    const model = (options.model || 'gemini-1.5-flash').trim().replace(/^models\//, '');
+    const { systemInstruction, contents } = this.formatGeminiMessages(options.messages);
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+
+    const bodyPayload: any = {
+      contents,
+      generationConfig: {
+        temperature: options.temperature ?? 0.7,
+        maxOutputTokens: options.maxTokens ?? 4096
       }
-      if (res.status === 429) {
-        throw new Error('Đã vượt quá hạn mức gọi Gemini (Rate limit / Quota exceeded). Thử lại sau ít phút.');
-      }
-      throw new Error(`[Gemini] Lỗi ${res.status}: ${errorMsg}`);
+    };
+    if (systemInstruction) {
+      bodyPayload.system_instruction = { parts: [{ text: systemInstruction }] };
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
+      body: JSON.stringify(bodyPayload)
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      let errorMsg = text;
+      try {
+        const errJson = JSON.parse(text);
+        errorMsg = errJson.error?.message || text;
+      } catch {}
+      this.handleGeminiError(res.status, errorMsg);
     }
 
     const reader = res.body?.getReader();
@@ -249,10 +324,15 @@ export class GeminiProvider implements AIProvider {
         if (!jsonStr || jsonStr === '[DONE]') continue;
         try {
           const parsed = JSON.parse(jsonStr);
+          if (parsed.error?.message) {
+            throw new Error(`[Gemini] ${parsed.error.message}`);
+          }
           const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
           if (text) yield { content: text, done: false };
-        } catch {
-          // ignore chunk parse errors
+        } catch (err: any) {
+          if (err.message && err.message.startsWith('[Gemini]')) {
+            throw err;
+          }
         }
       }
     }
@@ -260,9 +340,16 @@ export class GeminiProvider implements AIProvider {
     if (buffer.trim().startsWith('data: ')) {
       try {
         const parsed = JSON.parse(buffer.trim().slice(6).trim());
+        if (parsed.error?.message) {
+          throw new Error(`[Gemini] ${parsed.error.message}`);
+        }
         const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) yield { content: text, done: false };
-      } catch {}
+      } catch (err: any) {
+        if (err.message && err.message.startsWith('[Gemini]')) {
+          throw err;
+        }
+      }
     }
 
     yield { content: '', done: true };

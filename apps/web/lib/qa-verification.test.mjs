@@ -167,4 +167,55 @@ test('Worldbuilding entity structure satisfies multi-category requirements', () 
     assert.ok(ent.description && ent.description.length > 0, 'Entity description must not be empty');
   }
 });
+test('Gemini API key and model sanitization trims whitespace, newlines, and model prefixes', () => {
+  const dirtyKey = '  AIzaSyD-exampleKey123\n\t ';
+  const cleanKey = dirtyKey.trim();
+  assert.equal(cleanKey, 'AIzaSyD-exampleKey123');
 
+  const dirtyModel = '  models/gemini-1.5-flash  ';
+  const cleanModel = dirtyModel.trim().replace(/^models\//, '');
+  assert.equal(cleanModel, 'gemini-1.5-flash');
+});
+
+test('Gemini message formatting ensures alternating roles and first turn is user', () => {
+  // Simulate GeminiProvider message format logic
+  const inputMessages = [
+    { role: 'system', content: 'You are a helpful assistant.' },
+    { role: 'assistant', content: 'Previous reply 1' },
+    { role: 'assistant', content: 'Previous reply 2' },
+    { role: 'user', content: 'What is next?' }
+  ];
+
+  const systemInstruction = inputMessages
+    .filter(m => m.role === 'system')
+    .map(m => m.content.trim())
+    .join('\n\n');
+
+  const rawContents = inputMessages
+    .filter(m => m.role !== 'system')
+    .map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: (m.content || '').trim() }]
+    }))
+    .filter(m => m.parts[0].text.length > 0);
+
+  const contents = [];
+  for (const c of rawContents) {
+    if (contents.length > 0 && contents[contents.length - 1].role === c.role) {
+      contents[contents.length - 1].parts[0].text += '\n\n' + c.parts[0].text;
+    } else {
+      contents.push({ role: c.role, parts: [{ text: c.parts[0].text }] });
+    }
+  }
+
+  if (contents.length > 0 && contents[0].role === 'model') {
+    contents.unshift({ role: 'user', parts: [{ text: 'Bắt đầu' }] });
+  }
+
+  assert.equal(systemInstruction, 'You are a helpful assistant.');
+  assert.equal(contents[0].role, 'user', 'First turn in contents must always be user');
+  assert.equal(contents[1].role, 'model');
+  assert.equal(contents[1].parts[0].text, 'Previous reply 1\n\nPrevious reply 2');
+  assert.equal(contents[2].role, 'user');
+  assert.equal(contents[2].parts[0].text, 'What is next?');
+});

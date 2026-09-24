@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAIProvider, type AIProviderName } from '@novelist/ai-core/src/providers';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     }
 
     const providerName: AIProviderName = reqProvider || 'gemini';
-    const effectiveKey = apiKey || process.env.AI_API_KEY || '';
+    const effectiveKey = (apiKey || process.env.AI_API_KEY || '').trim();
 
     if (!effectiveKey && providerName !== 'ollama') {
       return NextResponse.json({
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    const modelName = reqModel || (providerName === 'gemini' ? 'gemini-1.5-flash' : 'gpt-4o-mini');
+    const modelName = (reqModel || (providerName === 'gemini' ? 'gemini-1.5-flash' : 'gpt-4o-mini')).trim();
     const provider = createAIProvider(providerName);
 
     const messages: any[] = [];
