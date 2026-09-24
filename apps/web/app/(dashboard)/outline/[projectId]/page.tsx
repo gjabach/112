@@ -263,7 +263,7 @@ export default function OutlinePage() {
         <DialogContent onClose={() => setShowNewDialog(false)}>
           <DialogHeader>
             <DialogTitle>Thêm node mới</DialogTitle>
-            <DialogDescription>Act > Chapter > Scene > Beat</DialogDescription>
+            <DialogDescription>Act &gt; Chapter &gt; Scene &gt; Beat</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <Input placeholder="Tiêu đề *" value={newNode.title} onChange={e => setNewNode({ ...newNode, title: e.target.value })} />

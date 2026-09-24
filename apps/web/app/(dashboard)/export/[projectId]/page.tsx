@@ -227,8 +227,8 @@ export default function ExportPage() {
             <p><strong>PDF:</strong> Dùng pdf-lib, chạy trên Workers, hỗ trợ 3 styles (modern/classic/minimal), front matter, TOC, page numbers, A4.</p>
             <p><strong>DOCX:</strong> Dùng docx library, heading styles, justified text, first line indent, page breaks, gửi NXB.</p>
             <p><strong>EPUB:</strong> Dùng jszip, tạo EPUB 2.0 hợp lệ với container.xml, content.opf, toc.ncx, style.css, XHTML chapters, đọc được trên mọi ereader.</p>
-            <p><strong>Lưu trữ:</strong> File lưu trên R2 bucket `exports/{userId}/{projectId}/{jobId}.{ext}` với metadata, tải lại bất kỳ lúc nào.</p>
-            <p><strong>Giới hạn:</strong> Workers CPU 50ms free, nhưng pdf-lib/docx/jszip pure JS nên < 10s cho tiểu thuyết 50k từ. File lớn hơn sẽ cần Paid Workers ($5/tháng).</p>
+            <p><strong>Lưu trữ:</strong> File lưu trên R2 bucket {'`exports/{userId}/{projectId}/{jobId}.{ext}`'} với metadata, tải lại bất kỳ lúc nào.</p>
+            <p><strong>Giới hạn:</strong> Workers CPU 50ms free, nhưng pdf-lib/docx/jszip pure JS nên &lt; 10s cho tiểu thuyết 50k từ. File lớn hơn sẽ cần Paid Workers ($5/tháng).</p>
           </CardContent>
         </Card>
       </div>
