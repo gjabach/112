@@ -139,7 +139,7 @@ export default function ProjectsPage() {
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filtered.map(project => {
-              const progress = project.wordCountGoal ? Math.min(100, Math.round((project.wordCount / project.wordCountGoal) * 100)) : 0;
+              const progress = project.wordCountGoal && project.wordCount ? Math.min(100, Math.round(((project.wordCount || 0) / project.wordCountGoal) * 100)) : 0;
               return (
                 <Card key={project.id} className="group hover:shadow-lg transition-all hover:border-primary/50 flex flex-col">
                   <CardHeader className="pb-3">
@@ -165,15 +165,15 @@ export default function ProjectsPage() {
                     
                     <div className="mt-4 space-y-3">
                       <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>{project.wordCount.toLocaleString()} từ</span>
-                        <span>{project.chapterCount} chương</span>
+                        <span>{(project.wordCount || 0).toLocaleString()} từ</span>
+                        <span>{project.chapterCount || 0} chương</span>
                       </div>
                       {project.wordCountGoal ? (
                         <div>
                           <div className="w-full bg-muted rounded-full h-1.5">
                             <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${progress}%` }}></div>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-1">{progress}% mục tiêu {project.wordCountGoal.toLocaleString()} từ</div>
+                          <div className="text-xs text-muted-foreground mt-1">{progress}% mục tiêu {(project.wordCountGoal || 0).toLocaleString()} từ</div>
                         </div>
                       ) : null}
                       <div className="flex justify-between items-center pt-2">

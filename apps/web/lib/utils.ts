@@ -14,8 +14,9 @@ export function formatDate(timestamp: number): string {
 }
 
 export function formatRelativeTime(timestamp: number): string {
+  if (!timestamp || isNaN(Number(timestamp))) return 'Vừa xong';
   const now = Date.now();
-  const diff = now - timestamp;
+  const diff = now - Number(timestamp);
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
@@ -24,7 +25,7 @@ export function formatRelativeTime(timestamp: number): string {
   if (minutes < 60) return `${minutes} phút trước`;
   if (hours < 24) return `${hours} giờ trước`;
   if (days < 7) return `${days} ngày trước`;
-  return formatDate(timestamp);
+  return formatDate(Number(timestamp));
 }
 
 export function countWords(text: string): number {
@@ -136,7 +137,17 @@ function handleLocalApi(path: string, options: RequestInit = {}): any {
 
   // Projects
   if (path === '/api/projects' && method === 'GET') {
-    return { projects: getStorage('novelist_projects', []) };
+    const raw = getStorage('novelist_projects', []);
+    const sanitized = raw.map((p: any) => ({
+      ...p,
+      wordCount: p.wordCount ?? 0,
+      chapterCount: p.chapterCount ?? 0,
+      status: p.status || 'planning',
+      genre: p.genre || 'fantasy',
+      updatedAt: p.updatedAt || now,
+      createdAt: p.createdAt || now
+    }));
+    return { projects: sanitized };
   }
 
   if (path === '/api/projects' && method === 'POST') {
@@ -148,11 +159,29 @@ function handleLocalApi(path: string, options: RequestInit = {}): any {
       description: body.description || '',
       genre: body.genre || 'fantasy',
       status: body.status || 'planning',
+      wordCount: 0,
+      chapterCount: 1,
       wordCountGoal: body.wordCountGoal || 50000,
       createdAt: now,
       updatedAt: now
     };
     projects.unshift(newProj);
+
+    // Auto-create Chapter 1
+    const chapters = getStorage('novelist_chapters', []);
+    const firstChap = {
+      id: 'chap_' + (now + 1),
+      projectId: newProj.id,
+      title: 'Chương 1: Mở đầu',
+      orderIndex: 1,
+      content: '',
+      wordCount: 0,
+      status: 'draft',
+      createdAt: now,
+      updatedAt: now
+    };
+    chapters.push(firstChap);
+    setStorage('novelist_chapters', chapters);
     setStorage('novelist_projects', projects);
     return { project: newProj };
   }
