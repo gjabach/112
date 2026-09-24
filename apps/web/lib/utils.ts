@@ -616,6 +616,45 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     }
   }
 
+  // Characters - Generate
+  const charGenMatch = path.match(/^\/api\/projects\/([^\/]+)\/characters\/generate$/);
+  if (charGenMatch && method === 'POST') {
+    const projectId = charGenMatch[1];
+    const role = body.role || 'supporting';
+    const concept = (body.concept || '').trim();
+
+    const namePool: Record<string, string[]> = {
+      protagonist: ['Arthur Pendelton', 'Lâm Vũ Phong', 'Elena Vance', 'Trần Nam Khánh', 'Lyra Silvertongue', 'Kaelen Thorne'],
+      antagonist: ['Lord Malakar', 'Bạch Vô Thường', 'Vespera Nyx', 'Dạ Thần', 'Ignis Vor', 'Hắc Lão Ma'],
+      supporting: ['Master Bran', 'Tiêu Dao Tử', 'Rowan Reed', 'Tuệ Minh', 'Silas Vance', 'Thảo My'],
+      minor: ['Lão quán trọ Tom', 'Lính gác thành', 'Người lái đò', 'Tiểu đồng', 'Thương nhân Hans']
+    };
+
+    const roleNameList = namePool[role] || namePool.supporting;
+    const pickedName = roleNameList[Math.floor(Math.random() * roleNameList.length)];
+    const generatedName = concept ? `${pickedName}` : pickedName;
+
+    const newChar = {
+      id: 'char_' + now,
+      projectId,
+      name: generatedName,
+      role,
+      personality: concept ? `Tính cách phản ánh: ${concept}. Thông minh, quyết đoán nhưng ẩn chứa nhiều mâu thuẫn nội tâm.` : 'Dũng cảm, cương trực, luôn đấu tranh vì lý tưởng và bảo vệ người thân.',
+      background: concept ? `Lai lịch liên quan đến: ${concept}. Từng trải qua một biến cố lớn làm thay đổi hoàn toàn cuộc đời.` : 'Xuất thân bình dị nhưng mang trong mình tiềm năng và bí mật gia tộc chưa được hé lộ.',
+      appearance: 'Vóc dáng cao ráo, ánh mắt sắc sảo, thường mang trang phục phong trần và dấu vết của những chuyến đi dài.',
+      motivation: concept ? `Mục tiêu tối thượng: giải mã và đạt được ${concept}.` : 'Đi tìm chân lý, bảo vệ những người quan trọng và khám phá sự thật bị chôn vùi.',
+      aliases: [],
+      tags: [role],
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const characters = getStorage('novelist_characters', []);
+    characters.push(newChar);
+    setStorage('novelist_characters', characters);
+    return { character: newChar, success: true };
+  }
+
   const charMatch = path.match(/^\/api\/characters\/([^\/]+)$/);
   if (charMatch) {
     const id = charMatch[1];
@@ -936,6 +975,64 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
       setStorage('novelist_timeline', events.filter((e: any) => e.id !== id));
       return { success: true };
     }
+  }
+
+  // Worldbuilding / Entities - Generate
+  const entityGenMatch = path.match(/^\/api\/projects\/([^\/]+)\/(entities|worldbuilding)\/generate$/);
+  if (entityGenMatch && method === 'POST') {
+    const projectId = entityGenMatch[1];
+    const type = body.type || 'location';
+    const concept = (body.concept || '').trim();
+
+    const loreTemplates: Record<string, { names: string[]; desc: string }> = {
+      location: {
+        names: ['Thành Cổ Aethelgard', 'Thung Lũng Sương Mù', 'Pháo Đài Thiên Thạch', 'Rừng Cấm Hắc Thụ'],
+        desc: 'Vùng đất linh thiêng bao phủ bởi sương mù ngàn năm, nơi lưu giữ tàn tích của một nền văn minh cổ đại.'
+      },
+      organization: {
+        names: ['Hội Hiệp Sĩ Ánh Trăng', 'Bang Hội Tro Tàn', 'Học Viện Pháp Thuật Tối Cao', 'Mật Lệnh Bóng Đêm'],
+        desc: 'Tổ chức bí mật hoạt động trong bóng tối với mạng lưới gián điệp trải rộng khắp lục địa.'
+      },
+      species: {
+        names: ['Tinh Linh Dạ Nguyệt', 'Long Tộc Cổ Đại', 'Người Khổng Lồ Băng', 'Huyết Tộc Thượng Đẳng'],
+        desc: 'Chủng tộc cổ xưa có tuổi thọ hàng thiên niên kỷ và sở hữu sự cộng hưởng ma thuật bẩm sinh.'
+      },
+      magic_system: {
+        names: ['Nguyên Tố Cổ Ngữ', 'Hệ Thống Luyện Hồn', 'Pháp Trận Không Gian', 'Hơi Thở Của Rồng'],
+        desc: 'Quy luật thao túng năng lượng vũ trụ thông qua ấn chú, ý chí tinh thần và rune khắc.'
+      },
+      item: {
+        names: ['Gươm Ánh Sáng Tuyệt Đối', 'Nhẫn Không Gian Vĩnh Hằng', 'Cuộn Da Cổ Ngữ', 'Hạt Giống Thế Giới'],
+        desc: 'Bảo vật cấp sử thi có khả năng bẻ cong các quy luật thực tại và ban tặng quyền năng to lớn.'
+      },
+      religion: {
+        names: ['Giáo Hội Bình Minh', 'Tín Ngưỡng Đất Mẹ', 'Tà Thần Vực Thẳm', 'Thần Điện Thái Dương'],
+        desc: 'Hệ thống tín ngưỡng thờ phụng vị thần bảo hộ, sở hữu các giáo sĩ và nghi thức thanh tẩy linh hồn.'
+      },
+      event: {
+        names: ['Đại Chiến Ngũ Vương', 'Đêm Trăng Máu', 'Sự Cố Đứt Gãy Ma Lực', 'Thời Kỳ Băng Hà'],
+        desc: 'Sự kiện chấn động lịch sử làm thay đổi bản đồ địa chính trị và số phận của mọi giống loài.'
+      }
+    };
+
+    const lore = loreTemplates[type] || loreTemplates.location;
+    const name = lore.names[Math.floor(Math.random() * lore.names.length)];
+
+    const newEntity = {
+      id: 'entity_' + now,
+      projectId,
+      name,
+      type,
+      description: concept ? `${concept}. ${lore.desc}` : lore.desc,
+      attributes: {},
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const entities = getStorage('novelist_worldbuilding', []);
+    entities.push(newEntity);
+    setStorage('novelist_worldbuilding', entities);
+    return { entity: newEntity, success: true };
   }
 
   // Worldbuilding / Entities

@@ -49,6 +49,30 @@ export default function CharactersPage() {
     appearance: '',
     motivation: ''
   });
+  const [showAIDialog, setShowAIDialog] = useState(false);
+  const [aiRole, setAiRole] = useState('protagonist');
+  const [aiConcept, setAiConcept] = useState('');
+  const [aiGenerating, setAiGenerating] = useState(false);
+
+  const handleGenerateCharacter = async () => {
+    setAiGenerating(true);
+    try {
+      const res = await apiFetch(`/api/projects/${projectId}/characters/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ role: aiRole, concept: aiConcept })
+      });
+      if (res?.character) {
+        toast.success(`Đã tạo nhân vật "${res.character.name}" thành công!`);
+        setShowAIDialog(false);
+        setAiConcept('');
+        fetchCharacters();
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi khi tạo nhân vật');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
 
   useEffect(() => {
     if (projectId) fetchCharacters();
@@ -157,6 +181,9 @@ export default function CharactersPage() {
                 className="pl-8 h-8 text-xs w-48"
               />
             </div>
+            <Button size="sm" variant="outline" onClick={() => setShowAIDialog(true)}>
+              <Sparkles className="w-4 h-4 mr-1 text-primary" /> AI Gợi ý
+            </Button>
             <Button size="sm" onClick={openCreate}>
               <Plus className="w-4 h-4 mr-1" /> Thêm nhân vật
             </Button>
@@ -322,6 +349,54 @@ export default function CharactersPage() {
             <div className="flex justify-end gap-2 pt-2 border-t">
               <Button variant="outline" onClick={() => setShowDialog(false)}>Hủy</Button>
               <Button onClick={saveCharacter}>{editing ? 'Lưu thay đổi' : 'Tạo nhân vật'}</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Generate Character Dialog */}
+      <Dialog open={showAIDialog} onOpenChange={setShowAIDialog}>
+        <DialogContent onClose={() => setShowAIDialog(false)} className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              <span>AI Gợi ý nhân vật mới</span>
+            </DialogTitle>
+            <DialogDescription>
+              Tự động phác thảo hồ sơ nhân vật đầy đủ từ tên, tính cách, động cơ đến ngoại hình
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="text-xs font-medium block mb-1">Vai trò nhân vật</label>
+              <select
+                className="flex h-9 w-full rounded-lg border border-input px-3 text-sm bg-background"
+                value={aiRole}
+                onChange={e => setAiRole(e.target.value)}
+              >
+                <option value="protagonist">🌟 Nhân vật chính (Protagonist)</option>
+                <option value="antagonist">⚔️ Phản diện (Antagonist)</option>
+                <option value="supporting">🤝 Nhân vật phụ (Supporting)</option>
+                <option value="minor">👤 Quần chúng (Minor)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium block mb-1">Ý tưởng / Định hướng ban đầu (không bắt buộc)</label>
+              <Textarea
+                placeholder="VD: Một kiếm sĩ mù có khả năng nghe được suy nghĩ, hoặc một quý tộc sa cơ muốn báo thù..."
+                value={aiConcept}
+                onChange={e => setAiConcept(e.target.value)}
+                rows={3}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button variant="outline" onClick={() => setShowAIDialog(false)}>Hủy</Button>
+              <Button onClick={handleGenerateCharacter} disabled={aiGenerating}>
+                {aiGenerating ? 'Đang tạo...' : 'Tạo nhân vật ngay'}
+              </Button>
             </div>
           </div>
         </DialogContent>

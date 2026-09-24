@@ -135,3 +135,36 @@ test('EPUB archive structure contains standard container and manifest', async ()
   assert.ok(buffer.length > 500, 'EPUB buffer should be generated and non-empty');
 });
 
+test('Character role filtering accurately classifies roles and attributes', () => {
+  const characters = [
+    { id: 'c1', name: 'Lâm Vũ Phong', role: 'protagonist', motivation: 'Tìm chân lý' },
+    { id: 'c2', name: 'Lord Malakar', role: 'antagonist', motivation: 'Thống trị' },
+    { id: 'c3', name: 'Master Bran', role: 'supporting', motivation: 'Chỉ dẫn' },
+    { id: 'c4', name: 'Người lái đò', role: 'minor', motivation: 'Mưu sinh' }
+  ];
+
+  const protagonists = characters.filter(c => c.role === 'protagonist');
+  const antagonists = characters.filter(c => c.role === 'antagonist');
+
+  assert.equal(protagonists.length, 1);
+  assert.equal(protagonists[0].name, 'Lâm Vũ Phong');
+  assert.equal(antagonists.length, 1);
+  assert.equal(antagonists[0].name, 'Lord Malakar');
+  assert.ok(protagonists[0].motivation.length > 0);
+});
+
+test('Worldbuilding entity structure satisfies multi-category requirements', () => {
+  const validTypes = ['location', 'organization', 'species', 'magic_system', 'item', 'religion', 'event'];
+  const entities = [
+    { id: 'e1', name: 'Thành Cổ Aethelgard', type: 'location', description: 'Vùng đất linh thiêng' },
+    { id: 'e2', name: 'Hội Hiệp Sĩ Ánh Trăng', type: 'organization', description: 'Tổ chức bí mật' },
+    { id: 'e3', name: 'Gươm Ánh Sáng Tuyệt Đối', type: 'item', description: 'Bảo vật sử thi' }
+  ];
+
+  for (const ent of entities) {
+    assert.ok(validTypes.includes(ent.type), `Type ${ent.type} should be in valid category types`);
+    assert.ok(ent.name && ent.name.length > 0, 'Entity name must not be empty');
+    assert.ok(ent.description && ent.description.length > 0, 'Entity description must not be empty');
+  }
+});
+

@@ -41,6 +41,30 @@ export default function WorldbuildingPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [editingEntity, setEditingEntity] = useState<Entity | null>(null);
   const [form, setForm] = useState({ name: '', type: 'location', description: '' });
+  const [showAIDialog, setShowAIDialog] = useState(false);
+  const [aiType, setAiType] = useState('location');
+  const [aiConcept, setAiConcept] = useState('');
+  const [aiGenerating, setAiGenerating] = useState(false);
+
+  const handleGenerateLore = async () => {
+    setAiGenerating(true);
+    try {
+      const res = await apiFetch(`/api/projects/${projectId}/entities/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ type: aiType, concept: aiConcept })
+      });
+      if (res?.entity) {
+        toast.success(`Đã tạo thực thể "${res.entity.name}" thành công!`);
+        setShowAIDialog(false);
+        setAiConcept('');
+        fetchEntities();
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi khi tạo lore');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
 
   useEffect(() => {
     if (projectId) fetchEntities();
@@ -146,6 +170,9 @@ export default function WorldbuildingPage() {
                 className="pl-8 h-8 text-xs w-48"
               />
             </div>
+            <Button size="sm" variant="outline" onClick={() => { setAiType(filter !== 'all' ? filter : 'location'); setShowAIDialog(true); }}>
+              <Sparkles className="w-4 h-4 mr-1 text-primary" /> AI Gợi ý Lore
+            </Button>
             <Button size="sm" onClick={openCreate}>
               <Plus className="w-4 h-4 mr-1" /> Thêm thực thể
             </Button>
@@ -291,6 +318,57 @@ export default function WorldbuildingPage() {
               <Button variant="outline" onClick={() => setShowDialog(false)}>Hủy</Button>
               <Button onClick={handleSaveEntity}>
                 {editingEntity ? 'Lưu thay đổi' : 'Tạo thực thể'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Generate Lore Dialog */}
+      <Dialog open={showAIDialog} onOpenChange={setShowAIDialog}>
+        <DialogContent onClose={() => setShowAIDialog(false)} className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              <span>AI Gợi ý thực thể thế giới</span>
+            </DialogTitle>
+            <DialogDescription>
+              Tự động sáng tạo địa danh, tổ chức, hệ thống ma thuật hoặc bảo vật phù hợp với tác phẩm
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="text-xs font-medium block mb-1">Loại thực thể</label>
+              <select
+                className="flex h-9 w-full rounded-lg border border-input px-3 text-sm bg-background"
+                value={aiType}
+                onChange={e => setAiType(e.target.value)}
+              >
+                <option value="location">🏰 Địa điểm</option>
+                <option value="organization">🏛️ Tổ chức</option>
+                <option value="species">🧝 Chủng tộc</option>
+                <option value="magic_system">✨ Ma thuật / Công nghệ</option>
+                <option value="item">🗡️ Vật phẩm / Bảo vật</option>
+                <option value="religion">🕊️ Tôn giáo / Tín ngưỡng</option>
+                <option value="event">📜 Sự kiện lịch sử</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium block mb-1">Ý tưởng hoặc từ khóa gợi ý (tùy chọn)</label>
+              <Textarea
+                placeholder="VD: Thành phố ngầm được thắp sáng bằng tinh thể ma thuật, hoặc thanh kiếm nuốt chửng linh hồn..."
+                value={aiConcept}
+                onChange={e => setAiConcept(e.target.value)}
+                rows={3}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button variant="outline" onClick={() => setShowAIDialog(false)}>Hủy</Button>
+              <Button onClick={handleGenerateLore} disabled={aiGenerating}>
+                {aiGenerating ? 'Đang tạo...' : 'Tạo thực thể ngay'}
               </Button>
             </div>
           </div>
