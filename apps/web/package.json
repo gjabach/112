@@ -14,7 +14,7 @@
   "dependencies": {
     "@novelist/shared": "workspace:*",
     "@novelist/ai-core": "workspace:*",
-    "next": "15.0.3",
+    "next": "^15.5.26",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "hono": "^4.6.5",
@@ -60,6 +60,6 @@
     "postcss": "^8.4.49",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.14.0",
-    "eslint-config-next": "15.0.3"
+    "eslint-config-next": "^15.5.26"
   }
 }

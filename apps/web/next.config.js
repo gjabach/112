@@ -8,9 +8,7 @@ const nextConfig = {
       { hostname: '**' }
     ]
   },
-  experimental: {
-    typedRoutes: false
-  },
+
   typescript: {
     ignoreBuildErrors: true
   },
