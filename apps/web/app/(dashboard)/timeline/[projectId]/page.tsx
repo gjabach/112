@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { TimelineEvent } from '@/components/timeline/timeline-event';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, Clock, Filter, Search, Sparkles, Calendar, Trash2, Flag } from 'lucide-react';
+import { ArrowLeft, Plus, Clock, Filter, Search, Sparkles, Calendar, Trash2, Flag, User } from 'lucide-react';
 
 export default function TimelinePage() {
   const params = useParams();
@@ -23,6 +23,7 @@ export default function TimelinePage() {
   const [loading, setLoading] = useState(true);
   const [filterEra, setFilterEra] = useState('all');
   const [filterImportance, setFilterImportance] = useState('all');
+  const [filterCharacter, setFilterCharacter] = useState('all');
   const [search, setSearch] = useState('');
   const [zoom, setZoom] = useState<'all' | 'era' | 'year' | 'month'>('all');
   const [showNewDialog, setShowNewDialog] = useState(false);
@@ -137,10 +138,18 @@ export default function TimelinePage() {
   const safeEras = Array.isArray(eras) ? eras : [];
   const safeCharacters = Array.isArray(characters) ? characters : [];
 
-  const filteredEvents = safeEvents.filter(e => 
-    (e?.title || '').toLowerCase().includes(search.toLowerCase()) ||
-    (e?.description && e.description.toLowerCase().includes(search.toLowerCase()))
-  );
+  const charactersMap = safeCharacters.reduce((acc: Record<string, string>, c: any) => {
+    if (c?.id && c?.name) acc[c.id] = c.name;
+    return acc;
+  }, {});
+
+  const filteredEvents = safeEvents.filter(e => {
+    const matchesSearch = (e?.title || '').toLowerCase().includes(search.toLowerCase()) ||
+      (e?.description && e.description.toLowerCase().includes(search.toLowerCase()));
+    const matchesCharacter = filterCharacter === 'all' ||
+      (Array.isArray(e?.involvedCharacterIds) && e.involvedCharacterIds.includes(filterCharacter));
+    return matchesSearch && matchesCharacter;
+  });
 
   // Group by era for zoom=era
   const groupedByEra = safeEras.length > 0 ? safeEras.map(era => ({
@@ -208,6 +217,32 @@ export default function TimelinePage() {
               </div>
             </div>
 
+            <div>
+              <label className="text-xs font-medium mb-2 block flex items-center gap-1"><User className="w-3 h-3" /> Nhân vật</label>
+              <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
+                <button
+                  onClick={() => setFilterCharacter('all')}
+                  className={`w-full text-left px-2 py-1 rounded text-xs flex justify-between items-center ${filterCharacter === 'all' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
+                >
+                  <span>Tất cả</span>
+                  <span className="text-[10px] opacity-75">{safeEvents.length}</span>
+                </button>
+                {safeCharacters.map(char => {
+                  const count = safeEvents.filter(e => Array.isArray(e.involvedCharacterIds) && e.involvedCharacterIds.includes(char.id)).length;
+                  return (
+                    <button
+                      key={char.id}
+                      onClick={() => setFilterCharacter(filterCharacter === char.id ? 'all' : char.id)}
+                      className={`w-full text-left px-2 py-1 rounded text-xs flex justify-between items-center ${filterCharacter === char.id ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
+                    >
+                      <span className="truncate">{char.name}</span>
+                      <span className="text-[10px] opacity-75 ml-1">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {aiCheck && (
               <Card className="border-orange-200 bg-orange-50 dark:bg-orange-950/20">
                 <CardHeader className="pb-2"><CardTitle className="text-xs">🔍 AI Check Result</CardTitle></CardHeader>
@@ -262,6 +297,8 @@ export default function TimelinePage() {
                         onDelete={deleteEvent}
                         isFirst={idx === 0}
                         isLast={idx === filteredEvents.length - 1}
+                        charactersMap={charactersMap}
+                        onFilterByCharacter={(charId) => setFilterCharacter(filterCharacter === charId ? 'all' : charId)}
                       />
                     ))}
                 </div>
@@ -286,6 +323,8 @@ export default function TimelinePage() {
                               onDelete={deleteEvent}
                               isFirst={idx === 0}
                               isLast={idx === group.events.length - 1}
+                              charactersMap={charactersMap}
+                              onFilterByCharacter={(charId) => setFilterCharacter(filterCharacter === charId ? 'all' : charId)}
                             />
                           ))}
                       </div>

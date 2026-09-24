@@ -61,16 +61,9 @@ export default function ExportPage() {
         }
       }
 
-      // Local download fallback
-      const text = `${project?.title || 'Xuất bản'}\n\n` + chapters.map((c: any) => `=== ${c.title} ===\n\n${c.content || ''}\n\n`).join('\n');
-      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${project?.title || 'export'}.${job.format || 'txt'}`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Đang tải file...');
+      // Local download fallback: open export dialog with full formatting support
+      setShowExportDialog(true);
+      toast.info(`Mở hộp thoại xuất bản ${job.format?.toUpperCase() || ''}`);
     } catch (e: any) {
       toast.error(e.message || 'Lỗi khi tải file');
     }

@@ -198,6 +198,183 @@ export function ExportDialog({ projectId, projectTitle, open, onOpenChange, chap
             blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
             ext = 'txt';
           }
+        } else if (selectedFormat === 'epub') {
+          try {
+            const jszipModule = await import('jszip');
+            const JSZip = (jszipModule as any).default || jszipModule;
+            const zip = new JSZip();
+
+            // 1. mimetype (must be first, uncompressed)
+            zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+
+            // 2. META-INF/container.xml
+            zip.file('META-INF/container.xml', `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`);
+
+            const escapeXml = (str: string) => (str || '')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&apos;');
+
+            // 3. CSS
+            zip.file('OEBPS/style.css', `
+body {
+  font-family: Georgia, 'Times New Roman', serif;
+  margin: 5% 8%;
+  line-height: 1.8;
+  color: #111;
+  background-color: #fff;
+}
+h1.book-title {
+  text-align: center;
+  font-size: 2.2em;
+  margin-top: 25%;
+  margin-bottom: 0.5em;
+  font-weight: bold;
+}
+p.author {
+  text-align: center;
+  font-style: italic;
+  font-size: 1.2em;
+  margin-bottom: 40%;
+}
+h2.chapter-title {
+  text-align: center;
+  font-size: 1.6em;
+  margin-top: 2em;
+  margin-bottom: 1.5em;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 0.5em;
+}
+p {
+  text-indent: 1.5em;
+  margin: 0 0 0.8em 0;
+  text-align: justify;
+}
+`);
+
+            // Title page
+            zip.file('OEBPS/title.xhtml', `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="vi">
+<head>
+  <title>${escapeXml(projectTitle)}</title>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+  <h1 class="book-title">${escapeXml(projectTitle)}</h1>
+  ${authorName ? `<p class="author">${escapeXml(authorName)}</p>` : ''}
+</body>
+</html>`);
+
+            // Chapter files
+            const chapterManifestItems: string[] = [];
+            const chapterSpineItems: string[] = [];
+            const navPoints: string[] = [];
+
+            filteredChapters.forEach((ch: any, idx: number) => {
+              const fileId = `chapter_${idx + 1}`;
+              const fileName = `${fileId}.xhtml`;
+
+              let cleanText = ch.content || '';
+              try {
+                const parsed = JSON.parse(cleanText);
+                const extract = (n: any): string => {
+                  let t = '';
+                  if (n.text) t += n.text + ' ';
+                  if (n.content) t += n.content.map(extract).join('');
+                  return t;
+                };
+                cleanText = extract(parsed);
+              } catch {
+                cleanText = cleanText.replace(/<[^>]+>/g, ' ');
+              }
+
+              const paragraphs = cleanText.split('\n').map((p: string) => p.trim()).filter(Boolean);
+              const parasHtml = paragraphs.length > 0
+                ? paragraphs.map((p: string) => `<p>${escapeXml(p)}</p>`).join('\n')
+                : '<p></p>';
+
+              zip.file(`OEBPS/${fileName}`, `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="vi">
+<head>
+  <title>${escapeXml(ch.title)}</title>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+  <h2 class="chapter-title">${escapeXml(ch.title)}</h2>
+  ${parasHtml}
+</body>
+</html>`);
+
+              chapterManifestItems.push(`<item id="${fileId}" href="${fileName}" media-type="application/xhtml+xml"/>`);
+              chapterSpineItems.push(`<itemref idref="${fileId}"/>`);
+              navPoints.push(`
+    <navPoint id="navPoint-${idx + 1}" playOrder="${idx + 2}">
+      <navLabel><text>${escapeXml(ch.title)}</text></navLabel>
+      <content src="${fileName}"/>
+    </navPoint>`);
+            });
+
+            // OEBPS/toc.ncx
+            zip.file('OEBPS/toc.ncx', `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="urn:uuid:${projectId}"/>
+    <meta name="dtb:depth" content="1"/>
+    <meta name="dtb:totalPageCount" content="0"/>
+    <meta name="dtb:maxPageNumber" content="0"/>
+  </head>
+  <docTitle><text>${escapeXml(projectTitle)}</text></docTitle>
+  <navMap>
+    <navPoint id="navPoint-title" playOrder="1">
+      <navLabel><text>Bìa sách</text></navLabel>
+      <content src="title.xhtml"/>
+    </navPoint>
+    ${navPoints.join('\n')}
+  </navMap>
+</ncx>`);
+
+            // OEBPS/content.opf
+            zip.file('OEBPS/content.opf', `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>${escapeXml(projectTitle)}</dc:title>
+    <dc:creator opf:role="aut">${escapeXml(authorName || 'Tác giả')}</dc:creator>
+    <dc:language>vi</dc:language>
+    <dc:identifier id="BookId">urn:uuid:${projectId}</dc:identifier>
+    <dc:date>${new Date().toISOString().split('T')[0]}</dc:date>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="css" href="style.css" media-type="text/css"/>
+    <item id="titlepage" href="title.xhtml" media-type="application/xhtml+xml"/>
+    ${chapterManifestItems.join('\n    ')}
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="titlepage"/>
+    ${chapterSpineItems.join('\n    ')}
+  </spine>
+</package>`);
+
+            blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip' });
+            ext = 'epub';
+          } catch (err) {
+            console.error('Lỗi tạo EPUB:', err);
+            let text = `${projectTitle}\n${authorName ? `Tác giả: ${authorName}\n` : ''}\n====================\n\n`;
+            for (const ch of filteredChapters) {
+              text += `\n\n--- ${ch.title} ---\n\n${ch.content || ''}\n`;
+            }
+            blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            ext = 'txt';
+          }
         } else if (selectedFormat === 'json') {
           const exportData = {
             title: projectTitle,

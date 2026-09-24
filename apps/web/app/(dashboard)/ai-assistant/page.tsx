@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { apiFetch } from '@/lib/utils';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
-import { Send, Sparkles, Trash2, Copy, Check, ArrowLeft, Bot, User as UserIcon } from 'lucide-react';
+import { Send, Sparkles, Trash2, Copy, Check, ArrowLeft, Bot, User as UserIcon, FileText } from 'lucide-react';
 
 interface Message {
   id: string;
@@ -28,6 +29,14 @@ const skills = [
   { id: 'description_enhance', label: '👁️ Đánh thức giác quan', desc: 'Bổ sung âm thanh, mùi vị, ánh sáng' }
 ];
 
+const quickPrompts = [
+  'Gợi ý 3 hướng đi tiếp theo cho cảnh quay này',
+  'Miêu tả không gian và bầu không khí chi tiết',
+  'Tạo một plot twist bất ngờ nhưng hợp lý',
+  'Viết đoạn hội thoại kịch tính giữa hai nhân vật',
+  'Tìm các điểm nghịch lý hoặc lỗ hổng cốt truyện'
+];
+
 function AIAssistantContent() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get('projectId');
@@ -38,6 +47,7 @@ function AIAssistantContent() {
   const [loading, setLoading] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [insertingId, setInsertingId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -48,6 +58,22 @@ function AIAssistantContent() {
     setCopiedId(id);
     toast.success('Đã sao chép vào bộ nhớ đệm');
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const insertIntoChapter = async (text: string, msgId: string) => {
+    if (!chapterId) return;
+    setInsertingId(msgId);
+    try {
+      await apiFetch(`/api/chapters/${chapterId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ appendContent: text })
+      });
+      toast.success('Đã chèn nội dung vào cuối chương truyện!');
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi chèn vào chương');
+    } finally {
+      setInsertingId(null);
+    }
   };
 
   const sendMessage = async () => {
@@ -201,6 +227,19 @@ function AIAssistantContent() {
 
                     {m.role === 'assistant' && m.content && (
                       <div className="flex items-center gap-1 mt-2 pt-2 border-t border-border/30 justify-end">
+                        {chapterId && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-[11px] text-primary hover:text-primary hover:bg-primary/10"
+                            disabled={insertingId === m.id}
+                            onClick={() => insertIntoChapter(m.content, m.id)}
+                            title="Chèn văn bản này vào cuối chương đang viết"
+                          >
+                            <FileText className="w-3 h-3 mr-1" />
+                            {insertingId === m.id ? 'Đang chèn...' : 'Chèn vào chương'}
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -233,6 +272,21 @@ function AIAssistantContent() {
           </div>
 
           <div className="border-t p-3 bg-card">
+            {/* Quick prompt chips */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-2">
+              <span className="text-[11px] text-muted-foreground shrink-0 font-medium">Gợi ý:</span>
+              {quickPrompts.map((prompt, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setInput(prompt)}
+                  className="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border border-border/40 transition-colors"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+
             <div className="flex gap-2">
               <Input
                 placeholder={selectedSkill ? `Nhập yêu cầu cho skill ${skills.find(s=>s.id===selectedSkill)?.label}...` : "Hỏi AI hoặc yêu cầu sáng tác (ví dụ: Gợi ý 3 hướng đi tiếp theo cho nhân vật...)"}

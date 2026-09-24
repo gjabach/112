@@ -11,6 +11,8 @@ interface TimelineEventProps {
   onDelete: (id: string) => void;
   isFirst?: boolean;
   isLast?: boolean;
+  charactersMap?: Record<string, string>;
+  onFilterByCharacter?: (charId: string) => void;
 }
 
 const importanceColors: Record<string, string> = {
@@ -18,7 +20,15 @@ const importanceColors: Record<string, string> = {
   minor: 'bg-gray-400 border-gray-500 text-white'
 };
 
-export function TimelineEvent({ event, onEdit, onDelete, isFirst, isLast }: TimelineEventProps) {
+export function TimelineEvent({
+  event,
+  onEdit,
+  onDelete,
+  isFirst,
+  isLast,
+  charactersMap = {},
+  onFilterByCharacter
+}: TimelineEventProps) {
   return (
     <div className="relative flex gap-4 group">
       {/* Timeline line */}
@@ -63,7 +73,23 @@ export function TimelineEvent({ event, onEdit, onDelete, isFirst, isLast }: Time
                   <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {event.locationId.slice(0,8)}</span>
                 )}
                 {event.involvedCharacterIds?.length > 0 && (
-                  <span className="flex items-center gap-1"><User className="w-3 h-3" /> {event.involvedCharacterIds.length} nhân vật</span>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="flex items-center gap-0.5"><User className="w-3 h-3 mr-0.5" /></span>
+                    {event.involvedCharacterIds.map((charId: string) => (
+                      <Badge
+                        key={charId}
+                        variant="secondary"
+                        className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-primary/20 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onFilterByCharacter) onFilterByCharacter(charId);
+                        }}
+                        title="Lọc theo nhân vật này"
+                      >
+                        {charactersMap[charId] || 'Nhân vật'}
+                      </Badge>
+                    ))}
+                  </div>
                 )}
                 {event.chapterId && (
                   <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" /> Chương</span>

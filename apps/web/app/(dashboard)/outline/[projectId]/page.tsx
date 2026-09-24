@@ -262,11 +262,18 @@ export default function OutlinePage() {
                 nodes={safeFlat}
                 onUpdate={updateNode}
                 onAdd={(status) => { setNewNode({ ...newNode, status }); setShowNewDialog(true); }}
+                onConvertToChapter={convertToChapter}
+                onDelete={deleteNode}
               />
             )}
 
             {viewMode === 'corkboard' && (
-              <CorkboardView nodes={safeFlat} onUpdate={updateNode} />
+              <CorkboardView
+                nodes={safeFlat}
+                onUpdate={updateNode}
+                onConvertToChapter={convertToChapter}
+                onDelete={deleteNode}
+              />
             )}
 
             {viewMode === 'timeline' && (

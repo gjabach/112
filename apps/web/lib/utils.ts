@@ -545,8 +545,14 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     if (method === 'PATCH') {
       const updated = chapters.map((c: any) => {
         if (c.id === id) {
-          const wordCount = body.content !== undefined ? countWords(body.content) : c.wordCount;
-          return { ...c, ...body, wordCount, updatedAt: now };
+          let content = c.content || '';
+          if (body.appendContent) {
+            content = content ? `${content}\n\n${body.appendContent}` : body.appendContent;
+          } else if (body.content !== undefined) {
+            content = body.content;
+          }
+          const wordCount = countWords(content);
+          return { ...c, ...body, content, wordCount, updatedAt: now };
         }
         return c;
       });
