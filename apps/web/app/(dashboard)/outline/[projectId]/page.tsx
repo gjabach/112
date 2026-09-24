@@ -122,6 +122,26 @@ export default function OutlinePage() {
     }
   };
 
+  const convertToChapter = async (node: any) => {
+    try {
+      const res = await apiFetch(`/api/projects/${projectId}/chapters`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: node.title,
+          notes: node.description || '',
+          status: 'outline'
+        })
+      });
+      const newChapterId = res.chapter?.id;
+      if (newChapterId) {
+        await updateNode(node.id, { linkedChapterId: newChapterId, status: 'planned' });
+        toast.success(`Đã tạo chương "${node.title}" trong bản thảo!`);
+      }
+    } catch (e: any) {
+      toast.error('Lỗi tạo chương: ' + (e.message || ''));
+    }
+  };
+
   const exportOutline = async (format: string) => {
     try {
       if (format === 'json') {
@@ -227,9 +247,11 @@ export default function OutlinePage() {
                   <OutlineNode
                     key={node.id}
                     node={node}
+                    projectId={projectId}
                     onUpdate={updateNode}
                     onDelete={deleteNode}
                     onAddChild={(parentId) => { setNewNode({ ...newNode, parentId }); setShowNewDialog(true); }}
+                    onConvertToChapter={convertToChapter}
                   />
                 ))}
               </div>

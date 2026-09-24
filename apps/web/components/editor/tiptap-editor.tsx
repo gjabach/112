@@ -9,7 +9,7 @@ import Image from '@tiptap/extension-image';
 import Highlight from '@tiptap/extension-highlight';
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Bold, Italic, List, ListOrdered, Quote, Heading1, Heading2, Code, Image as ImageIcon } from 'lucide-react';
+import { Bold, Italic, List, ListOrdered, Quote, Heading1, Heading2, Code, Undo, Redo, Strikethrough, Highlighter } from 'lucide-react';
 
 interface TiptapEditorProps {
   content: string;
@@ -61,15 +61,21 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex flex-wrap gap-1 p-2 border-b bg-card sticky top-0 z-10">
-        <Button variant={editor.isActive('bold') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleBold().run()}><Bold className="w-4 h-4" /></Button>
-        <Button variant={editor.isActive('italic') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleItalic().run()}><Italic className="w-4 h-4" /></Button>
-        <Button variant={editor.isActive('heading', { level: 1 }) ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="w-4 h-4" /></Button>
-        <Button variant={editor.isActive('heading', { level: 2 }) ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="w-4 h-4" /></Button>
-        <Button variant={editor.isActive('blockquote') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote className="w-4 h-4" /></Button>
-        <Button variant={editor.isActive('bulletList') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="w-4 h-4" /></Button>
-        <Button variant={editor.isActive('orderedList') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="w-4 h-4" /></Button>
-        <Button variant={editor.isActive('codeBlock') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code className="w-4 h-4" /></Button>
+      <div className="flex flex-wrap items-center gap-1 p-2 border-b bg-card sticky top-0 z-10">
+        <Button variant="ghost" size="sm" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} title="Hoàn tác (Ctrl+Z)"><Undo className="w-4 h-4" /></Button>
+        <Button variant="ghost" size="sm" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} title="Làm lại (Ctrl+Y)"><Redo className="w-4 h-4" /></Button>
+        <div className="w-[1px] h-5 bg-border mx-1" />
+        <Button variant={editor.isActive('bold') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleBold().run()} title="In đậm"><Bold className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('italic') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleItalic().run()} title="In nghiêng"><Italic className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('strike') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleStrike().run()} title="Gạch ngang"><Strikethrough className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('highlight') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleHighlight().run()} title="Đánh dấu highlight"><Highlighter className="w-4 h-4" /></Button>
+        <div className="w-[1px] h-5 bg-border mx-1" />
+        <Button variant={editor.isActive('heading', { level: 1 }) ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title="Tiêu đề 1"><Heading1 className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('heading', { level: 2 }) ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="Tiêu đề 2"><Heading2 className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('blockquote') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Trích dẫn"><Quote className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('bulletList') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleBulletList().run()} title="Danh sách"><List className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('orderedList') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Danh sách số"><ListOrdered className="w-4 h-4" /></Button>
+        <Button variant={editor.isActive('codeBlock') ? 'secondary' : 'ghost'} size="sm" onClick={() => editor.chain().focus().toggleCodeBlock().run()} title="Khối mã"><Code className="w-4 h-4" /></Button>
         <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
           {editor.storage.characterCount.words()} từ • {editor.storage.characterCount.characters()} ký tự
         </div>

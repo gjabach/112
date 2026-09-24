@@ -7,7 +7,8 @@ import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { useAuthStore } from '@/lib/store';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle } from 'lucide-react';
+import { useTheme } from 'next-themes';
+import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, Sun, Moon, Monitor } from 'lucide-react';
 
 const providers = [
   { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'] },
@@ -25,6 +26,9 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [profileName, setProfileName] = useState(user?.name || '');
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     // 1. Load from localStorage first
@@ -338,10 +342,59 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Giao diện</CardTitle>
+            <CardTitle>Giao diện & Chủ đề (Theme)</CardTitle>
+            <CardDescription>Tùy chỉnh màu sắc để tối ưu trải nghiệm sáng tác và bảo vệ mắt</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">Dark mode / Light mode / Sepia - Phase 2 sẽ có theme switcher đầy đủ</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => setTheme('dark')}
+                className={`p-4 rounded-xl border text-left transition-all flex items-center gap-3 ${
+                  mounted && theme === 'dark' ? 'border-primary bg-primary/10 ring-2 ring-primary/20' : 'border-input hover:bg-muted/50'
+                }`}
+              >
+                <div className="w-10 h-10 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center text-white shrink-0">
+                  <Moon className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm">Giao diện Tối (Dark)</div>
+                  <div className="text-xs text-muted-foreground">Dịu mắt, thích hợp viết đêm</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTheme('light')}
+                className={`p-4 rounded-xl border text-left transition-all flex items-center gap-3 ${
+                  mounted && theme === 'light' ? 'border-primary bg-primary/10 ring-2 ring-primary/20' : 'border-input hover:bg-muted/50'
+                }`}
+              >
+                <div className="w-10 h-10 rounded-lg bg-white border border-slate-300 flex items-center justify-center text-slate-800 shadow-sm shrink-0">
+                  <Sun className="w-5 h-5 text-amber-500" />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm">Giao diện Sáng (Light)</div>
+                  <div className="text-xs text-muted-foreground">Rõ nét, độ tương phản cao</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTheme('system')}
+                className={`p-4 rounded-xl border text-left transition-all flex items-center gap-3 ${
+                  mounted && theme === 'system' ? 'border-primary bg-primary/10 ring-2 ring-primary/20' : 'border-input hover:bg-muted/50'
+                }`}
+              >
+                <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center text-muted-foreground shrink-0">
+                  <Monitor className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm">Hệ thống (System)</div>
+                  <div className="text-xs text-muted-foreground">Tự đồng bộ theo thiết bị</div>
+                </div>
+              </button>
+            </div>
           </CardContent>
         </Card>
       </div>

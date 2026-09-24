@@ -140,7 +140,65 @@ export function ExportDialog({ projectId, projectTitle, open, onOpenChange, chap
         let blob: Blob;
         let ext = selectedFormat;
 
-        if (selectedFormat === 'json') {
+        if (selectedFormat === 'docx') {
+          try {
+            const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx');
+            const doc = new Document({
+              sections: [{
+                properties: {},
+                children: [
+                  new Paragraph({
+                    text: projectTitle,
+                    heading: HeadingLevel.TITLE,
+                    spacing: { after: 300 }
+                  }),
+                  ...(authorName ? [
+                    new Paragraph({
+                      children: [new TextRun({ text: `Tác giả: ${authorName}`, italics: true })],
+                      spacing: { after: 600 }
+                    })
+                  ] : []),
+                  ...filteredChapters.flatMap(ch => {
+                    let cleanText = ch.content || '';
+                    try {
+                      const parsed = JSON.parse(cleanText);
+                      const extract = (n: any): string => {
+                        let t = '';
+                        if (n.text) t += n.text + ' ';
+                        if (n.content) t += n.content.map(extract).join('');
+                        return t;
+                      };
+                      cleanText = extract(parsed);
+                    } catch {
+                      cleanText = cleanText.replace(/<[^>]+>/g, ' ');
+                    }
+
+                    const paragraphs = cleanText.split('\n').map((p: string) => p.trim()).filter(Boolean);
+                    return [
+                      new Paragraph({
+                        text: ch.title,
+                        heading: HeadingLevel.HEADING_1,
+                        spacing: { before: 400, after: 200 }
+                      }),
+                      ...(paragraphs.length > 0
+                        ? paragraphs.map((p: string) => new Paragraph({ text: p, spacing: { after: 160, line: 360 } }))
+                        : [new Paragraph({ text: '', spacing: { after: 200 } })])
+                    ];
+                  })
+                ]
+              }]
+            });
+            blob = await Packer.toBlob(doc);
+            ext = 'docx';
+          } catch {
+            let text = `${projectTitle}\n${authorName ? `Tác giả: ${authorName}\n` : ''}\n====================\n\n`;
+            for (const ch of filteredChapters) {
+              text += `\n\n--- ${ch.title} ---\n\n${ch.content || ''}\n`;
+            }
+            blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            ext = 'txt';
+          }
+        } else if (selectedFormat === 'json') {
           const exportData = {
             title: projectTitle,
             author: authorName || 'Tác giả',

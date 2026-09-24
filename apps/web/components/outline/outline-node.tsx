@@ -5,15 +5,18 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { GripVertical, ChevronDown, ChevronRight, Edit3, Trash2, Link as LinkIcon, Plus } from 'lucide-react';
+import Link from 'next/link';
+import { GripVertical, ChevronDown, ChevronRight, Edit3, Trash2, Link as LinkIcon, Plus, BookOpen, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface OutlineNodeProps {
   node: any;
   depth?: number;
+  projectId?: string;
   onUpdate: (id: string, data: any) => void;
   onDelete: (id: string) => void;
   onAddChild: (parentId: string) => void;
+  onConvertToChapter?: (node: any) => void;
   isDragging?: boolean;
 }
 
@@ -31,7 +34,7 @@ const statusColors: Record<string, string> = {
   revised: 'bg-green-500'
 };
 
-export function OutlineNode({ node, depth = 0, onUpdate, onDelete, onAddChild, isDragging }: OutlineNodeProps) {
+export function OutlineNode({ node, depth = 0, projectId, onUpdate, onDelete, onAddChild, onConvertToChapter, isDragging }: OutlineNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(node.title);
@@ -79,7 +82,28 @@ export function OutlineNode({ node, depth = 0, onUpdate, onDelete, onAddChild, i
                     <div className={cn('w-2 h-2 rounded-full', statusColors[node.status] || 'bg-gray-400')} title={node.status}></div>
                   </div>
                   {node.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{node.description}</p>}
-                  {node.linkedChapterId && <div className="flex items-center gap-1 mt-1 text-[10px] text-primary"><LinkIcon className="w-3 h-3" /> Linked to chapter</div>}
+                  
+                  {node.linkedChapterId ? (
+                    <div className="mt-1.5">
+                      <Link
+                        href={`/editor/${node.projectId || projectId}/${node.linkedChapterId}`}
+                        className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline font-medium bg-primary/10 px-2 py-0.5 rounded"
+                      >
+                        <BookOpen className="w-3 h-3" /> Mở chương đã liên kết <ExternalLink className="w-2.5 h-2.5" />
+                      </Link>
+                    </div>
+                  ) : onConvertToChapter && (node.type === 'chapter' || node.type === 'scene' || node.type === 'beat') ? (
+                    <div className="mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onConvertToChapter(node)}
+                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary hover:bg-accent px-1.5 py-0.5 rounded border transition-colors"
+                        title="Tạo một chương trong bản thảo từ ý tưởng này"
+                      >
+                        <Plus className="w-3 h-3" /> Tạo chương từ beat này
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               )}
             </div>
@@ -116,9 +140,11 @@ export function OutlineNode({ node, depth = 0, onUpdate, onDelete, onAddChild, i
               key={child.id}
               node={child}
               depth={depth + 1}
+              projectId={projectId}
               onUpdate={onUpdate}
               onDelete={onDelete}
               onAddChild={onAddChild}
+              onConvertToChapter={onConvertToChapter}
             />
           ))}
         </div>
