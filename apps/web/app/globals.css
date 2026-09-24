@@ -1,0 +1,176 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 262 83% 58%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 263 70% 50%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 263 70% 50%;
+  }
+
+  .sepia {
+    --background: 40 20% 94%;
+    --foreground: 30 10% 15%;
+    --card: 40 20% 96%;
+    --card-foreground: 30 10% 15%;
+    --popover: 40 20% 96%;
+    --popover-foreground: 30 10% 15%;
+    --primary: 25 60% 45%;
+    --primary-foreground: 40 20% 96%;
+    --secondary: 35 15% 88%;
+    --secondary-foreground: 30 10% 25%;
+    --muted: 35 15% 88%;
+    --muted-foreground: 30 5% 45%;
+    --accent: 35 15% 88%;
+    --accent-foreground: 30 10% 15%;
+    --border: 35 15% 82%;
+    --input: 35 15% 82%;
+    --ring: 25 60% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif;
+  }
+}
+
+/* Tiptap Editor Styles */
+.tiptap {
+  @apply font-serif text-[18px] leading-[1.8] max-w-none outline-none;
+}
+
+.tiptap p {
+  @apply mb-4;
+}
+
+.tiptap h1 {
+  @apply text-4xl font-bold mt-8 mb-4;
+}
+
+.tiptap h2 {
+  @apply text-3xl font-semibold mt-6 mb-3;
+}
+
+.tiptap h3 {
+  @apply text-2xl font-semibold mt-4 mb-2;
+}
+
+.tiptap blockquote {
+  @apply border-l-4 border-primary/30 pl-6 italic my-6 text-muted-foreground;
+}
+
+.tiptap ul, .tiptap ol {
+  @apply ml-6 mb-4;
+}
+
+.tiptap ul {
+  @apply list-disc;
+}
+
+.tiptap ol {
+  @apply list-decimal;
+}
+
+.tiptap code {
+  @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+.tiptap pre {
+  @apply bg-muted p-4 rounded-lg overflow-x-auto my-4;
+}
+
+.tiptap img {
+  @apply rounded-lg max-w-full my-4;
+}
+
+.tiptap hr {
+  @apply my-8 border-border;
+}
+
+/* Focus mode */
+.focus-mode .sidebar, .focus-mode .inspector {
+  @apply opacity-0 pointer-events-none;
+}
+
+.typewriter-mode .tiptap p.is-editor-empty:first-child::before,
+.typewriter-mode .tiptap p.is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+  height: 0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/30;
+}
+
+/* Animations */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}

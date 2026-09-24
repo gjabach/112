@@ -1,0 +1,36 @@
+{
+  "name": "api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev src/index.ts --local --persist",
+    "build": "tsc --noEmit",
+    "deploy": "wrangler deploy",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "wrangler d1 migrations apply novelist-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply novelist-db --remote",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@novelist/shared": "workspace:*",
+    "@novelist/ai-core": "workspace:*",
+    "hono": "^4.6.5",
+    "drizzle-orm": "^0.36.4",
+    "zod": "^3.23.8",
+    "bcryptjs": "^2.4.3",
+    "jose": "^5.9.6",
+    "nanoid": "^5.0.8",
+    "pdf-lib": "^1.17.1",
+    "docx": "^8.5.0",
+    "jszip": "^3.10.1",
+    "@types/jszip": "^3.4.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "drizzle-kit": "^0.28.1",
+    "typescript": "^5.6.3",
+    "wrangler": "^3.78.12",
+    "@types/bcryptjs": "^2.4.6"
+  }
+}

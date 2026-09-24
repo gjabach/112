@@ -1,0 +1,45 @@
+name = "novelist-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-27"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database - SQLite miễn phí 5GB
+[[d1_databases]]
+binding = "DB"
+database_name = "novelist-db"
+database_id = "novelist-db-local"
+migrations_dir = "src/db/migrations"
+
+# R2 Bucket - Lưu file, ảnh bìa, export
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "novelist-storage"
+
+# KV Namespace - Cache, session, rate limiting
+[[kv_namespaces]]
+binding = "KV"
+id = "novelist-kv-local"
+preview_id = "novelist-kv-preview"
+
+[vars]
+ENVIRONMENT = "development"
+JWT_SECRET = "dev-jwt-secret-change-in-production-use-64-chars-random-string"
+ENCRYPTION_KEY = "dev-encryption-key-32-chars-long!!"
+FRONTEND_URL = "http://localhost:3000"
+
+# Production overrides - sẽ cấu hình khi deploy
+# [env.production.vars]
+# FRONTEND_URL = "https://novelist.pages.dev"
+
+# [env.production.d1_databases]
+# binding = "DB"
+# database_name = "novelist-db-prod"
+# database_id = "your-prod-db-id"
+
+# [env.production.r2_buckets]
+# binding = "R2"
+# bucket_name = "novelist-storage-prod"
+
+# [env.production.kv_namespaces]
+# binding = "KV"
+# id = "your-prod-kv-id"
