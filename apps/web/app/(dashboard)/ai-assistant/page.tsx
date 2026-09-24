@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { apiFetch } from '@/lib/utils';
+import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
 import { Send, Sparkles, Trash2 } from 'lucide-react';
 
@@ -50,59 +51,24 @@ function AIAssistantContent() {
     const tempUserMsg: Message = { id: 'temp-' + Date.now(), role: 'user', content: userMessage, createdAt: Date.now() };
     setMessages(prev => [...prev, tempUserMsg]);
 
+    const assistantId = 'assistant-' + Date.now();
+    setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '', createdAt: Date.now() }]);
+
+    let assistantContent = '';
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}/api/ai/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          conversationId: conversationId || undefined,
-          projectId: projectId || undefined,
-          message: userMessage,
-          skill: selectedSkill || undefined,
-          stream: true,
-          contextLevel: 'last5'
-        })
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'AI error');
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let assistantContent = '';
-      const assistantId = 'assistant-' + Date.now();
-
-      setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '', createdAt: Date.now() }]);
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.conversationId && !conversationId) setConversationId(data.conversationId);
-                if (data.content) {
-                  assistantContent += data.content;
-                  setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: assistantContent } : m));
-                }
-                if (data.done) break;
-              } catch {}
-            }
-          }
+      await executeAIChat({
+        message: userMessage,
+        skill: selectedSkill,
+        projectId: projectId || undefined,
+        stream: true,
+        onChunk: (chunk) => {
+          assistantContent += chunk;
+          setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: assistantContent } : m));
         }
-      }
+      });
     } catch (e: any) {
-      toast.error(e.message);
-      setMessages(prev => prev.filter(m => !m.id.startsWith('temp-')));
+      toast.error(e.message || 'Lỗi khi gọi AI');
+      setMessages(prev => prev.filter(m => m.id !== assistantId));
     } finally {
       setLoading(false);
     }

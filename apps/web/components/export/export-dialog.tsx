@@ -116,10 +116,10 @@ export function ExportDialog({ projectId, projectTitle, open, onOpenChange, chap
         a.download = `${projectTitle}.${res.extension}`;
         a.click();
         URL.revokeObjectURL(url);
-      } else if (res.downloadUrl) {
-        // Download via API
+      } else if (res.downloadUrl && process.env.NEXT_PUBLIC_API_URL) {
+        // Download via remote API
         const token = localStorage.getItem('token');
-        const downloadRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}${res.downloadUrl}`, {
+        const downloadRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${res.downloadUrl}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (downloadRes.ok) {
@@ -131,6 +131,52 @@ export function ExportDialog({ projectId, projectTitle, open, onOpenChange, chap
           a.click();
           URL.revokeObjectURL(url);
         }
+      } else {
+        // Direct client-side generation
+        const filteredChapters = chapters
+          .filter((c: any) => selectedChapters.includes(c.id))
+          .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0));
+
+        let blob: Blob;
+        let ext = selectedFormat;
+
+        if (selectedFormat === 'json') {
+          const exportData = {
+            title: projectTitle,
+            author: authorName || 'Tác giả',
+            exportedAt: new Date().toISOString(),
+            chapters: filteredChapters
+          };
+          blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        } else if (selectedFormat === 'md') {
+          let md = `# ${projectTitle}\n\n`;
+          if (authorName) md += `*Tác giả: ${authorName}*\n\n`;
+          for (const ch of filteredChapters) {
+            md += `## ${ch.title}\n\n${ch.content || ''}\n\n---\n\n`;
+          }
+          blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+        } else if (selectedFormat === 'html') {
+          let html = `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><title>${projectTitle}</title><style>body{font-family:serif;max-width:800px;margin:40px auto;line-height:1.8;padding:0 20px;}h1,h2{text-align:center;}</style></head><body><h1>${projectTitle}</h1>${authorName ? `<p style="text-align:center"><em>${authorName}</em></p>` : ''}<hr/>`;
+          for (const ch of filteredChapters) {
+            html += `<h2>${ch.title}</h2><div>${(ch.content || '').replace(/\n/g, '<br/>')}</div><hr/>`;
+          }
+          html += '</body></html>';
+          blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        } else {
+          // Plain text / default
+          let text = `${projectTitle}\n${authorName ? `Tác giả: ${authorName}\n` : ''}\n====================\n\n`;
+          for (const ch of filteredChapters) {
+            text += `\n\n--- ${ch.title} ---\n\n${ch.content || ''}\n`;
+          }
+          blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${projectTitle}.${ext}`;
+        a.click();
+        URL.revokeObjectURL(url);
       }
 
     } catch (e: any) {
@@ -294,7 +340,7 @@ export function ExportDialog({ projectId, projectTitle, open, onOpenChange, chap
                     {result.downloadUrl && (
                       <Button size="sm" variant="outline" className="w-full mt-2 h-7 text-xs" onClick={() => {
                         const token = localStorage.getItem('token');
-                        window.open(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}${result.downloadUrl}?token=${token}`, '_blank');
+                        window.open(`${process.env.NEXT_PUBLIC_API_URL || ''}${result.downloadUrl}?token=${token}`, '_blank');
                       }}>
                         <Download className="w-3 h-3 mr-1" /> Tải lại
                       </Button>

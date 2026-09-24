@@ -43,24 +43,36 @@ export default function ExportPage() {
 
   const downloadJob = async (job: any) => {
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}/api/export/download/${job.id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error);
+      if (process.env.NEXT_PUBLIC_API_URL) {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/export/download/${job.id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${project?.title || 'export'}.${job.format}`;
+          a.click();
+          URL.revokeObjectURL(url);
+          toast.success('Đang tải...');
+          return;
+        }
       }
-      const blob = await res.blob();
+
+      // Local download fallback
+      const text = `${project?.title || 'Xuất bản'}\n\n` + chapters.map((c: any) => `=== ${c.title} ===\n\n${c.content || ''}\n\n`).join('\n');
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${project?.title || 'export'}.${job.format}`;
+      a.download = `${project?.title || 'export'}.${job.format || 'txt'}`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success('Đang tải...');
+      toast.success('Đang tải file...');
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(e.message || 'Lỗi khi tải file');
     }
   };
 

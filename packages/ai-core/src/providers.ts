@@ -177,20 +177,35 @@ export class GeminiProvider implements AIProvider {
 
   async *chatStream(options: AICompletionOptions): AsyncGenerator<AIStreamChunk> {
     const systemInstruction = options.messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
-    const contents = options.messages
+    const rawContents = options.messages
       .filter(m => m.role !== 'system')
       .map(m => ({
         role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
+        parts: [{ text: m.content || '' }]
       }));
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${options.model}:streamGenerateContent?key=${options.apiKey}`;
+    // Combine consecutive messages with the same role for Gemini API requirement
+    const contents: { role: string; parts: { text: string }[] }[] = [];
+    for (const c of rawContents) {
+      if (!c.parts[0]?.text) continue;
+      if (contents.length > 0 && contents[contents.length - 1].role === c.role) {
+        contents[contents.length - 1].parts[0].text += '\n\n' + c.parts[0].text;
+      } else {
+        contents.push({ role: c.role, parts: [{ text: c.parts[0].text }] });
+      }
+    }
+    if (contents.length === 0) {
+      contents.push({ role: 'user', parts: [{ text: 'Xin chào' }] });
+    }
+
+    const model = (options.model || 'gemini-1.5-flash').replace(/^models\//, '');
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${options.apiKey}`;
 
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
+        system_instruction: systemInstruction.trim() ? { parts: [{ text: systemInstruction }] } : undefined,
         contents,
         generationConfig: {
           temperature: options.temperature ?? 0.7,
@@ -201,11 +216,22 @@ export class GeminiProvider implements AIProvider {
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`[gemini] API error ${res.status}: ${text}`);
+      let errorMsg = text;
+      try {
+        const errJson = JSON.parse(text);
+        errorMsg = errJson.error?.message || text;
+      } catch {}
+      if (res.status === 400 && (errorMsg.includes('API_KEY_INVALID') || errorMsg.includes('API key not valid'))) {
+        throw new Error('API Key Gemini không hợp lệ. Vui lòng kiểm tra lại key tại aistudio.google.com');
+      }
+      if (res.status === 429) {
+        throw new Error('Đã vượt quá hạn mức gọi Gemini (Rate limit / Quota exceeded). Thử lại sau ít phút.');
+      }
+      throw new Error(`[Gemini] Lỗi ${res.status}: ${errorMsg}`);
     }
 
     const reader = res.body?.getReader();
-    if (!reader) throw new Error('No reader');
+    if (!reader) throw new Error('Không thể đọc dữ liệu phản hồi từ AI');
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -213,31 +239,32 @@ export class GeminiProvider implements AIProvider {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      // Gemini returns JSON array chunks
-      try {
-        // Try parse as full JSON
-        const cleaned = buffer.replace(/^\[|\]$/g, '').trim();
-        if (!cleaned) continue;
-        const parts = cleaned.split('},\n{').map((s, i, arr) => {
-          if (arr.length > 1) {
-            if (i === 0) return s + '}';
-            if (i === arr.length - 1) return '{' + s;
-            return '{' + s + '}';
-          }
-          return s;
-        });
-        for (const part of parts) {
-          try {
-            const json = JSON.parse(part);
-            const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text) yield { content: text, done: false };
-          } catch {}
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        const jsonStr = trimmed.slice(6).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) yield { content: text, done: false };
+        } catch {
+          // ignore chunk parse errors
         }
-        buffer = '';
-      } catch {
-        // continue buffering
       }
     }
+
+    if (buffer.trim().startsWith('data: ')) {
+      try {
+        const parsed = JSON.parse(buffer.trim().slice(6).trim());
+        const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) yield { content: text, done: false };
+      } catch {}
+    }
+
     yield { content: '', done: true };
   }
 }

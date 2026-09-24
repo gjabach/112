@@ -16,9 +16,9 @@ export const createProjectSchema = z.object({
   title: z.string().min(1, 'Tiêu đề không được để trống').max(200),
   subtitle: z.string().max(200).optional(),
   description: z.string().max(2000).optional(),
-  genre: z.enum(GENRES as [string, ...string[]]).optional(),
+  genre: z.enum(GENRES as unknown as [string, ...string[]]).optional(),
   wordCountGoal: z.number().int().min(0).max(10000000).optional(),
-  status: z.enum(PROJECT_STATUSES as [string, ...string[]]).default('planning'),
+  status: z.enum(PROJECT_STATUSES as unknown as [string, ...string[]]).default('planning'),
   template: z.string().optional()
 });
 
@@ -33,7 +33,7 @@ export const createChapterSchema = z.object({
   contentFormat: z.enum(['markdown', 'tiptap-json']).default('tiptap-json'),
   summary: z.string().max(1000).optional(),
   orderIndex: z.number().int().min(0),
-  status: z.enum(CHAPTER_STATUSES as [string, ...string[]]).default('outline'),
+  status: z.enum(CHAPTER_STATUSES as unknown as [string, ...string[]]).default('outline'),
   parentId: z.string().uuid().optional().nullable(),
   notes: z.string().optional(),
   pov: z.string().max(100).optional(),
@@ -46,7 +46,7 @@ export const updateChapterSchema = createChapterSchema.partial();
 export const createCharacterSchema = z.object({
   name: z.string().min(1, 'Tên nhân vật không được để trống').max(100),
   aliases: z.array(z.string()).default([]),
-  role: z.enum(CHARACTER_ROLES as [string, ...string[]]).optional(),
+  role: z.enum(CHARACTER_ROLES as unknown as [string, ...string[]]).optional(),
   avatarUrl: z.string().url().optional().or(z.literal('')),
   age: z.string().max(50).optional(),
   gender: z.string().max(50).optional(),
@@ -74,7 +74,7 @@ export const createCharacterSchema = z.object({
 export const updateCharacterSchema = createCharacterSchema.partial();
 
 export const aiSettingsSchema = z.object({
-  aiProvider: z.enum(AI_PROVIDERS as [string, ...string[]]),
+  aiProvider: z.enum(AI_PROVIDERS as unknown as [string, ...string[]]),
   aiApiKey: z.string().min(1, 'API Key không được để trống'),
   aiModel: z.string().min(1, 'Model không được để trống'),
   temperature: z.number().min(0).max(2).default(0.7),
@@ -87,7 +87,7 @@ export const aiChatSchema = z.object({
   contextType: z.string().optional(),
   contextId: z.string().optional(),
   message: z.string().min(1, 'Tin nhắn không được để trống'),
-  provider: z.enum(AI_PROVIDERS as [string, ...string[]]).optional(),
+  provider: z.enum(AI_PROVIDERS as unknown as [string, ...string[]]).optional(),
   model: z.string().optional(),
   stream: z.boolean().default(true),
   contextLevel: z.enum(['current', 'last5', 'full']).default('current'),
@@ -104,7 +104,7 @@ export const createPromptTemplateSchema = z.object({
 });
 
 export const exportSchema = z.object({
-  format: z.enum(EXPORT_FORMATS as [string, ...string[]]),
+  format: z.enum(EXPORT_FORMATS as unknown as [string, ...string[]]),
   chapterIds: z.array(z.string()).optional(),
   includeFrontMatter: z.boolean().default(true),
   includeBackMatter: z.boolean().default(false),

@@ -34,13 +34,20 @@ export default function CharactersPage() {
   const [editing, setEditing] = useState<Character | null>(null);
   const [form, setForm] = useState({ name: '', role: 'supporting', personality: '', background: '', appearance: '', motivation: '' });
 
-  useEffect(() => { fetchCharacters(); }, []);
+  useEffect(() => {
+    if (projectId) fetchCharacters();
+  }, [projectId]);
 
   const fetchCharacters = async () => {
     try {
       const res = await apiFetch(`/api/projects/${projectId}/characters`);
-      setCharacters(res.characters);
-    } catch (e: any) { toast.error(e.message); } finally { setLoading(false); }
+      setCharacters(Array.isArray(res?.characters) ? res.characters : []);
+    } catch (e: any) {
+      setCharacters([]);
+      toast.error(e.message || 'Lỗi tải danh sách nhân vật');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const saveCharacter = async () => {
@@ -71,9 +78,11 @@ export default function CharactersPage() {
 
   const openEdit = (char: Character) => {
     setEditing(char);
-    setForm({ name: char.name, role: char.role || 'supporting', personality: char.personality || '', background: char.background || '', appearance: char.appearance || '', motivation: char.motivation || '' });
+    setForm({ name: char.name || '', role: char.role || 'supporting', personality: char.personality || '', background: char.background || '', appearance: char.appearance || '', motivation: char.motivation || '' });
     setShowDialog(true);
   };
+
+  const safeCharacters = Array.isArray(characters) ? characters : [];
 
   return (
     <div className="min-h-screen bg-background">
@@ -86,11 +95,11 @@ export default function CharactersPage() {
       </header>
 
       <div className="p-6 max-w-7xl mx-auto">
-        {loading ? <div>Đang tải...</div> : characters.length === 0 ? (
+        {loading ? <div>Đang tải...</div> : safeCharacters.length === 0 ? (
           <Card className="border-dashed"><CardContent className="py-16 text-center"><User className="w-16 h-16 mx-auto mb-4 opacity-50" /><h3 className="font-semibold mb-2">Chưa có nhân vật</h3><p className="text-muted-foreground mb-4">Tạo nhân vật đầu tiên cho tiểu thuyết</p><Button onClick={() => setShowDialog(true)}><Plus className="w-4 h-4 mr-2" /> Tạo nhân vật</Button></CardContent></Card>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {characters.map(char => (
+            {safeCharacters.map(char => (
               <Card key={char.id} className="hover:shadow-lg transition-shadow group">
                 <CardHeader className="pb-3">
                   <div className="flex gap-3">

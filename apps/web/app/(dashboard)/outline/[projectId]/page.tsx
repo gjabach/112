@@ -40,16 +40,21 @@ export default function OutlinePage() {
   const [aiForm, setAiForm] = useState({ premise: '', genre: '', numChapters: 10, templateId: 'three-act' });
   const [aiLoading, setAiLoading] = useState(false);
 
-  useEffect(() => { fetchOutline(); }, []);
+  useEffect(() => {
+    if (projectId) fetchOutline();
+  }, [projectId]);
 
   const fetchOutline = async () => {
     try {
       const res = await apiFetch(`/api/projects/${projectId}/outline`);
-      setOutline(res.outline);
-      setFlat(res.flat);
-      setProgress(res.progress);
+      setOutline(Array.isArray(res?.outline) ? res.outline : []);
+      setFlat(Array.isArray(res?.flat) ? res.flat : []);
+      setProgress(typeof res?.progress === 'number' ? res.progress : 0);
     } catch (e: any) {
-      toast.error(e.message);
+      setOutline([]);
+      setFlat([]);
+      setProgress(0);
+      toast.error(e.message || 'Lỗi tải outline');
     } finally {
       setLoading(false);
     }
@@ -107,7 +112,7 @@ export default function OutlinePage() {
         method: 'POST',
         body: JSON.stringify(aiForm)
       });
-      toast.success(`AI đã tạo ${res.generatedCount} nodes`);
+      toast.success(`AI đã tạo ${res.generatedCount || 10} nodes`);
       setShowAIDialog(false);
       fetchOutline();
     } catch (e: any) {
@@ -127,8 +132,25 @@ export default function OutlinePage() {
         a.href = url;
         a.download = `outline-${projectId}.json`;
         a.click();
+        URL.revokeObjectURL(url);
+        toast.success('Đã tải xuống file JSON');
       } else if (format === 'opml') {
-        window.open(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}/api/projects/${projectId}/outline/export?format=opml`, '_blank');
+        const safeFlat = Array.isArray(flat) ? flat : [];
+        const opmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Dàn ý - ${projectId}</title></head>
+  <body>
+    ${safeFlat.map(n => `<outline text="${(n.title || '').replace(/"/g, '&quot;')}" _note="${(n.description || '').replace(/"/g, '&quot;')}" type="${n.type || 'scene'}" status="${n.status || 'idea'}" />`).join('\n    ')}
+  </body>
+</opml>`;
+        const blob = new Blob([opmlContent], { type: 'text/xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `outline-${projectId}.opml`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('Đã tải xuống file OPML');
       }
     } catch (e: any) { toast.error(e.message); }
   };
@@ -136,9 +158,9 @@ export default function OutlinePage() {
   const clearAll = async () => {
     if (!confirm('Xóa toàn bộ outline? Không thể hoàn tác!')) return;
     try {
-      // Delete all nodes one by one (or we could add bulk delete API)
-      for (const node of flat) {
-        if (!node.parentId) { // only delete roots, recursive will delete children
+      const safeFlat = Array.isArray(flat) ? flat : [];
+      for (const node of safeFlat) {
+        if (!node.parentId) {
           await apiFetch(`/api/outline/${node.id}`, { method: 'DELETE' });
         }
       }
@@ -149,6 +171,9 @@ export default function OutlinePage() {
 
   if (loading) return <div className="p-8">Đang tải outline...</div>;
 
+  const safeFlat = Array.isArray(flat) ? flat : [];
+  const safeOutline = Array.isArray(outline) ? outline : [];
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b bg-card sticky top-0 z-20">
@@ -157,7 +182,7 @@ export default function OutlinePage() {
           <div>
             <h1 className="font-bold">Dàn ý - Outline</h1>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{flat.length} nodes</span>
+              <span>{safeFlat.length} nodes</span>
               <span>•</span>
               <span>{progress}% hoàn thành</span>
               <div className="w-20 h-1 bg-muted rounded-full ml-2"><div className="h-1 bg-primary rounded-full" style={{ width: `${progress}%` }}></div></div>
@@ -181,7 +206,7 @@ export default function OutlinePage() {
       </header>
 
       <div className="flex-1 p-4 md:p-6 max-w-[1600px] mx-auto w-full">
-        {flat.length === 0 ? (
+        {safeFlat.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="py-16 text-center">
               <div className="text-6xl mb-4">🗺️</div>
@@ -198,7 +223,7 @@ export default function OutlinePage() {
           <>
             {viewMode === 'tree' && (
               <div className="space-y-2 max-w-4xl">
-                {outline.map((node: any) => (
+                {safeOutline.map((node: any) => (
                   <OutlineNode
                     key={node.id}
                     node={node}
@@ -212,21 +237,21 @@ export default function OutlinePage() {
 
             {viewMode === 'kanban' && (
               <KanbanView
-                nodes={flat}
+                nodes={safeFlat}
                 onUpdate={updateNode}
                 onAdd={(status) => { setNewNode({ ...newNode, status }); setShowNewDialog(true); }}
               />
             )}
 
             {viewMode === 'corkboard' && (
-              <CorkboardView nodes={flat} onUpdate={updateNode} />
+              <CorkboardView nodes={safeFlat} onUpdate={updateNode} />
             )}
 
             {viewMode === 'timeline' && (
               <div className="space-y-4">
                 <div className="flex gap-2 overflow-x-auto pb-4">
-                  {flat
-                    .sort((a: any, b: any) => a.orderIndex - b.orderIndex)
+                  {[...safeFlat]
+                    .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0))
                     .map((node: any, idx: number) => (
                       <Card key={node.id} className="min-w-[200px] border-l-4 flex-shrink-0" style={{ borderLeftColor: node.color || '#3b82f6' }}>
                         <CardContent className="p-3">

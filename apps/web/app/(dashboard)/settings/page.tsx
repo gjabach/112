@@ -18,63 +18,84 @@ const providers = [
 ];
 
 export default function SettingsPage() {
-  const { user } = useAuthStore();
-  const [aiProvider, setAiProvider] = useState('openai');
-  const [aiModel, setAiModel] = useState('gpt-4o-mini');
+  const { user, setUser } = useAuthStore();
+  const [aiProvider, setAiProvider] = useState('gemini');
+  const [aiModel, setAiModel] = useState('gemini-1.5-flash');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [profileName, setProfileName] = useState(user?.name || '');
 
   useEffect(() => {
+    // 1. Load from localStorage first
+    const savedProvider = localStorage.getItem('ai_provider');
+    const savedModel = localStorage.getItem('ai_model');
+    const savedKey = localStorage.getItem('ai_api_key');
+
+    if (savedProvider) setAiProvider(savedProvider);
+    if (savedModel) setAiModel(savedModel);
+    if (savedKey) setApiKey(savedKey);
+
+    // 2. Merge with user object
     if (user) {
       setProfileName(user.name || '');
-      if (user.aiProvider) setAiProvider(user.aiProvider);
-      if (user.aiModel) setAiModel(user.aiModel);
+      if (user.aiProvider && !savedProvider) setAiProvider(user.aiProvider);
+      if (user.aiModel && !savedModel) setAiModel(user.aiModel);
+      if (user.aiApiKey && !savedKey) setApiKey(user.aiApiKey);
     }
   }, [user]);
 
   const saveAISettings = async () => {
-    if (!apiKey && !user?.aiProvider) {
-      toast.error('Nhập API key');
+    if (!apiKey && aiProvider !== 'ollama') {
+      toast.error('Vui lòng nhập API key của ' + aiProvider.toUpperCase());
       return;
     }
     setLoading(true);
     try {
-      // For MVP, we need to add endpoint to update user AI settings
-      // Since we don't have PATCH /auth/me yet, we'll use direct fetch
-      await apiFetch('/api/auth/me', { method: 'GET' }); // verify
-      // Actually need to implement settings endpoint in backend, for now mock
-      // We'll call a new endpoint we should add: PATCH /api/auth/settings
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}/api/auth/settings`, {
+      // 1. Save directly to localStorage for instant reliability
+      localStorage.setItem('ai_provider', aiProvider);
+      localStorage.setItem('ai_model', aiModel);
+      if (apiKey) localStorage.setItem('ai_api_key', apiKey);
+
+      // 2. Sync to auth store
+      if (user) {
+        setUser({
+          ...user,
+          aiProvider,
+          aiModel,
+          aiApiKey: apiKey
+        });
+      }
+
+      // 3. Call apiFetch to sync with backend / localApi
+      await apiFetch('/api/auth/settings', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
         body: JSON.stringify({
           aiProvider,
           aiModel,
           aiApiKey: apiKey || undefined
         })
       });
-      if (!res.ok) {
-        // Fallback: if endpoint not exists, show message
-        if (res.status === 404) {
-          toast.success('Cài đặt AI đã lưu local (cần backend endpoint PATCH /auth/settings để lưu DB)');
-          localStorage.setItem('ai_provider', aiProvider);
-          localStorage.setItem('ai_model', aiModel);
-          if (apiKey) localStorage.setItem('ai_api_key', apiKey);
-          return;
-        }
-        const err = await res.json();
-        throw new Error(err.error);
-      }
-      toast.success('Đã lưu cài đặt AI');
+
+      toast.success('Đã lưu cấu hình AI thành công!');
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error('Lỗi khi lưu: ' + (e.message || 'Không xác định'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveProfile = () => {
+    if (!profileName.trim()) { toast.error('Vui lòng nhập tên hiển thị'); return; }
+    try {
+      const userStr = localStorage.getItem('novelist_current_user');
+      const u = userStr ? JSON.parse(userStr) : { email: 'user@example.com' };
+      u.name = profileName;
+      localStorage.setItem('novelist_current_user', JSON.stringify(u));
+      if (user) setUser({ ...user, name: profileName });
+      toast.success('Đã lưu tên hiển thị thành công!');
+    } catch {
+      toast.error('Không thể lưu profile');
     }
   };
 
@@ -93,7 +114,7 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Input placeholder="Tên hiển thị" value={profileName} onChange={e => setProfileName(e.target.value)} />
-            <Button variant="outline"><Save className="w-4 h-4 mr-2" /> Lưu profile (Phase 2)</Button>
+            <Button variant="outline" onClick={saveProfile}><Save className="w-4 h-4 mr-2" /> Lưu profile</Button>
           </CardContent>
         </Card>
 

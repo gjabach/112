@@ -29,14 +29,22 @@ export default function WorldbuildingPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [form, setForm] = useState({ name: '', type: 'location', description: '' });
 
-  useEffect(() => { fetchEntities(); }, [filter]);
+  useEffect(() => {
+    if (projectId) fetchEntities();
+  }, [projectId, filter]);
 
   const fetchEntities = async () => {
     try {
       const query = filter === 'all' ? '' : `?type=${filter}`;
       const res = await apiFetch(`/api/projects/${projectId}/entities${query}`);
-      setEntities(res.entities);
-    } catch (e: any) { toast.error(e.message); } finally { setLoading(false); }
+      const list = Array.isArray(res?.entities) ? res.entities : Array.isArray(res?.items) ? res.items : [];
+      setEntities(list);
+    } catch (e: any) {
+      setEntities([]);
+      toast.error(e.message || 'Lỗi tải dữ liệu thế giới');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const createEntity = async () => {
@@ -51,7 +59,7 @@ export default function WorldbuildingPage() {
   };
 
   const deleteEntity = async (id: string) => {
-    if (!confirm('Xóa?')) return;
+    if (!confirm('Xóa thực thể này?')) return;
     try {
       await apiFetch(`/api/entities/${id}`, { method: 'DELETE' });
       toast.success('Đã xóa');
@@ -69,6 +77,8 @@ export default function WorldbuildingPage() {
     { id: 'religion', label: 'Tôn giáo' }
   ];
 
+  const safeEntities = Array.isArray(entities) ? entities : [];
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card sticky top-0 z-10">
@@ -85,13 +95,13 @@ export default function WorldbuildingPage() {
       </header>
 
       <div className="p-6 max-w-7xl mx-auto">
-        {loading ? <div>Đang tải...</div> : entities.length === 0 ? (
+        {loading ? <div>Đang tải...</div> : safeEntities.length === 0 ? (
           <Card className="border-dashed"><CardContent className="py-16 text-center"><Map className="w-12 h-12 mx-auto mb-4 opacity-50" /><h3 className="font-semibold">Chưa có dữ liệu thế giới</h3><p className="text-muted-foreground text-sm mb-4">Tạo địa điểm, tổ chức, hệ thống ma thuật...</p><Button onClick={() => setShowDialog(true)}>Tạo đầu tiên</Button></CardContent></Card>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {entities.map(e => (
+            {safeEntities.map(e => (
               <Card key={e.id} className="group hover:shadow-md">
-                <CardHeader className="pb-2"><div className="flex justify-between"><CardTitle className="text-base">{e.name}</CardTitle><Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100" onClick={() => deleteEntity(e.id)}><Trash2 className="w-3 h-3" /></Button></div><Badge variant="secondary" className="w-fit text-xs">{e.type}</Badge></CardHeader>
+                <CardHeader className="pb-2"><div className="flex justify-between"><CardTitle className="text-base">{e.name}</CardTitle><Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 text-destructive" onClick={() => deleteEntity(e.id)}><Trash2 className="w-3 h-3" /></Button></div><Badge variant="secondary" className="w-fit text-xs">{e.type}</Badge></CardHeader>
                 <CardContent><p className="text-sm text-muted-foreground line-clamp-3">{e.description || 'Chưa có mô tả'}</p></CardContent>
               </Card>
             ))}

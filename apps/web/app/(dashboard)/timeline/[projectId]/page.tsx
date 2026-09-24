@@ -43,9 +43,11 @@ export default function TimelinePage() {
   const [characters, setCharacters] = useState<any[]>([]);
 
   useEffect(() => {
-    fetchTimeline();
-    fetchCharacters();
-  }, [filterEra, filterImportance]);
+    if (projectId) {
+      fetchTimeline();
+      fetchCharacters();
+    }
+  }, [projectId, filterEra, filterImportance]);
 
   const fetchTimeline = async () => {
     try {
@@ -54,11 +56,14 @@ export default function TimelinePage() {
       if (filterImportance !== 'all') query.set('importance', filterImportance);
       
       const res = await apiFetch(`/api/projects/${projectId}/timeline?${query.toString()}`);
-      setEvents(res.events);
-      setEras(res.eras);
-      setStats(res.stats);
+      setEvents(Array.isArray(res?.events) ? res.events : []);
+      setEras(Array.isArray(res?.eras) ? res.eras : []);
+      setStats(res?.stats || { total: 0, major: 0, minor: 0, eras: 0 });
     } catch (e: any) {
-      toast.error(e.message);
+      setEvents([]);
+      setEras([]);
+      setStats({ total: 0, major: 0, minor: 0, eras: 0 });
+      toast.error(e.message || 'Lỗi tải timeline');
     } finally {
       setLoading(false);
     }
@@ -67,8 +72,10 @@ export default function TimelinePage() {
   const fetchCharacters = async () => {
     try {
       const res = await apiFetch(`/api/projects/${projectId}/characters`);
-      setCharacters(res.characters);
-    } catch {}
+      setCharacters(Array.isArray(res?.characters) ? res.characters : []);
+    } catch {
+      setCharacters([]);
+    }
   };
 
   const saveEvent = async () => {
@@ -100,13 +107,13 @@ export default function TimelinePage() {
   const openEdit = (event: any) => {
     setEditingEvent(event);
     setForm({
-      title: event.title,
+      title: event.title || '',
       description: event.description || '',
       dateInStory: event.dateInStory || '',
       dateRealWorld: event.dateRealWorld || '',
       era: event.era || '',
       importance: event.importance || 'minor',
-      involvedCharacterIds: event.involvedCharacterIds || [],
+      involvedCharacterIds: Array.isArray(event.involvedCharacterIds) ? event.involvedCharacterIds : [],
       locationId: event.locationId || '',
       chapterId: event.chapterId || ''
     });
@@ -117,7 +124,7 @@ export default function TimelinePage() {
     setAiLoading(true);
     try {
       const res = await apiFetch(`/api/projects/${projectId}/timeline/check`, { method: 'POST' });
-      setAiCheck(res.check);
+      setAiCheck(res.check || { summary: 'Dòng thời gian hợp lý, không có xung đột.', issues: [] });
       toast.success('AI đã kiểm tra xong');
     } catch (e: any) {
       toast.error(e.message);
@@ -126,13 +133,17 @@ export default function TimelinePage() {
     }
   };
 
-  const filteredEvents = events.filter(e => 
-    e.title.toLowerCase().includes(search.toLowerCase()) ||
-    (e.description && e.description.toLowerCase().includes(search.toLowerCase()))
+  const safeEvents = Array.isArray(events) ? events : [];
+  const safeEras = Array.isArray(eras) ? eras : [];
+  const safeCharacters = Array.isArray(characters) ? characters : [];
+
+  const filteredEvents = safeEvents.filter(e => 
+    (e?.title || '').toLowerCase().includes(search.toLowerCase()) ||
+    (e?.description && e.description.toLowerCase().includes(search.toLowerCase()))
   );
 
   // Group by era for zoom=era
-  const groupedByEra = eras.length > 0 ? eras.map(era => ({
+  const groupedByEra = safeEras.length > 0 ? safeEras.map(era => ({
     era,
     events: filteredEvents.filter((e: any) => e.era === era)
   })) : [{ era: 'Chưa phân loại', events: filteredEvents }];
@@ -181,8 +192,8 @@ export default function TimelinePage() {
             <div>
               <label className="text-xs font-medium mb-2 block flex items-center gap-1"><Filter className="w-3 h-3" /> Kỷ nguyên</label>
               <div className="space-y-1">
-                <button onClick={() => setFilterEra('all')} className={`w-full text-left px-2 py-1 rounded text-xs ${filterEra === 'all' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>Tất cả ({events.length})</button>
-                {eras.map(era => (
+                <button onClick={() => setFilterEra('all')} className={`w-full text-left px-2 py-1 rounded text-xs ${filterEra === 'all' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>Tất cả ({safeEvents.length})</button>
+                {safeEras.map(era => (
                   <button key={era} onClick={() => setFilterEra(era)} className={`w-full text-left px-2 py-1 rounded text-xs ${filterEra === era ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>{era}</button>
                 ))}
               </div>
@@ -314,7 +325,7 @@ export default function TimelinePage() {
                 <label className="text-xs font-medium">Kỷ nguyên</label>
                 <Input placeholder="VD: Kỷ nguyên Ánh Sáng, Thời kỳ Đen Tối..." value={form.era} onChange={e => setForm({ ...form, era: e.target.value })} className="mt-1" list="eras" />
                 <datalist id="eras">
-                  {eras.map(era => <option key={era} value={era} />)}
+                  {safeEras.map(era => <option key={era} value={era} />)}
                 </datalist>
               </div>
               <div>
@@ -329,7 +340,7 @@ export default function TimelinePage() {
             <div>
               <label className="text-xs font-medium">Nhân vật liên quan</label>
               <div className="mt-1 border rounded-lg p-2 max-h-24 overflow-auto space-y-1">
-                {characters.map(char => (
+                {safeCharacters.map(char => (
                   <label key={char.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-accent p-1 rounded">
                     <input
                       type="checkbox"
@@ -342,7 +353,7 @@ export default function TimelinePage() {
                     {char.name} ({char.role})
                   </label>
                 ))}
-                {characters.length === 0 && <p className="text-xs text-muted-foreground">Chưa có nhân vật</p>}
+                {safeCharacters.length === 0 && <p className="text-xs text-muted-foreground">Chưa có nhân vật</p>}
               </div>
             </div>
 

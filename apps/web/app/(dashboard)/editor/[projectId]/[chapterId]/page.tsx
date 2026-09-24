@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { TiptapEditor } from '@/components/editor/tiptap-editor';
 import { apiFetch, countWords } from '@/lib/utils';
+import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
 import { ArrowLeft, Save, Sparkles, Eye, EyeOff, Type, Clock, FileText } from 'lucide-react';
 import { useEditorStore } from '@/lib/store';
@@ -81,56 +82,19 @@ export default function ChapterEditorPage() {
     setAiLoading(true);
     setAiSuggestion('');
     try {
-      // Get project info for context
-      const projectRes = await apiFetch(`/api/projects/${projectId}`);
-      
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}/api/ai/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          projectId,
-          contextType: 'chapter',
-          contextId: chapterId,
-          message: content.slice(-2000) || 'Viết tiếp chương này',
-          skill: 'continue_writing',
-          stream: true,
-          contextLevel: 'last5'
-        })
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error);
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let full = '';
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.content) {
-                  full += data.content;
-                  setAiSuggestion(full);
-                }
-              } catch {}
-            }
-          }
+      await executeAIChat({
+        projectId,
+        contextType: 'chapter',
+        contextId: chapterId,
+        message: content.slice(-2000) || 'Viết tiếp chương này',
+        skill: 'continue_writing',
+        stream: true,
+        onChunk: (chunk) => {
+          setAiSuggestion(prev => prev + chunk);
         }
-      }
+      });
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(e.message || 'Lỗi khi gọi AI');
     } finally {
       setAiLoading(false);
     }
@@ -213,27 +177,33 @@ export default function ChapterEditorPage() {
                 <div className="grid grid-cols-2 gap-2">
                   <Button size="sm" variant="outline" onClick={async () => {
                     setAiLoading(true);
+                    setAiSuggestion('');
                     try {
-                      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}/api/ai/chat`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                        body: JSON.stringify({ projectId, message: content.slice(-1000), skill: 'rewrite', stream: false })
+                      await executeAIChat({
+                        projectId,
+                        contextType: 'chapter',
+                        contextId: chapterId,
+                        message: content.slice(-1000) || 'Viết lại đoạn văn này',
+                        skill: 'rewrite',
+                        stream: true,
+                        onChunk: (chunk) => setAiSuggestion(prev => prev + chunk)
                       });
-                      const data = await res.json();
-                      if (data.content) setAiSuggestion(data.content);
-                    } catch (e: any) { toast.error(e.message); } finally { setAiLoading(false); }
+                    } catch (e: any) { toast.error(e.message || 'Lỗi AI'); } finally { setAiLoading(false); }
                   }}>🔄 Viết lại</Button>
                   <Button size="sm" variant="outline" onClick={async () => {
                     setAiLoading(true);
+                    setAiSuggestion('');
                     try {
-                      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'}/api/ai/chat`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                        body: JSON.stringify({ projectId, message: content.slice(-1500), skill: 'critique', stream: false })
+                      await executeAIChat({
+                        projectId,
+                        contextType: 'chapter',
+                        contextId: chapterId,
+                        message: content.slice(-1500) || 'Phê bình chương này',
+                        skill: 'critique',
+                        stream: true,
+                        onChunk: (chunk) => setAiSuggestion(prev => prev + chunk)
                       });
-                      const data = await res.json();
-                      if (data.content) setAiSuggestion(data.content);
-                    } catch (e: any) { toast.error(e.message); } finally { setAiLoading(false); }
+                    } catch (e: any) { toast.error(e.message || 'Lỗi AI'); } finally { setAiLoading(false); }
                   }}>🔍 Phê bình</Button>
                 </div>
 
