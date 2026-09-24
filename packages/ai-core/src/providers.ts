@@ -213,6 +213,12 @@ export class GeminiProvider implements AIProvider {
       }
       throw new Error(`[Gemini] Lỗi yêu cầu (400): ${cleanMsg}`);
     }
+    if (status === 401) {
+      if (cleanMsg.includes('API_KEY_SERVICE_BLOCKED') || cleanMsg.includes('ACCESS_TOKEN_TYPE_UNSUPPORTED')) {
+        throw new Error('API Key này bị Google từ chối quyền truy cập (API_KEY_SERVICE_BLOCKED). Cách khắc phục: Vào aistudio.google.com/app/apikey -> bấm "Create API key" -> chọn "Create API key in new project" (Tạo trong dự án mới) để Google tự động kích hoạt API miễn phí.');
+      }
+      throw new Error(`[Gemini] Lỗi xác thực (401): ${cleanMsg}`);
+    }
     if (status === 403) {
       throw new Error(`[Gemini] Quyền truy cập bị từ chối (403): ${cleanMsg}. Vui lòng kiểm tra tài khoản Google AI Studio.`);
     }
@@ -260,6 +266,13 @@ export class GeminiProvider implements AIProvider {
         const errJson = JSON.parse(text);
         errorMsg = errJson.error?.message || text;
       } catch {}
+
+      // If requested model returned 404, automatically fallback to gemini-1.5-flash
+      if (res.status === 404 && model !== 'gemini-1.5-flash') {
+        console.warn(`[Gemini] Model ${model} returned 404, auto-falling back to gemini-1.5-flash`);
+        return this.chat({ ...options, model: 'gemini-1.5-flash' });
+      }
+
       this.handleGeminiError(res.status, errorMsg);
     }
 
@@ -302,6 +315,14 @@ export class GeminiProvider implements AIProvider {
         const errJson = JSON.parse(text);
         errorMsg = errJson.error?.message || text;
       } catch {}
+
+      // If requested model returned 404, automatically fallback to gemini-1.5-flash
+      if (res.status === 404 && model !== 'gemini-1.5-flash') {
+        console.warn(`[Gemini] Model ${model} returned 404 in stream, auto-falling back to gemini-1.5-flash`);
+        yield* this.chatStream({ ...options, model: 'gemini-1.5-flash' });
+        return;
+      }
+
       this.handleGeminiError(res.status, errorMsg);
     }
 

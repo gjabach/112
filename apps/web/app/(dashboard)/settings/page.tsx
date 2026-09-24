@@ -115,6 +115,10 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (data.success) {
+        if (data.autoAdjusted && data.model) {
+          setAiModel(data.model);
+          localStorage.setItem('ai_model', data.model);
+        }
         setTestResult({ success: true, message: data.message });
         toast.success(data.message);
       } else {
@@ -313,13 +317,20 @@ export default function SettingsPage() {
                   <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">{showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                {aiProvider === 'openai' && 'Lấy key tại: platform.openai.com/api-keys'}
-                {aiProvider === 'anthropic' && 'Lấy key tại: console.anthropic.com'}
-                {aiProvider === 'gemini' && 'Lấy key tại: aistudio.google.com/app/apikey (miễn phí)'}
-                {aiProvider === 'groq' && 'Lấy key tại: console.groq.com/keys (miễn phí, nhanh)'}
-                {aiProvider === 'ollama' && 'Cài Ollama local: ollama.ai, không cần key'}
-              </p>
+              <div className="text-xs text-muted-foreground mt-2 space-y-1.5">
+                {aiProvider === 'openai' && <p>Lấy key tại: platform.openai.com/api-keys</p>}
+                {aiProvider === 'anthropic' && <p>Lấy key tại: console.anthropic.com</p>}
+                {aiProvider === 'gemini' && (
+                  <div className="space-y-1">
+                    <p>Lấy key tại: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="underline text-primary font-medium">aistudio.google.com/app/apikey</a> (miễn phí)</p>
+                    <p className="text-amber-600 dark:text-amber-400 font-medium bg-amber-500/10 border border-amber-500/20 p-2 rounded">
+                      💡 <strong>Mẹo quan trọng:</strong> Tại Google AI Studio, hãy bấm nút <strong>"Create API key"</strong> -&gt; chọn <strong>"Create API key in new project"</strong> (dự án mới) để Google tự động kích hoạt API và hạn mức miễn phí (tránh lỗi bị chặn dịch vụ khi chọn dự án cũ).
+                    </p>
+                  </div>
+                )}
+                {aiProvider === 'groq' && <p>Lấy key tại: console.groq.com/keys (miễn phí, nhanh)</p>}
+                {aiProvider === 'ollama' && <p>Cài Ollama local: ollama.ai, không cần key</p>}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">

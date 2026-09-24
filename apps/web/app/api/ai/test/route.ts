@@ -18,23 +18,59 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    const modelName = (reqModel || (providerName === 'gemini' ? 'gemini-1.5-flash' : 'gpt-4o-mini')).trim();
+    const requestedModel = (reqModel || (providerName === 'gemini' ? 'gemini-1.5-flash' : 'gpt-4o-mini')).trim();
     const provider = createAIProvider(providerName);
 
-    // Quick verification ping
-    const pingResponse = await provider.chat({
-      model: modelName,
-      messages: [
-        { role: 'user', content: 'Hãy trả lời chính xác một từ duy nhất: OK' }
-      ],
-      apiKey: effectiveKey,
-      temperature: 0.1,
-      maxTokens: 16
-    });
+    // If gemini, prioritize requested model, but try gemini-1.5-flash and gemini-2.0-flash if 404 occurs
+    const candidateModels = providerName === 'gemini'
+      ? [requestedModel, 'gemini-1.5-flash', 'gemini-2.0-flash'].filter((m, i, arr) => arr.indexOf(m) === i)
+      : [requestedModel];
+
+    let lastError: any = null;
+    let successfulModel = '';
+    let pingResponse = '';
+
+    for (const testModel of candidateModels) {
+      try {
+        pingResponse = await provider.chat({
+          model: testModel,
+          messages: [
+            { role: 'user', content: 'Hãy trả lời chính xác một từ duy nhất: OK' }
+          ],
+          apiKey: effectiveKey,
+          temperature: 0.1,
+          maxTokens: 16
+        });
+        successfulModel = testModel;
+        break;
+      } catch (err: any) {
+        lastError = err;
+        // If 404 (model not found), continue trying the next candidate model
+        if (err.message && err.message.includes('404')) {
+          continue;
+        }
+        // If auth error (401/403) or rate limit, break immediately
+        break;
+      }
+    }
+
+    if (!successfulModel) {
+      return NextResponse.json({
+        success: false,
+        error: lastError?.message || 'Không thể kết nối tới nhà cung cấp AI'
+      }, { status: 400 });
+    }
+
+    const autoAdjusted = successfulModel !== requestedModel;
+    const message = autoAdjusted
+      ? `Kết nối thành công! Đã tự động chọn model khả dụng: ${successfulModel} (do tài khoản của bạn chưa kích hoạt ${requestedModel}).`
+      : `Kết nối thành công tới ${providerName.toUpperCase()} (Model: ${successfulModel})!`;
 
     return NextResponse.json({
       success: true,
-      message: `Kết nối thành công tới ${providerName.toUpperCase()} (Model: ${modelName})!`,
+      model: successfulModel,
+      autoAdjusted,
+      message,
       reply: pingResponse.trim()
     });
   } catch (error: any) {
