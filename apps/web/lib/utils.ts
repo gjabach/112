@@ -381,6 +381,23 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     if (method === 'DELETE') {
       const filtered = projects.filter((p: any) => p.id !== id);
       setStorage('novelist_projects', filtered);
+
+      // Cascade delete related records to prevent localStorage bloat
+      const chapters = getStorage('novelist_chapters', []);
+      setStorage('novelist_chapters', chapters.filter((c: any) => c.projectId !== id));
+
+      const characters = getStorage('novelist_characters', []);
+      setStorage('novelist_characters', characters.filter((c: any) => c.projectId !== id));
+
+      const entities = getStorage('novelist_worldbuilding', []);
+      setStorage('novelist_worldbuilding', entities.filter((e: any) => e.projectId !== id));
+
+      const timeline = getStorage('novelist_timeline', []);
+      setStorage('novelist_timeline', timeline.filter((e: any) => e.projectId !== id));
+
+      const outline = getStorage('novelist_outline', []);
+      setStorage('novelist_outline', outline.filter((n: any) => n.projectId !== id));
+
       return { success: true };
     }
   }
@@ -391,11 +408,95 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     const projects = getStorage('novelist_projects', []);
     const orig = projects.find((p: any) => p.id === id);
     if (orig) {
-      const cloned = { ...orig, id: 'proj_' + now, title: orig.title + ' (Bản sao)', createdAt: now, updatedAt: now };
+      const newProjectId = 'proj_' + now;
+      const cloned = { ...orig, id: newProjectId, title: orig.title + ' (Bản sao)', createdAt: now, updatedAt: now };
       projects.unshift(cloned);
       setStorage('novelist_projects', projects);
+
+      // Deep clone chapters
+      const chapters = getStorage('novelist_chapters', []);
+      const origChapters = chapters.filter((c: any) => c.projectId === id);
+      const newChapters = origChapters.map((c: any, idx: number) => ({
+        ...c,
+        id: 'chap_' + (now + idx + 1),
+        projectId: newProjectId,
+        createdAt: now,
+        updatedAt: now
+      }));
+      setStorage('novelist_chapters', [...chapters, ...newChapters]);
+
+      // Deep clone characters
+      const characters = getStorage('novelist_characters', []);
+      const origChars = characters.filter((c: any) => c.projectId === id);
+      const newChars = origChars.map((c: any, idx: number) => ({
+        ...c,
+        id: 'char_' + (now + idx + 1),
+        projectId: newProjectId,
+        createdAt: now,
+        updatedAt: now
+      }));
+      setStorage('novelist_characters', [...characters, ...newChars]);
+
+      // Deep clone entities
+      const entities = getStorage('novelist_worldbuilding', []);
+      const origEntities = entities.filter((e: any) => e.projectId === id);
+      const newEntities = origEntities.map((e: any, idx: number) => ({
+        ...e,
+        id: 'ent_' + (now + idx + 1),
+        projectId: newProjectId,
+        createdAt: now,
+        updatedAt: now
+      }));
+      setStorage('novelist_worldbuilding', [...entities, ...newEntities]);
+
+      // Deep clone timeline
+      const timeline = getStorage('novelist_timeline', []);
+      const origTimeline = timeline.filter((e: any) => e.projectId === id);
+      const newTimeline = origTimeline.map((e: any, idx: number) => ({
+        ...e,
+        id: 'evt_' + (now + idx + 1),
+        projectId: newProjectId,
+        createdAt: now,
+        updatedAt: now
+      }));
+      setStorage('novelist_timeline', [...timeline, ...newTimeline]);
+
+      // Deep clone outline
+      const outline = getStorage('novelist_outline', []);
+      const origOutline = outline.filter((n: any) => n.projectId === id);
+      const newOutline = origOutline.map((n: any, idx: number) => ({
+        ...n,
+        id: 'node_' + (now + idx + 1),
+        projectId: newProjectId,
+        createdAt: now,
+        updatedAt: now
+      }));
+      setStorage('novelist_outline', [...outline, ...newOutline]);
+
       return { project: cloned };
     }
+  }
+
+  // Chapters Reorder
+  const reorderChapMatch = path.match(/^\/api\/projects\/([^\/]+)\/chapters\/reorder$/);
+  if (reorderChapMatch && method === 'POST') {
+    const projectId = reorderChapMatch[1];
+    const chapters = getStorage('novelist_chapters', []);
+    const orderedIds: string[] = body.chapterIds || (Array.isArray(body.orderedIds) ? body.orderedIds.map((o: any) => o.id) : []);
+
+    if (orderedIds.length > 0) {
+      const updated = chapters.map((c: any) => {
+        if (c.projectId === projectId) {
+          const newIdx = orderedIds.indexOf(c.id);
+          if (newIdx !== -1) {
+            return { ...c, orderIndex: newIdx + 1, updatedAt: now };
+          }
+        }
+        return c;
+      });
+      setStorage('novelist_chapters', updated);
+    }
+    return { success: true };
   }
 
   // Chapters
@@ -464,8 +565,18 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
       return { chapter: updated.find((c: any) => c.id === id) };
     }
     if (method === 'DELETE') {
+      const targetChap = chapters.find((c: any) => c.id === id);
       const filtered = chapters.filter((c: any) => c.id !== id);
       setStorage('novelist_chapters', filtered);
+
+      if (targetChap) {
+        const remainingProjChaps = filtered.filter((c: any) => c.projectId === targetChap.projectId);
+        const totalWords = remainingProjChaps.reduce((sum: number, c: any) => sum + (c.wordCount || 0), 0);
+        const projects = getStorage('novelist_projects', []);
+        const updatedProj = projects.map((p: any) => p.id === targetChap.projectId ? { ...p, chapterCount: remainingProjChaps.length, wordCount: totalWords, updatedAt: now } : p);
+        setStorage('novelist_projects', updatedProj);
+      }
+
       return { success: true };
     }
   }
@@ -697,10 +808,52 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
   // Timeline - Check
   const timeCheckMatch = path.match(/^\/api\/projects\/([^\/]+)\/timeline\/check$/);
   if (timeCheckMatch && method === 'POST') {
+    const projectId = timeCheckMatch[1];
+    const events = getStorage('novelist_timeline', []).filter((e: any) => e.projectId === projectId);
+    const characters = getStorage('novelist_characters', []).filter((c: any) => c.projectId === projectId);
+
+    const issues: any[] = [];
+    if (events.length === 0) {
+      return {
+        check: {
+          summary: 'Dự án chưa có sự kiện timeline nào. Hãy thêm ít nhất 2 sự kiện để phân tích dòng thời gian.',
+          issues: []
+        }
+      };
+    }
+
+    // Check for missing dates
+    const undatedEvents = events.filter((e: any) => !e.dateInStory && !e.era);
+    if (undatedEvents.length > 0) {
+      issues.push({
+        type: 'missing_date',
+        severity: 'medium',
+        eventIds: undatedEvents.map((e: any) => e.id),
+        description: `Có ${undatedEvents.length} sự kiện chưa xác định ngày trong truyện hoặc kỷ nguyên: ${undatedEvents.slice(0, 3).map((e: any) => `"${e.title}"`).join(', ')}.`,
+        suggestion: 'Hãy đặt mốc thời gian (ví dụ: "Năm 102", "Ngày 15 tháng 3", "Đêm trăng tròn") để giữ mạch thời gian rõ ràng.'
+      });
+    }
+
+    // Check for major events with no characters
+    const majorNoChar = events.filter((e: any) => e.importance === 'major' && (!e.involvedCharacterIds || e.involvedCharacterIds.length === 0));
+    if (majorNoChar.length > 0) {
+      issues.push({
+        type: 'causality',
+        severity: 'low',
+        eventIds: majorNoChar.map((e: any) => e.id),
+        description: `Có ${majorNoChar.length} sự kiện trọng đại chưa gắn với nhân vật nào: ${majorNoChar.slice(0, 3).map((e: any) => `"${e.title}"`).join(', ')}.`,
+        suggestion: 'Gắn nhân vật vào các sự kiện mấu chốt để người đọc đồng cảm và theo dõi diễn biến tâm lý.'
+      });
+    }
+
+    const summary = issues.length === 0
+      ? `Đã phân tích toàn diện ${events.length} sự kiện và ${characters.length} nhân vật. Mạch thời gian nhất quán, chặt chẽ và không phát hiện nghịch lý thời gian.`
+      : `Đã phân tích ${events.length} sự kiện: phát hiện ${issues.length} điểm có thể tối ưu hoá để mạch truyện liền mạch hơn.`;
+
     return {
       check: {
-        summary: 'Dòng thời gian hợp lý, không phát hiện xung đột thời gian hoặc mâu thuẫn nhân vật.',
-        issues: []
+        summary,
+        issues
       }
     };
   }

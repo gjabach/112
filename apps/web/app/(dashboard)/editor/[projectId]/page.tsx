@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download } from 'lucide-react';
+import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download, ChevronUp, ChevronDown, Search } from 'lucide-react';
 import { useProjectStore } from '@/lib/store';
 
 interface Chapter {
@@ -25,7 +25,30 @@ export default function ProjectEditorPage() {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [newChapterTitle, setNewChapterTitle] = useState('');
+  const [searchChapter, setSearchChapter] = useState('');
   const setCurrentProjectId = useProjectStore(s => s.setCurrentProjectId);
+
+  const moveChapter = async (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= chapters.length) return;
+
+    const newChapters = [...chapters];
+    const temp = newChapters[index];
+    newChapters[index] = newChapters[targetIndex];
+    newChapters[targetIndex] = temp;
+    setChapters(newChapters);
+
+    try {
+      await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ chapterIds: newChapters.map(c => c.id) })
+      });
+      toast.success(`Đã chuyển vị trí chương`);
+    } catch (e: any) {
+      toast.error('Lỗi sắp xếp: ' + (e.message || ''));
+      fetchData();
+    }
+  };
 
   useEffect(() => {
     setCurrentProjectId(projectId);
@@ -104,36 +127,75 @@ export default function ProjectEditorPage() {
       <div className="flex-1 flex">
         {/* Sidebar Chapters */}
         <aside className="w-80 border-r bg-card flex flex-col">
-          <div className="p-4 border-b">
-            <h2 className="font-semibold mb-3">Mục lục</h2>
-            <div className="flex gap-2">
-              <Input placeholder="Tên chương mới..." value={newChapterTitle} onChange={e => setNewChapterTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && createChapter()} className="h-8" />
-              <Button size="sm" onClick={createChapter}><Plus className="w-4 h-4" /></Button>
+          <div className="p-4 border-b space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Mục lục ({chapters.length})</h2>
+              <span className="text-[11px] text-muted-foreground">{project.wordCount?.toLocaleString() || 0} từ</span>
             </div>
+            <div className="flex gap-2">
+              <Input placeholder="Tên chương mới..." value={newChapterTitle} onChange={e => setNewChapterTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && createChapter()} className="h-8 text-xs" />
+              <Button size="sm" className="h-8 px-2.5" onClick={createChapter}><Plus className="w-4 h-4" /></Button>
+            </div>
+            {chapters.length > 5 && (
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+                <Input
+                  placeholder="Tìm chương..."
+                  value={searchChapter}
+                  onChange={e => setSearchChapter(e.target.value)}
+                  className="pl-7 h-7 text-xs bg-muted/30"
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-auto p-2 space-y-1">
-            {chapters.map(ch => (
-              <div key={ch.id} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-accent">
-                <GripVertical className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
-                <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                <Link href={`/editor/${projectId}/${ch.id}`} className="flex-1 min-w-0">
-                  <div className="truncate text-sm font-medium">{ch.title}</div>
-                  <div className="flex gap-2 items-center">
-                    <Badge variant="secondary" className="text-[10px] px-1 py-0">{ch.status}</Badge>
-                    <span className="text-[10px] text-muted-foreground">{ch.wordCount} từ</span>
+            {chapters
+              .filter(ch => (ch.title || '').toLowerCase().includes(searchChapter.toLowerCase()))
+              .map((ch, idx) => (
+                <div key={ch.id} className="group flex items-center gap-1.5 p-2 rounded-lg hover:bg-accent transition-colors">
+                  <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      onClick={() => moveChapter(idx, 'up')}
+                      className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20"
+                      title="Chuyển lên"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={idx === chapters.length - 1}
+                      onClick={() => moveChapter(idx, 'down')}
+                      className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20"
+                      title="Chuyển xuống"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
                   </div>
-                </Link>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-                  <Link href={`/editor/${projectId}/${ch.id}`}><Button variant="ghost" size="icon" className="h-6 w-6"><Edit3 className="w-3 h-3" /></Button></Link>
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteChapter(ch.id)}><Trash2 className="w-3 h-3" /></Button>
+                  <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <Link href={`/editor/${projectId}/${ch.id}`} className="flex-1 min-w-0">
+                    <div className="truncate text-sm font-medium">{ch.title}</div>
+                    <div className="flex gap-2 items-center">
+                      <Badge variant="secondary" className="text-[10px] px-1 py-0">{ch.status || 'draft'}</Badge>
+                      <span className="text-[10px] text-muted-foreground">{ch.wordCount || 0} từ</span>
+                    </div>
+                  </Link>
+                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Link href={`/editor/${projectId}/${ch.id}`}>
+                      <Button variant="ghost" size="icon" className="h-6 w-6"><Edit3 className="w-3 h-3" /></Button>
+                    </Link>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => deleteChapter(ch.id)}>
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
 
-          <div className="p-4 border-t text-xs text-muted-foreground">
-            <p>Mẹo: Kéo thả để sắp xếp lại chương. Click để chỉnh sửa.</p>
+          <div className="p-3 border-t text-[11px] text-muted-foreground">
+            <p>💡 Dùng mũi tên lên/xuống để đổi thứ tự chương. Click để bắt đầu viết.</p>
           </div>
         </aside>
 

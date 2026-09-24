@@ -101,17 +101,24 @@ export default function SettingsPage() {
 
   const exportAllData = () => {
     try {
+      const getStored = (key: string, fallback: any = []) => {
+        try {
+          const v = localStorage.getItem(key);
+          return v ? JSON.parse(v) : fallback;
+        } catch { return fallback; }
+      };
+
       const backupData = {
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
-        projects: JSON.parse(localStorage.getItem('novelist_projects') || '[]'),
-        chapters: JSON.parse(localStorage.getItem('novelist_chapters') || '[]'),
-        characters: JSON.parse(localStorage.getItem('novelist_characters') || '[]'),
-        entities: JSON.parse(localStorage.getItem('novelist_entities') || '[]'),
-        timelineEvents: JSON.parse(localStorage.getItem('novelist_timeline_events') || '[]'),
-        timelineEras: JSON.parse(localStorage.getItem('novelist_timeline_eras') || '[]'),
-        outlines: JSON.parse(localStorage.getItem('novelist_outlines') || '{}'),
-        user: JSON.parse(localStorage.getItem('novelist_current_user') || 'null'),
+        projects: getStored('novelist_projects', []),
+        chapters: getStored('novelist_chapters', []),
+        characters: getStored('novelist_characters', []),
+        entities: getStored('novelist_worldbuilding', getStored('novelist_entities', [])),
+        timeline: getStored('novelist_timeline', getStored('novelist_timeline_events', [])),
+        timelineEras: getStored('novelist_timeline_eras', []),
+        outline: getStored('novelist_outline', getStored('novelist_outlines', [])),
+        user: getStored('novelist_current_user', null),
         aiConfig: {
           provider: localStorage.getItem('ai_provider') || 'gemini',
           model: localStorage.getItem('ai_model') || 'gemini-1.5-flash',
@@ -156,18 +163,34 @@ export default function SettingsPage() {
         if (Array.isArray(data.characters)) {
           localStorage.setItem('novelist_characters', JSON.stringify(data.characters));
         }
-        if (Array.isArray(data.entities)) {
-          localStorage.setItem('novelist_entities', JSON.stringify(data.entities));
+
+        const entitiesData = data.entities || data.worldbuilding || [];
+        if (Array.isArray(entitiesData)) {
+          localStorage.setItem('novelist_worldbuilding', JSON.stringify(entitiesData));
+          localStorage.setItem('novelist_entities', JSON.stringify(entitiesData));
         }
-        if (Array.isArray(data.timelineEvents)) {
-          localStorage.setItem('novelist_timeline_events', JSON.stringify(data.timelineEvents));
+
+        const timelineData = data.timeline || data.timelineEvents || [];
+        if (Array.isArray(timelineData)) {
+          localStorage.setItem('novelist_timeline', JSON.stringify(timelineData));
+          localStorage.setItem('novelist_timeline_events', JSON.stringify(timelineData));
         }
+
         if (Array.isArray(data.timelineEras)) {
           localStorage.setItem('novelist_timeline_eras', JSON.stringify(data.timelineEras));
         }
-        if (data.outlines && typeof data.outlines === 'object') {
-          localStorage.setItem('novelist_outlines', JSON.stringify(data.outlines));
+
+        const outlineData = data.outline || data.outlines || [];
+        if (outlineData) {
+          localStorage.setItem('novelist_outline', JSON.stringify(outlineData));
+          localStorage.setItem('novelist_outlines', JSON.stringify(outlineData));
         }
+
+        if (data.user) {
+          localStorage.setItem('novelist_current_user', JSON.stringify(data.user));
+          if (data.user.name) setProfileName(data.user.name);
+        }
+
         if (data.aiConfig) {
           if (data.aiConfig.provider) localStorage.setItem('ai_provider', data.aiConfig.provider);
           if (data.aiConfig.model) localStorage.setItem('ai_model', data.aiConfig.model);
