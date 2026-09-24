@@ -14,7 +14,7 @@
   "dependencies": {
     "@novelist/shared": "workspace:*",
     "@novelist/ai-core": "workspace:*",
-    "next": "15.0.3",
+    "next": "15.0.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "hono": "^4.6.5",
