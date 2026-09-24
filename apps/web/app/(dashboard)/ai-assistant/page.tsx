@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +28,7 @@ const skills = [
   { id: 'description_enhance', label: '👁️ Chi tiết', desc: 'Thêm chi tiết giác quan' }
 ];
 
-export default function AIAssistantPage() {
+function AIAssistantContent() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get('projectId');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -175,5 +175,13 @@ export default function AIAssistantPage() {
         </div>
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function AIAssistantPage() {
+  return (
+    <Suspense fallback={<div className="p-8">Đang tải...</div>}>
+      <AIAssistantContent />
+    </Suspense>
   );
 }

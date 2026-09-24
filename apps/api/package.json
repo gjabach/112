@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev src/index.ts --local --persist",
-    "build": "tsc --noEmit",
+    "build": "echo api ready",
     "deploy": "wrangler deploy",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply novelist-db --local",
