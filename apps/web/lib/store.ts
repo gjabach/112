@@ -9,6 +9,7 @@ interface User {
   avatarUrl: string | null;
   aiProvider: string | null;
   aiModel: string | null;
+  aiApiKey?: string | null;
 }
 
 interface AuthState {

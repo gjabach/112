@@ -7,7 +7,7 @@ import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { useAuthStore } from '@/lib/store';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Eye, EyeOff, Save } from 'lucide-react';
+import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle } from 'lucide-react';
 
 const providers = [
   { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'] },
@@ -99,6 +99,96 @@ export default function SettingsPage() {
     }
   };
 
+  const exportAllData = () => {
+    try {
+      const backupData = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        projects: JSON.parse(localStorage.getItem('novelist_projects') || '[]'),
+        chapters: JSON.parse(localStorage.getItem('novelist_chapters') || '[]'),
+        characters: JSON.parse(localStorage.getItem('novelist_characters') || '[]'),
+        entities: JSON.parse(localStorage.getItem('novelist_entities') || '[]'),
+        timelineEvents: JSON.parse(localStorage.getItem('novelist_timeline_events') || '[]'),
+        timelineEras: JSON.parse(localStorage.getItem('novelist_timeline_eras') || '[]'),
+        outlines: JSON.parse(localStorage.getItem('novelist_outlines') || '{}'),
+        user: JSON.parse(localStorage.getItem('novelist_current_user') || 'null'),
+        aiConfig: {
+          provider: localStorage.getItem('ai_provider') || 'gemini',
+          model: localStorage.getItem('ai_model') || 'gemini-1.5-flash',
+          apiKey: localStorage.getItem('ai_api_key') || ''
+        }
+      };
+
+      const jsonStr = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `novelist_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('Đã xuất file sao lưu toàn bộ dữ liệu thành công!');
+    } catch (err: any) {
+      toast.error('Lỗi khi sao lưu dữ liệu: ' + (err.message || ''));
+    }
+  };
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (!data || typeof data !== 'object') {
+          throw new Error('File sao lưu không đúng định dạng');
+        }
+
+        if (Array.isArray(data.projects)) {
+          localStorage.setItem('novelist_projects', JSON.stringify(data.projects));
+        }
+        if (Array.isArray(data.chapters)) {
+          localStorage.setItem('novelist_chapters', JSON.stringify(data.chapters));
+        }
+        if (Array.isArray(data.characters)) {
+          localStorage.setItem('novelist_characters', JSON.stringify(data.characters));
+        }
+        if (Array.isArray(data.entities)) {
+          localStorage.setItem('novelist_entities', JSON.stringify(data.entities));
+        }
+        if (Array.isArray(data.timelineEvents)) {
+          localStorage.setItem('novelist_timeline_events', JSON.stringify(data.timelineEvents));
+        }
+        if (Array.isArray(data.timelineEras)) {
+          localStorage.setItem('novelist_timeline_eras', JSON.stringify(data.timelineEras));
+        }
+        if (data.outlines && typeof data.outlines === 'object') {
+          localStorage.setItem('novelist_outlines', JSON.stringify(data.outlines));
+        }
+        if (data.aiConfig) {
+          if (data.aiConfig.provider) localStorage.setItem('ai_provider', data.aiConfig.provider);
+          if (data.aiConfig.model) localStorage.setItem('ai_model', data.aiConfig.model);
+          if (data.aiConfig.apiKey) localStorage.setItem('ai_api_key', data.aiConfig.apiKey);
+          setAiProvider(data.aiConfig.provider || 'gemini');
+          setAiModel(data.aiConfig.model || 'gemini-1.5-flash');
+          setApiKey(data.aiConfig.apiKey || '');
+        }
+
+        toast.success('Khôi phục dữ liệu thành công! Đang tải lại...');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } catch (err: any) {
+        toast.error('Lỗi khi nạp file sao lưu: ' + (err.message || ''));
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   return (
     <DashboardLayout>
       <div className="p-6 md:p-8 max-w-4xl mx-auto space-y-8">
@@ -176,6 +266,49 @@ export default function SettingsPage() {
                 <li>Streaming trực tiếp, không lưu log nhạy cảm</li>
                 <li>Có thể xóa key bất kỳ lúc nào</li>
               </ul>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-amber-500/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Database className="w-5 h-5 text-amber-500" />
+              Sao lưu & Phục hồi dữ liệu (Backup & Restore)
+            </CardTitle>
+            <CardDescription>
+              Toàn bộ tiểu thuyết, chương, nhân vật, dàn ý và thiết lập được lưu an toàn trong trình duyệt của bạn (LocalStorage).
+              Xuất file dự phòng để không bao giờ sợ mất dữ liệu khi đổi trình duyệt, dọn máy hoặc đổi link Vercel.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                <strong>Mẹo quan trọng:</strong> Khi truy cập trên Vercel, hãy luôn dùng <strong>đường link Production chính cố định</strong> của bạn thay vì link Preview tạm thời. Dữ liệu trên link cố định sẽ <strong>không bao giờ bị mất</strong> qua các lần cập nhật code.
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={exportAllData} className="flex items-center gap-2">
+                <Download className="w-4 h-4 text-emerald-500" />
+                Tải về bản sao lưu (.json)
+              </Button>
+
+              <label className="inline-flex">
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={handleImportFile}
+                />
+                <Button variant="outline" asChild className="cursor-pointer flex items-center gap-2">
+                  <span>
+                    <Upload className="w-4 h-4 text-sky-500" />
+                    Phục hồi từ file sao lưu
+                  </span>
+                </Button>
+              </label>
             </div>
           </CardContent>
         </Card>
