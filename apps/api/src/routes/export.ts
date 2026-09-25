@@ -11,12 +11,19 @@ const exportRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 exportRoutes.use('*', authMiddleware);
 
-// POST /api/export/:projectId - Generate export file thực tế
-exportRoutes.post('/:projectId', async (c) => {
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const chunkSize = 8192;
+  let binaryStr = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    binaryStr += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binaryStr);
+}
+
+async function handleProjectExport(c: any, projectId: string, body: any) {
   const db = c.get('db');
   const user = c.get('user');
-  const projectId = c.req.param('projectId');
-  const body = await c.req.json();
 
   const format = (body.format || 'pdf') as ExportFormat;
   const allowedFormats: ExportFormat[] = ['pdf', 'docx', 'epub', 'md', 'html', 'txt', 'json'];
@@ -50,9 +57,9 @@ exportRoutes.post('/:projectId', async (c) => {
     // Build export options
     const exportOptions: ExportOptions = {
       format,
-      includeFrontMatter: body.includeFrontMatter ?? true,
-      includeToc: body.includeToc ?? true,
-      style: body.style || 'modern',
+      includeFrontMatter: body.options?.includeFrontMatter ?? body.includeFrontMatter ?? true,
+      includeToc: body.options?.includeToc ?? body.includeToc ?? true,
+      style: body.options?.style || body.style || 'modern',
       authorName: body.authorName || authorName,
       fontSize: body.fontSize || 12,
       lineSpacing: body.lineSpacing || 1.5,
@@ -109,27 +116,18 @@ exportRoutes.post('/:projectId', async (c) => {
       completedAt: nowTimestamp()
     }).where(eq(schema.exportJobs.id, jobId));
 
-    // For direct download (if R2 not available or for preview), return data as base64 for binary formats
     let previewData: string | undefined;
     if (typeof result.data === 'string') {
       previewData = result.data.slice(0, 10000); // First 10k chars preview
     }
 
-    // If file is small and R2 failed, we can return base64
     let downloadData: string | undefined;
-    if (!fileUrl && result.data instanceof Uint8Array && result.data.length < 5 * 1024 * 1024) {
-      // Convert to base64 for direct download (only for files < 5MB)
-      const binary = result.data;
-      const chunkSize = 8192;
-      let binaryStr = '';
-      for (let i = 0; i < binary.length; i += chunkSize) {
-        const chunk = binary.subarray(i, Math.min(i + chunkSize, binary.length));
-        binaryStr += String.fromCharCode.apply(null, chunk as unknown as number[]);
-      }
-      downloadData = btoa(binaryStr);
+    if (result.data instanceof Uint8Array && result.data.length < 10 * 1024 * 1024) {
+      downloadData = uint8ArrayToBase64(result.data);
     }
 
     return c.json({
+      success: true,
       jobId,
       status: 'done',
       format,
@@ -139,7 +137,8 @@ exportRoutes.post('/:projectId', async (c) => {
       extension: result.extension,
       size: result.data instanceof Uint8Array ? result.data.length : (result.data as string).length,
       preview: previewData,
-      downloadBase64: downloadData, // For direct download if R2 not configured
+      downloadBase64: downloadData,
+      textContent: typeof result.data === 'string' ? result.data : undefined,
       downloadUrl: fileUrl ? `/api/export/download/${jobId}` : undefined
     });
 
@@ -153,6 +152,74 @@ exportRoutes.post('/:projectId', async (c) => {
 
     return c.json({ error: 'Export failed: ' + err.message, jobId }, 500);
   }
+}
+
+// POST /api/export - Direct export (from payload or projectId)
+exportRoutes.post('/', async (c) => {
+  const body = await c.req.json();
+
+  const format = (body.format || 'pdf') as ExportFormat;
+  const allowedFormats: ExportFormat[] = ['pdf', 'docx', 'epub', 'md', 'html', 'txt', 'json'];
+  if (!allowedFormats.includes(format)) {
+    return c.json({ error: `Format không hỗ trợ. Cho phép: ${allowedFormats.join(', ')}` }, 400);
+  }
+
+  // Case A: Direct payload export with chapters & title provided
+  if (Array.isArray(body.chapters) && body.projectTitle) {
+    const exportOptions: ExportOptions = {
+      format,
+      includeFrontMatter: body.options?.includeFrontMatter ?? body.includeFrontMatter ?? true,
+      includeToc: body.options?.includeToc ?? body.includeToc ?? true,
+      style: body.options?.style || body.style || 'modern',
+      authorName: body.authorName || 'Tác giả',
+      fontSize: body.fontSize || 12,
+      lineSpacing: body.lineSpacing || 1.5,
+      language: body.language || 'vi'
+    };
+
+    const projectData = {
+      id: body.projectId || 'temp',
+      title: body.projectTitle,
+      subtitle: body.subtitle || null,
+      description: body.description || null,
+      genre: body.genre || null,
+      authorName: exportOptions.authorName
+    };
+
+    try {
+      const result = await generateExport(projectData, body.chapters, exportOptions);
+      const downloadBase64 = result.data instanceof Uint8Array ? uint8ArrayToBase64(result.data) : undefined;
+      const textContent = typeof result.data === 'string' ? result.data : undefined;
+      const size = result.data instanceof Uint8Array ? result.data.length : (result.data as string).length;
+
+      return c.json({
+        success: true,
+        jobId: 'direct_' + Date.now(),
+        format,
+        mimeType: result.mimeType,
+        extension: result.extension,
+        size,
+        downloadBase64,
+        textContent
+      });
+    } catch (err: any) {
+      return c.json({ error: 'Export failed: ' + err.message }, 500);
+    }
+  }
+
+  // Case B: Project ID provided in body
+  if (body.projectId) {
+    return handleProjectExport(c, body.projectId, body);
+  }
+
+  return c.json({ error: 'Thiếu projectId hoặc chapters trong dữ liệu xuất' }, 400);
+});
+
+// POST /api/export/:projectId - Generate export file thực tế
+exportRoutes.post('/:projectId', async (c) => {
+  const projectId = c.req.param('projectId');
+  const body = await c.req.json();
+  return handleProjectExport(c, projectId, body);
 });
 
 // GET /api/export/jobs/:jobId

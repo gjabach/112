@@ -80,7 +80,7 @@ characters.post('/projects/:projectId/characters', async (c) => {
 });
 
 // GET /api/characters/:id
-characters.get('/:id', async (c) => {
+const getCharacterHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -101,10 +101,12 @@ characters.get('/:id', async (c) => {
       tags: char.tags ? JSON.parse(char.tags) : []
     }
   });
-});
+};
+characters.get('/characters/:id', getCharacterHandler);
+characters.get('/:id', getCharacterHandler);
 
 // PATCH /api/characters/:id
-characters.patch('/:id', async (c) => {
+const patchCharacterHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -132,10 +134,12 @@ characters.patch('/:id', async (c) => {
 
   await db.update(schema.characters).set(updates).where(eq(schema.characters.id, id));
   return c.json({ success: true });
-});
+};
+characters.patch('/characters/:id', patchCharacterHandler);
+characters.patch('/:id', patchCharacterHandler);
 
 // DELETE /api/characters/:id
-characters.delete('/:id', async (c) => {
+const deleteCharacterHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -149,7 +153,9 @@ characters.delete('/:id', async (c) => {
 
   await db.delete(schema.characters).where(eq(schema.characters.id, id));
   return c.json({ success: true });
-});
+};
+characters.delete('/characters/:id', deleteCharacterHandler);
+characters.delete('/:id', deleteCharacterHandler);
 
 // GET /api/projects/:projectId/characters/graph - relationship graph
 characters.get('/projects/:projectId/characters/graph', async (c) => {

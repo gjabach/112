@@ -120,14 +120,6 @@ export async function generatePdf(
   const addNewPage = () => {
     currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
     y = pageHeight - margin;
-    const pageNum = pdfDoc.getPageCount();
-    currentPage.drawText(`${pageNum}`, {
-      x: pageWidth / 2 - 10,
-      y: 30,
-      size: 9,
-      font: timesRoman,
-      color: rgb(0.5, 0.5, 0.5)
-    });
     return currentPage;
   };
 
@@ -143,40 +135,45 @@ export async function generatePdf(
   ) => {
     const { font, size, color = rgb(0, 0, 0), lineHeight = 1.5, indent = 0 } = opts;
     const cleanStr = safeText(text);
-    const words = cleanStr.split(' ');
-    let line = '';
-    
-    for (const word of words) {
-      const testLine = line ? `${line} ${word}` : word;
-      const testWidth = font.widthOfTextAtSize(testLine, size);
+    const textLines = cleanStr.split(/\r?\n/);
+
+    for (let lIdx = 0; lIdx < textLines.length; lIdx++) {
+      const currentIndent = lIdx === 0 ? indent : 0;
+      const words = textLines[lIdx].split(' ');
+      let line = '';
       
-      if (testWidth > contentWidth - indent && line) {
-        if (y < margin + 40) addNewPage();
+      for (const word of words) {
+        const testLine = line ? `${line} ${word}` : word;
+        const testWidth = font.widthOfTextAtSize(testLine, size);
         
+        if (testWidth > contentWidth - currentIndent && line) {
+          if (y < margin + 40) addNewPage();
+          
+          currentPage.drawText(line, {
+            x: margin + currentIndent,
+            y,
+            size,
+            font,
+            color
+          });
+          y -= size * lineHeight;
+          line = word;
+        } else {
+          line = testLine;
+        }
+      }
+      
+      if (line) {
+        if (y < margin + 40) addNewPage();
         currentPage.drawText(line, {
-          x: margin + indent,
+          x: margin + currentIndent,
           y,
           size,
           font,
           color
         });
         y -= size * lineHeight;
-        line = word;
-      } else {
-        line = testLine;
       }
-    }
-    
-    if (line) {
-      if (y < margin + 40) addNewPage();
-      currentPage.drawText(line, {
-        x: margin + indent,
-        y,
-        size,
-        font,
-        color
-      });
-      y -= size * lineHeight;
     }
   };
 
@@ -422,8 +419,10 @@ export async function generatePdf(
   const pages = pdfDoc.getPages();
   pages.forEach((page, idx) => {
     if (idx === 0 && includeFrontMatter) return;
-    page.drawText(`${idx + 1}`, {
-      x: pageWidth / 2 - 5,
+    const pageNumStr = `${idx + 1}`;
+    const numWidth = timesRoman.widthOfTextAtSize(pageNumStr, 9);
+    page.drawText(pageNumStr, {
+      x: pageWidth / 2 - numWidth / 2,
       y: 30,
       size: 9,
       font: timesRoman,

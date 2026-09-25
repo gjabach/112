@@ -225,8 +225,26 @@ outline.post('/projects/:projectId/outline/template', async (c) => {
   return c.json({ success: true, template: template.name });
 });
 
+// GET /api/outline/:id
+const getOutlineNodeHandler = async (c: any) => {
+  const db = c.get('db');
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const existing = await db.select().from(schema.outlineNodes).where(eq(schema.outlineNodes.id, id)).limit(1);
+  if (existing.length === 0) return c.json({ error: 'Node not found' }, 404);
+
+  const node = existing[0];
+  const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, node.projectId), eq(schema.projects.userId, user.userId))).limit(1);
+  if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
+
+  return c.json({ node });
+};
+outline.get('/outline/:id', getOutlineNodeHandler);
+outline.get('/:id', getOutlineNodeHandler);
+
 // PATCH /api/outline/:id
-outline.patch('/:id', async (c) => {
+const patchOutlineNodeHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -251,10 +269,12 @@ outline.patch('/:id', async (c) => {
 
   await db.update(schema.outlineNodes).set(updates).where(eq(schema.outlineNodes.id, id));
   return c.json({ success: true });
-});
+};
+outline.patch('/outline/:id', patchOutlineNodeHandler);
+outline.patch('/:id', patchOutlineNodeHandler);
 
 // DELETE /api/outline/:id
-outline.delete('/:id', async (c) => {
+const deleteOutlineNodeHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -285,7 +305,9 @@ outline.delete('/:id', async (c) => {
   }
 
   return c.json({ success: true, deletedCount: toDelete.size });
-});
+};
+outline.delete('/outline/:id', deleteOutlineNodeHandler);
+outline.delete('/:id', deleteOutlineNodeHandler);
 
 // POST /api/projects/:projectId/outline/reorder
 outline.post('/projects/:projectId/outline/reorder', async (c) => {

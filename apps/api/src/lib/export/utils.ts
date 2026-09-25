@@ -105,7 +105,7 @@ function convertToHtml(node: any): string {
     case 'doc':
       return content;
     case 'paragraph':
-      return `<p>${content || '<br>'}</p>`;
+      return `<p>${content || '<br/>'}</p>`;
     case 'heading':
       const level = node.attrs?.level || 1;
       return `<h${level}>${content}</h${level}>`;
@@ -130,7 +130,7 @@ function convertToHtml(node: any): string {
   }
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

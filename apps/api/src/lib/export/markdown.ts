@@ -1,4 +1,4 @@
-import { tiptapToPlainText, tiptapToHtml, type ExportChapter, type ExportProject, generateFrontMatter, generateToc } from './utils';
+import { tiptapToPlainText, tiptapToHtml, type ExportChapter, type ExportProject, generateFrontMatter, generateToc, escapeHtml } from './utils';
 
 export interface MarkdownOptions {
   includeFrontMatter?: boolean;
@@ -123,7 +123,7 @@ export function generateHtml(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${project.title}</title>
+  <title>${escapeHtml(project.title)}</title>
   <style>${styles[style as keyof typeof styles] || styles.modern}</style>
 </head>
 <body>
@@ -145,7 +145,7 @@ export function generateHtml(
       html += `
   <div class="chapter" id="chapter-${idx + 1}">
     <p class="chapter-number">Chương ${idx + 1}</p>
-    <h2>${chapter.title}</h2>
+    <h2>${escapeHtml(chapter.title)}</h2>
     ${htmlContent}
   </div>
 `;

@@ -75,11 +75,9 @@ export function exportFullWorkspace() {
     timelineEras: getStoredJson('novelist_timeline_eras', []),
     outline: getStoredJson('novelist_outline', getStoredJson('novelist_outlines', [])),
     user: getStoredJson('novelist_current_user', null),
-    users: getStoredJson('novelist_users', []),
     aiConfig: {
       provider: localStorage.getItem('ai_provider') || 'gemini',
-      model: localStorage.getItem('ai_model') || 'gemini-3.5-flash',
-      apiKey: localStorage.getItem('ai_api_key') || ''
+      model: localStorage.getItem('ai_model') || 'gemini-2.0-flash'
     }
   };
 }
@@ -123,14 +121,10 @@ export function importFullWorkspace(data: any): boolean {
     if (data.user) {
       localStorage.setItem('novelist_current_user', JSON.stringify(data.user));
     }
-    if (data.users && Array.isArray(data.users)) {
-      localStorage.setItem('novelist_users', JSON.stringify(data.users));
-    }
 
     if (data.aiConfig) {
       if (data.aiConfig.provider) localStorage.setItem('ai_provider', data.aiConfig.provider);
       if (data.aiConfig.model) localStorage.setItem('ai_model', data.aiConfig.model);
-      if (data.aiConfig.apiKey) localStorage.setItem('ai_api_key', data.aiConfig.apiKey);
     }
 
     if (data.lastModified) {
@@ -149,27 +143,22 @@ export function importFullWorkspace(data: any): boolean {
 
 function getAuthToken(): string {
   if (typeof window === 'undefined') return '';
-  const token = localStorage.getItem('token');
-  if (token) return token;
-  try {
-    const raw = localStorage.getItem('novelist_current_user');
-    if (raw) {
-      const u = JSON.parse(raw);
-      if (u.id) return `token_${u.id}`;
-    }
-  } catch {}
-  return 'token_guest';
+  return localStorage.getItem('token') || '';
 }
 
 export async function pushSync(): Promise<{ success: boolean; stats?: any; error?: string }> {
   if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
 
   try {
+    const token = getAuthToken();
+    if (!token) {
+      return { success: false, error: 'Vui lòng đăng nhập để đồng bộ dữ liệu đám mây' };
+    }
+
     const key = getSyncKey();
     const workspace = exportFullWorkspace();
     if (!workspace) return { success: false, error: 'No data to sync' };
 
-    const token = getAuthToken();
     const res = await fetch('/api/sync', {
       method: 'POST',
       headers: {
@@ -199,8 +188,12 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
   if (typeof window === 'undefined') return { success: false, updated: false, error: 'Not in browser' };
 
   try {
-    const key = getSyncKey();
     const token = getAuthToken();
+    if (!token) {
+      return { success: false, updated: false, error: 'Vui lòng đăng nhập để đồng bộ dữ liệu đám mây' };
+    }
+
+    const key = getSyncKey();
     const res = await fetch(`/api/sync?key=${encodeURIComponent(key)}`, {
       headers: {
         'Authorization': `Bearer ${token}`

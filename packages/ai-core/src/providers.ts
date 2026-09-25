@@ -223,7 +223,7 @@ export class GeminiProvider implements AIProvider {
       throw new Error(`[Gemini] Quyền truy cập bị từ chối (403): ${cleanMsg}. Vui lòng kiểm tra tài khoản Google AI Studio.`);
     }
     if (status === 404) {
-      throw new Error(`[Gemini] Không tìm thấy Model (404): ${cleanMsg}. Vui lòng chọn gemini-3.5-flash hoặc gemini-3.1-flash-lite trong Cài đặt.`);
+      throw new Error(`[Gemini] Không tìm thấy Model (404): ${cleanMsg}. Vui lòng chọn gemini-2.0-flash hoặc gemini-1.5-flash trong Cài đặt.`);
     }
     if (status === 429) {
       throw new Error('Đã vượt quá hạn mức gọi Gemini (Rate limit / Quota exceeded 429). Thử lại sau ít phút.');
@@ -234,7 +234,7 @@ export class GeminiProvider implements AIProvider {
   async chat(options: AICompletionOptions): Promise<string> {
     const apiKey = (options.apiKey || '').trim();
     if (!apiKey) throw new Error('API Key Gemini không được để trống. Hãy nhập key trong Cài đặt.');
-    const model = (options.model || 'gemini-3.5-flash').trim().replace(/^models\//, '');
+    const model = (options.model || 'gemini-2.0-flash').trim().replace(/^models\//, '');
     const { systemInstruction, contents } = this.formatGeminiMessages(options.messages);
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -268,7 +268,7 @@ export class GeminiProvider implements AIProvider {
       } catch {}
 
       // If requested model returned 404, automatically fallback to modern active models
-      const geminiFallbacks = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
+      const geminiFallbacks = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'];
       const nextFallback = geminiFallbacks.find(m => m !== model);
       if (res.status === 404 && nextFallback && !(options as any)._hasFallenBack) {
         console.warn(`[Gemini] Model ${model} returned 404, auto-falling back to ${nextFallback}`);
@@ -285,7 +285,7 @@ export class GeminiProvider implements AIProvider {
   async *chatStream(options: AICompletionOptions): AsyncGenerator<AIStreamChunk> {
     const apiKey = (options.apiKey || '').trim();
     if (!apiKey) throw new Error('API Key Gemini không được để trống. Hãy nhập key trong Cài đặt.');
-    const model = (options.model || 'gemini-3.5-flash').trim().replace(/^models\//, '');
+    const model = (options.model || 'gemini-2.0-flash').trim().replace(/^models\//, '');
     const { systemInstruction, contents } = this.formatGeminiMessages(options.messages);
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
@@ -319,7 +319,7 @@ export class GeminiProvider implements AIProvider {
       } catch {}
 
       // If requested model returned 404, automatically fallback to modern active models
-      const geminiFallbacks = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
+      const geminiFallbacks = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'];
       const nextFallback = geminiFallbacks.find(m => m !== model);
       if (res.status === 404 && nextFallback && !(options as any)._hasFallenBack) {
         console.warn(`[Gemini] Model ${model} returned 404 in stream, auto-falling back to ${nextFallback}`);

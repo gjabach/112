@@ -93,8 +93,31 @@ timeline.post('/projects/:projectId/timeline', async (c) => {
   return c.json({ id }, 201);
 });
 
+// GET /api/timeline/:id
+const getTimelineEventHandler = async (c: any) => {
+  const db = c.get('db');
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const existing = await db.select().from(schema.timelineEvents).where(eq(schema.timelineEvents.id, id)).limit(1);
+  if (existing.length === 0) return c.json({ error: 'Event not found' }, 404);
+
+  const event = existing[0];
+  const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, event.projectId), eq(schema.projects.userId, user.userId))).limit(1);
+  if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
+
+  return c.json({
+    event: {
+      ...event,
+      involvedCharacterIds: event.involvedCharacterIds ? JSON.parse(event.involvedCharacterIds) : []
+    }
+  });
+};
+timeline.get('/timeline/:id', getTimelineEventHandler);
+timeline.get('/:id', getTimelineEventHandler);
+
 // PATCH /api/timeline/:id
-timeline.patch('/:id', async (c) => {
+const patchTimelineEventHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -121,10 +144,12 @@ timeline.patch('/:id', async (c) => {
 
   await db.update(schema.timelineEvents).set(updates).where(eq(schema.timelineEvents.id, id));
   return c.json({ success: true });
-});
+};
+timeline.patch('/timeline/:id', patchTimelineEventHandler);
+timeline.patch('/:id', patchTimelineEventHandler);
 
 // DELETE /api/timeline/:id
-timeline.delete('/:id', async (c) => {
+const deleteTimelineEventHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -138,7 +163,9 @@ timeline.delete('/:id', async (c) => {
 
   await db.delete(schema.timelineEvents).where(eq(schema.timelineEvents.id, id));
   return c.json({ success: true });
-});
+};
+timeline.delete('/timeline/:id', deleteTimelineEventHandler);
+timeline.delete('/:id', deleteTimelineEventHandler);
 
 // POST /api/projects/:projectId/timeline/reorder
 timeline.post('/projects/:projectId/timeline/reorder', async (c) => {

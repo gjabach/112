@@ -126,10 +126,17 @@ app.get('/api/stats/overview', async (c) => {
   
   let totalWords = 0;
   let totalChapters = 0;
-  for (const p of projects) {
-    const chs = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, p.id));
-    totalChapters += chs.length;
-    totalWords += chs.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
+  const projectIds = projects.map((p: any) => p.id);
+
+  if (projectIds.length > 0) {
+    const { inArray } = await import('drizzle-orm');
+    const chs = await db.select({
+      id: schema.chapters.id,
+      wordCount: schema.chapters.wordCount
+    }).from(schema.chapters).where(inArray(schema.chapters.projectId, projectIds));
+
+    totalChapters = chs.length;
+    totalWords = chs.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
   }
 
   return c.json({

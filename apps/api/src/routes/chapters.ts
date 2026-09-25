@@ -82,8 +82,27 @@ chapters.post('/projects/:projectId/chapters', async (c) => {
   return c.json({ id }, 201);
 });
 
+// POST /api/projects/:projectId/chapters/reorder - Contiguous reorder by array of chapterIds
+chapters.post('/projects/:projectId/chapters/reorder', async (c) => {
+  const db = c.get('db');
+  const user = c.get('user');
+  const projectId = c.req.param('projectId');
+  const body = await c.req.json();
+  const chapterIds: string[] = body.chapterIds || [];
+
+  const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, projectId), eq(schema.projects.userId, user.userId))).limit(1);
+  if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
+
+  const now = nowTimestamp();
+  for (let i = 0; i < chapterIds.length; i++) {
+    await db.update(schema.chapters).set({ orderIndex: i, updatedAt: now }).where(and(eq(schema.chapters.id, chapterIds[i]), eq(schema.chapters.projectId, projectId)));
+  }
+
+  return c.json({ success: true });
+});
+
 // GET /api/chapters/:id
-chapters.get('/:id', async (c) => {
+const getChapterHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -92,7 +111,6 @@ chapters.get('/:id', async (c) => {
   if (result.length === 0) return c.json({ error: 'Chapter not found' }, 404);
 
   const chapter = result[0];
-  // Verify project ownership
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
 
@@ -102,10 +120,12 @@ chapters.get('/:id', async (c) => {
       charactersPresent: chapter.charactersPresent ? JSON.parse(chapter.charactersPresent) : []
     }
   });
-});
+};
+chapters.get('/chapters/:id', getChapterHandler);
+chapters.get('/:id', getChapterHandler);
 
 // PATCH /api/chapters/:id
-chapters.patch('/:id', async (c) => {
+const patchChapterHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -155,10 +175,12 @@ chapters.patch('/:id', async (c) => {
   }
 
   return c.json({ success: true });
-});
+};
+chapters.patch('/chapters/:id', patchChapterHandler);
+chapters.patch('/:id', patchChapterHandler);
 
 // DELETE /api/chapters/:id
-chapters.delete('/:id', async (c) => {
+const deleteChapterHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -172,10 +194,12 @@ chapters.delete('/:id', async (c) => {
 
   await db.delete(schema.chapters).where(eq(schema.chapters.id, id));
   return c.json({ success: true });
-});
+};
+chapters.delete('/chapters/:id', deleteChapterHandler);
+chapters.delete('/:id', deleteChapterHandler);
 
 // POST /api/chapters/:id/reorder
-chapters.post('/:id/reorder', async (c) => {
+const reorderSingleChapterHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -188,7 +212,6 @@ chapters.post('/:id/reorder', async (c) => {
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
 
-  // Full contiguous reorder: retrieve all chapters, splice to new position, and update indexes
   const allChapters = await db.select().from(schema.chapters)
     .where(eq(schema.chapters.projectId, chapter.projectId))
     .orderBy(asc(schema.chapters.orderIndex));
@@ -206,10 +229,12 @@ chapters.post('/:id/reorder', async (c) => {
   }
 
   return c.json({ success: true, newIndex: targetIndex });
-});
+};
+chapters.post('/chapters/:id/reorder', reorderSingleChapterHandler);
+chapters.post('/:id/reorder', reorderSingleChapterHandler);
 
 // GET /api/chapters/:id/revisions
-chapters.get('/:id/revisions', async (c) => {
+const revisionsHandler = async (c: any) => {
   const db = c.get('db');
   const user = c.get('user');
   const id = c.req.param('id');
@@ -224,6 +249,8 @@ chapters.get('/:id/revisions', async (c) => {
   const revisions = await db.select().from(schema.revisions).where(and(eq(schema.revisions.entityType, 'chapter'), eq(schema.revisions.entityId, id))).orderBy(asc(schema.revisions.createdAt));
 
   return c.json({ revisions });
-});
+};
+chapters.get('/chapters/:id/revisions', revisionsHandler);
+chapters.get('/:id/revisions', revisionsHandler);
 
 export default chapters;

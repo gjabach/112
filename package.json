@@ -15,6 +15,7 @@
     "db:migrate": "pnpm --filter api db:migrate",
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
+    "test": "turbo run test",
     "deploy": "pnpm run build && pnpm run deploy:api && pnpm run deploy:web",
     "deploy:api": "pnpm --filter api deploy",
     "deploy:web": "pnpm --filter web deploy"

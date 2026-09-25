@@ -1313,9 +1313,11 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         'Content-Type': 'application/json',
         ...(options.headers as Record<string, string> || {})
       };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (token && !headers['Authorization']) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`${customApiUrl}${path}`, { ...options, headers });
+      const normalizedBase = customApiUrl.replace(/\/+$/, '');
+      const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+      const res = await fetch(`${normalizedBase}${normalizedPath}`, { ...options, headers });
       if (res.ok) return await res.json();
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
@@ -1330,12 +1332,16 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   // 2. In browser, try relative path on the same host (e.g. Next.js API routes on Vercel)
   if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
     try {
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(options.headers as Record<string, string> || {})
+      };
+      if (token && !headers['Authorization']) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(path, {
         ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.headers as Record<string, string> || {})
-        }
+        headers
       });
       if (res.ok) {
         return await res.json();

@@ -256,7 +256,7 @@ test('Workspace sync snapshot schema contains all essential creative entities', 
     entities: [{ id: 'e1', name: 'Hành tinh X', type: 'location' }],
     timeline: [{ id: 't1', title: 'Biến cố thiên hà' }],
     outline: [{ id: 'o1', title: 'Hồi 1' }],
-    aiConfig: { provider: 'gemini', model: 'gemini-3.5-flash', apiKey: 'AIzaSyTestKey' }
+    aiConfig: { provider: 'gemini', model: 'gemini-2.0-flash' }
   };
 
   assert.ok(Array.isArray(mockSnapshot.projects));

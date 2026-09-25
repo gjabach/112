@@ -265,8 +265,16 @@ ${tocItems}    </ul>
 </html>`;
 }
 
+function htmlToXhtml(html: string): string {
+  return html
+    .replace(/&nbsp;/g, '&#160;')
+    .replace(/<br\s*(?!\/)>/gi, '<br />')
+    .replace(/<hr\s*(?!\/)>/gi, '<hr />')
+    .replace(/<img((?:[^>](?!\/))*?)>/gi, '<img$1 />');
+}
+
 function generateChapterXhtml(chapter: ExportChapter, index: number): string {
-  const htmlContent = tiptapToHtml(chapter.content);
+  const htmlContent = htmlToXhtml(tiptapToHtml(chapter.content));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
