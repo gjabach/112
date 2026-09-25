@@ -1337,7 +1337,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   // 2. In browser, try relative path on the same host (e.g. Next.js API routes on Vercel)
-  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
+  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
     try {
       const res = await fetch(path, {
         ...options,
@@ -1348,6 +1348,10 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       });
       if (res.ok) {
         return await res.json();
+      }
+      if (res.status === 404) {
+        // Fall back to local API handler if the route does not exist on this server
+        return await handleLocalApi(path, options);
       }
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
@@ -1360,5 +1364,5 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   // 3. Client-side local storage fallback
-  return handleLocalApi(path, options);
+  return await handleLocalApi(path, options);
 }
