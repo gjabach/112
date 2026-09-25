@@ -25,6 +25,9 @@ import {
   X
 } from 'lucide-react';
 import { useEditorStore } from '@/lib/store';
+import { ZenAmbianceController } from '@/components/vfx/zen-ambiance';
+import { fireConfetti } from '@/components/vfx/confetti';
+import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 
 export default function ChapterEditorPage() {
   const params = useParams();
@@ -44,6 +47,8 @@ export default function ChapterEditorPage() {
   const [aiSuggestion, setAiSuggestion] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [targetWordCount, setTargetWordCount] = useState(2000);
+  const [spotlightActive, setSpotlightActive] = useState(false);
+  const [lastMilestone, setLastMilestone] = useState(0);
 
   const { focusMode, setFocusMode, typewriterMode, setTypewriterMode } = useEditorStore();
 
@@ -172,6 +177,19 @@ export default function ChapterEditorPage() {
 
   const currentWords = countWords(content);
   const wordGoalProgress = Math.min(100, Math.round((currentWords / targetWordCount) * 100));
+
+  // Word count milestone celebration VFX
+  useEffect(() => {
+    if (currentWords <= 0) return;
+    const milestones = [500, 1000, 2000, 3000, 5000, 10000];
+    const reached = milestones.filter(m => currentWords >= m && lastMilestone < m);
+    if (reached.length > 0) {
+      const topM = reached[reached.length - 1];
+      setLastMilestone(topM);
+      fireConfetti({ type: 'milestone', particleCount: 75 });
+      toast.success(`🎉 Chúc mừng! Bản thảo đã vượt mốc ${topM.toLocaleString()} từ! Cố lên tác giả!`);
+    }
+  }, [currentWords, lastMilestone]);
 
   const renderInspectorContent = () => (
     <>
@@ -400,17 +418,22 @@ export default function ChapterEditorPage() {
               </Badge>
             ) : null}
 
-            {/* Quick AI Continue Button */}
-            <Button
-              size="sm"
-              onClick={handleAIContinue}
-              disabled={aiLoading}
-              className="h-7 sm:h-8 px-2 sm:px-2.5 text-xs bg-purple-600 hover:bg-purple-700 text-white font-medium shadow-xs"
-              title="AI Viết tiếp"
-            >
-              <Sparkles className="w-3.5 h-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">AI Viết tiếp</span>
-            </Button>
+            {/* Quick AI Continue Button with Magic Sparkles */}
+            <MagicSparkles active={!aiLoading}>
+              <Button
+                size="sm"
+                onClick={handleAIContinue}
+                disabled={aiLoading}
+                className="h-7 sm:h-8 px-2 sm:px-2.5 text-xs bg-purple-600 hover:bg-purple-700 text-white font-medium shadow-sm shadow-purple-500/25 btn-interactive"
+                title="AI Viết tiếp"
+              >
+                <Sparkles className={`w-3.5 h-3.5 sm:mr-1 ${aiLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{aiLoading ? 'Đang viết...' : 'AI Viết tiếp'}</span>
+              </Button>
+            </MagicSparkles>
+
+            {/* Zen Ambiance sound & lighting controller */}
+            <ZenAmbianceController onToggleSpotlight={setSpotlightActive} />
 
             <Button variant="ghost" size="sm" className="h-8 text-xs hidden md:flex" onClick={() => setFocusMode(!focusMode)}>
               <Eye className="w-3.5 h-3.5 mr-1" /> {focusMode ? 'Thoát Focus' : 'Focus'}
@@ -433,8 +456,16 @@ export default function ChapterEditorPage() {
               <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </Button>
 
-            {/* Save Button */}
-            <Button size="sm" className="h-7 sm:h-8 px-2 sm:px-2.5 text-xs" onClick={() => saveChapter()} disabled={saving}>
+            {/* Save Button with Stardust celebration */}
+            <Button
+              size="sm"
+              className="h-7 sm:h-8 px-2 sm:px-2.5 text-xs font-semibold btn-interactive shadow-xs"
+              onClick={() => {
+                saveChapter();
+                fireConfetti({ type: 'stardust', particleCount: 20 });
+              }}
+              disabled={saving}
+            >
               <Save className="w-3.5 h-3.5 sm:mr-1" />
               <span className="hidden sm:inline">Lưu</span>
             </Button>
@@ -443,8 +474,8 @@ export default function ChapterEditorPage() {
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Editor Canvas */}
-        <main className={`flex-1 overflow-auto ${typewriterMode ? 'flex items-center' : ''}`}>
+        {/* Editor Canvas with optional Zen Spotlight */}
+        <main className={`flex-1 overflow-auto ${typewriterMode ? 'flex items-center' : ''} ${spotlightActive ? 'zen-spotlight' : ''}`}>
           <div className={`w-full ${typewriterMode ? 'py-[40vh]' : ''}`}>
             <TiptapEditor content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..." />
           </div>

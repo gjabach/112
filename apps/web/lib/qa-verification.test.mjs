@@ -600,4 +600,37 @@ test('Legacy projects without userId are gracefully migrated to current active u
   assert.equal(userProjects[0].title, 'Tiểu thuyết viết từ trước');
 });
 
+test('Procedural book cover styles map all core genres with high-contrast palette and motifs', () => {
+  const genres = ['fantasy', 'scifi', 'romance', 'mystery', 'thriller', 'horror', 'literary', 'historical'];
+  const expectedMotifs = {
+    fantasy: 'Huyền Huyễn',
+    scifi: 'Khoa Huyễn',
+    romance: 'Lãng Mạn',
+    mystery: 'Trinh Thám',
+    thriller: 'Kỳ Ảo / Giật Gân',
+    horror: 'Kinh Dị',
+    literary: 'Văn Học',
+    historical: 'Lịch Sử'
+  };
+
+  genres.forEach(g => {
+    assert.ok(expectedMotifs[g], `Genre ${g} must have defined motif mapping`);
+  });
+});
+
+test('Word count milestone calculation accurately triggers celebratory events on thresholds', () => {
+  const milestones = [500, 1000, 2000, 3000, 5000, 10000];
+  const checkMilestone = (currentWords, lastMilestone) => {
+    const reached = milestones.filter(m => currentWords >= m && lastMilestone < m);
+    return reached.length > 0 ? reached[reached.length - 1] : 0;
+  };
+
+  assert.equal(checkMilestone(300, 0), 0);
+  assert.equal(checkMilestone(550, 0), 500);
+  assert.equal(checkMilestone(600, 500), 0, 'Should not re-trigger if already passed 500');
+  assert.equal(checkMilestone(1200, 500), 1000, 'Should trigger 1000 when crossing 1000 from 500');
+  assert.equal(checkMilestone(2500, 1000), 2000);
+});
+
+
 

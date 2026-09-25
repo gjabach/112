@@ -9,6 +9,9 @@ import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download, ChevronUp, ChevronDown, Search } from 'lucide-react';
 import { useProjectStore } from '@/lib/store';
+import { BookCoverArt } from '@/components/vfx/book-cover';
+import { fireConfetti } from '@/components/vfx/confetti';
+import { SparkleIcon } from '@/components/vfx/magic-sparkles';
 
 interface Chapter {
   id: string;
@@ -87,6 +90,7 @@ export default function ProjectEditorPage() {
       });
       setNewChapterTitle('');
       toast.success('Tạo chương mới thành công');
+      fireConfetti({ type: 'stardust', particleCount: 20 });
       fetchData();
     } catch (e: any) {
       toast.error(e.message);
@@ -425,29 +429,51 @@ export default function ProjectEditorPage() {
           }`}
         >
           <div className="space-y-6">
-            <div>
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-1">Tổng quan dự án</h2>
-              <p className="text-sm text-muted-foreground">{project.description || 'Chưa có mô tả cho tiểu thuyết này.'}</p>
+            {/* Book showcase with 3D cover */}
+            <div className="flex flex-col sm:flex-row gap-5 items-start glass-card p-5 rounded-2xl border border-border/70">
+              <BookCoverArt
+                title={project.title}
+                genre={project.genre}
+                wordCount={project.wordCount}
+                size="md"
+                className="shadow-xl shrink-0"
+              />
+              <div className="flex-1 min-w-0 space-y-2 py-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-xs border-primary/30 text-primary font-medium">
+                    {project.genre || 'Huyền Huyễn'}
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs capitalize">
+                    {project.status || 'planning'}
+                  </Badge>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-serif font-bold tracking-tight text-foreground">
+                  {project.title}
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                  {project.description || 'Chưa có mô tả cho tiểu thuyết này.'}
+                </p>
+              </div>
             </div>
 
             {/* Metrics cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <div className="border rounded-xl p-4 bg-card shadow-2xs">
-                <div className="text-2xl font-bold">{(project.wordCount || 0).toLocaleString()}</div>
+              <div className="glass-card glow-card border border-border/70 rounded-2xl p-4 shadow-xs">
+                <div className="text-2xl font-bold font-mono">{(project.wordCount || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground mt-0.5">Tổng số từ</div>
                 {project.wordCountGoal ? (
-                  <div className="mt-2.5 w-full bg-muted rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${goalProgress}%` }} />
+                  <div className="mt-2.5 w-full bg-muted/60 rounded-full h-1.5 overflow-hidden">
+                    <div className="bg-gradient-to-r from-primary to-indigo-500 h-1.5 rounded-full transition-all" style={{ width: `${goalProgress}%` }} />
                   </div>
                 ) : null}
               </div>
 
-              <div className="border rounded-xl p-4 bg-card shadow-2xs">
-                <div className="text-2xl font-bold">{chapters.length}</div>
+              <div className="glass-card glow-card border border-border/70 rounded-2xl p-4 shadow-xs">
+                <div className="text-2xl font-bold font-mono">{chapters.length}</div>
                 <div className="text-xs text-muted-foreground mt-0.5">Tổng số chương</div>
               </div>
 
-              <div className="border rounded-xl p-4 bg-card shadow-2xs">
+              <div className="glass-card glow-card border border-border/70 rounded-2xl p-4 shadow-xs">
                 <div className="text-2xl font-bold capitalize">{project.status}</div>
                 <div className="text-xs text-muted-foreground mt-0.5">Trạng thái sáng tác</div>
               </div>

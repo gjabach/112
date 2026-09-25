@@ -3,6 +3,7 @@ import { Inter, Crimson_Pro } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/layout/theme-provider';
 import { Toaster } from '@/components/ui/toaster';
+import { ConfettiCanvas } from '@/components/vfx/confetti';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const crimson = Crimson_Pro({ subsets: ['latin'], variable: '--font-crimson' });
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           {children}
           <Toaster />
+          <ConfettiCanvas />
         </ThemeProvider>
       </body>
     </html>

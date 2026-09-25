@@ -22,6 +22,8 @@ import {
 import { useEffect, useState } from 'react';
 import { initAutoSync, setSyncKey, pullSync } from '@/lib/sync';
 import { SyncDialog } from '@/components/sync/sync-dialog';
+import { AmbientBackground } from '@/components/vfx/ambient-background';
+import { SparkleIcon } from '@/components/vfx/magic-sparkles';
 import { toast } from 'sonner';
 
 const navItems = [
@@ -66,18 +68,21 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) return null;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col md:flex-row pb-16 md:pb-0">
+    <div className="relative min-h-screen bg-background flex flex-col md:flex-row pb-16 md:pb-0 overflow-x-hidden">
+      {/* Ambient background VFX lighting */}
+      <AmbientBackground intensity="subtle" />
+
       {/* Mobile Top Header */}
-      <header className="md:hidden flex items-center justify-between px-4 py-3 border-b bg-card sticky top-0 z-40">
+      <header className="md:hidden flex items-center justify-between px-4 py-3 border-b bg-card/80 backdrop-blur-md sticky top-0 z-40">
         <Link href="/projects" className="flex items-center gap-2 font-bold text-base">
-          <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-sm">N</div>
-          Novelist Studio
+          <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-sm shadow-sm">N</div>
+          <span className="tracking-tight">Novelist Studio</span>
         </Link>
         <Button 
           variant="outline" 
           size="sm" 
           onClick={() => setSyncDialogOpen(true)}
-          className="h-8 text-xs border-primary/40 text-primary flex items-center gap-1.5"
+          className="h-8 text-xs border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary flex items-center gap-1.5 rounded-lg"
         >
           <Smartphone className="w-3.5 h-3.5" />
           <span>Đồng bộ</span>
@@ -85,11 +90,13 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Desktop Sidebar */}
-      <aside className="w-64 border-r bg-card hidden md:flex flex-col shrink-0">
-        <div className="p-6 border-b">
-          <Link href="/projects" className="flex items-center gap-2 font-bold text-lg">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground">N</div>
-            Novelist Studio
+      <aside className="w-64 border-r border-border/60 bg-card/75 backdrop-blur-xl hidden md:flex flex-col shrink-0 z-20">
+        <div className="p-6 border-b border-border/50">
+          <Link href="/projects" className="flex items-center gap-2 font-bold text-lg group">
+            <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center text-primary-foreground shadow-md shadow-primary/25 group-hover:scale-105 transition-transform">
+              N
+            </div>
+            <span className="tracking-tight group-hover:text-primary transition-colors">Novelist Studio</span>
           </Link>
         </div>
         
@@ -138,12 +145,12 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-card border-t flex items-center justify-around px-2 z-40">
+      {/* Mobile Bottom Navigation Bar with Glassmorphism */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-card/85 backdrop-blur-xl border-t border-border/60 flex items-center justify-around px-2 z-40 shadow-lg">
         <Link 
           href="/projects" 
-          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 ${
-            pathname.startsWith('/projects') ? 'text-primary font-bold' : 'text-muted-foreground'
+          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 transition-all active:scale-95 ${
+            pathname.startsWith('/projects') ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           <LayoutDashboard className="w-4 h-4" />
@@ -151,8 +158,8 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         </Link>
         <Link 
           href="/ai-assistant" 
-          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 ${
-            pathname.startsWith('/ai-assistant') ? 'text-primary font-bold' : 'text-muted-foreground'
+          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 transition-all active:scale-95 ${
+            pathname.startsWith('/ai-assistant') ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           <Sparkles className="w-4 h-4" />
@@ -160,15 +167,15 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         </Link>
         <button 
           onClick={() => setSyncDialogOpen(true)}
-          className="flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 text-primary font-medium"
+          className="flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 text-primary font-medium transition-all active:scale-95"
         >
           <Smartphone className="w-4 h-4" />
           <span>Đồng bộ</span>
         </button>
         <Link 
           href="/settings" 
-          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 ${
-            pathname.startsWith('/settings') ? 'text-primary font-bold' : 'text-muted-foreground'
+          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 transition-all active:scale-95 ${
+            pathname.startsWith('/settings') ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           <Settings className="w-4 h-4" />

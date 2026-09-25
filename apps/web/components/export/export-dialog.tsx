@@ -9,6 +9,7 @@ import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Download, FileText, BookOpen, File, Code, FileJson, Check, Loader2, Printer } from 'lucide-react';
 import { parseChapterParagraphs, generatePrintableBookHtml } from '@/lib/export-helpers';
+import { fireConfetti } from '@/components/vfx/confetti';
 
 interface ExportDialogProps {
   projectId: string;
@@ -114,6 +115,7 @@ export function ExportDialog({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    fireConfetti({ type: 'celebration', particleCount: 100 });
   };
 
   const downloadHtmlOffline = () => {

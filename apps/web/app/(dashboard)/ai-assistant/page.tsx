@@ -10,6 +10,8 @@ import { apiFetch } from '@/lib/utils';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
 import { Send, Sparkles, Trash2, Copy, Check, ArrowLeft, Bot, User as UserIcon, FileText } from 'lucide-react';
+import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
+import { fireConfetti } from '@/components/vfx/confetti';
 
 interface Message {
   id: string;
@@ -189,21 +191,26 @@ function AIAssistantContent() {
           <div className="flex-1 overflow-auto p-4 space-y-4">
             {messages.length === 0 ? (
               <div className="text-center py-16 px-4 max-w-lg mx-auto">
-                <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto mb-4">
-                  <Sparkles className="w-6 h-6" />
+                <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/25 text-primary flex items-center justify-center mx-auto mb-4 shadow-inner">
+                  <SparkleIcon size={28} color="currentColor" />
                 </div>
-                <h3 className="font-bold text-base mb-1">Trợ lý đồng sáng tác của bạn</h3>
+                <h3 className="font-serif font-bold text-lg mb-1 tracking-tight">Trợ lý đồng sáng tác của bạn</h3>
                 <p className="text-xs text-muted-foreground mb-6 leading-relaxed">
-                  Tôi có thể giúp bạn viết tiếp một cảnh quay, gỡ rối những điểm nghẽn cốt truyện (writer's block), hoặc đưa ra nhận xét văn học sắc bén.
+                  Tôi có thể giúp bạn viết tiếp một cảnh quay, gỡ rối những điểm nghẽn cốt truyện (writer&apos;s block), hoặc đưa ra nhận xét văn học sắc bén.
                 </p>
                 <div className="grid grid-cols-2 gap-2 text-left">
                   {skills.slice(0, 4).map(s => (
                     <button
                       key={s.id}
-                      onClick={() => setSelectedSkill(s.id)}
-                      className="p-3 border rounded-lg hover:border-primary/50 hover:bg-accent/40 text-xs transition-colors"
+                      onClick={() => {
+                        setSelectedSkill(s.id);
+                        fireConfetti({ type: 'stardust', particleCount: 15 });
+                      }}
+                      className="p-3 border rounded-xl hover:border-primary/50 hover:bg-accent/40 text-xs transition-all glass-card glow-card"
                     >
-                      <div className="font-medium mb-0.5">{s.label}</div>
+                      <div className="font-semibold mb-0.5 text-foreground flex items-center gap-1">
+                        <span>{s.label}</span>
+                      </div>
                       <div className="text-[11px] text-muted-foreground">{s.desc}</div>
                     </button>
                   ))}
@@ -213,17 +220,24 @@ function AIAssistantContent() {
               messages.map(m => (
                 <div key={m.id} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {m.role === 'assistant' && (
-                    <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-1">
-                      <Bot className="w-4 h-4" />
+                    <div className="w-7 h-7 rounded-xl bg-primary/15 border border-primary/30 text-primary flex items-center justify-center shrink-0 mt-1 shadow-xs">
+                      <Sparkles className="w-3.5 h-3.5 animate-pulse" />
                     </div>
                   )}
 
-                  <div className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
+                  <div className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-xs ${
                     m.role === 'user'
                       ? 'bg-primary text-primary-foreground rounded-tr-sm'
-                      : 'bg-muted/70 text-foreground border border-border/50 rounded-tl-sm'
+                      : 'glass-card text-foreground border border-border/60 rounded-tl-sm'
                   }`}>
-                    <div className="whitespace-pre-wrap leading-relaxed">{m.content || (loading && m.role === 'assistant' ? 'Đang suy nghĩ và sáng tác...' : '')}</div>
+                    {m.content ? (
+                      <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
+                    ) : loading && m.role === 'assistant' ? (
+                      <div className="flex items-center gap-2 text-xs text-primary font-medium py-1">
+                        <GlowingDot color="bg-primary" />
+                        <span className="animate-pulse">Đang vận dụng cảm hứng văn học để sáng tác...</span>
+                      </div>
+                    ) : null}
 
                     {m.role === 'assistant' && m.content && (
                       <div className="flex items-center gap-1 mt-2 pt-2 border-t border-border/30 justify-end">

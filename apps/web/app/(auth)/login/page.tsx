@@ -12,6 +12,8 @@ import { useAuthStore } from '@/lib/store';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
+import { AmbientBackground } from '@/components/vfx/ambient-background';
+import { SparkleIcon } from '@/components/vfx/magic-sparkles';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -40,33 +42,57 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center text-primary-foreground font-bold text-xl mx-auto mb-2">N</div>
-          <CardTitle className="text-2xl">Chào mừng trở lại</CardTitle>
-          <CardDescription>Đăng nhập để tiếp tục viết tiểu thuyết</CardDescription>
+    <div className="relative min-h-screen flex items-center justify-center p-4 bg-background overflow-hidden">
+      {/* Dynamic Aurora Ambient Lighting */}
+      <AmbientBackground intensity="medium" />
+
+      <Card className="w-full max-w-md glass-card border border-border/70 shadow-2xl relative z-10 rounded-2xl">
+        <CardHeader className="text-center pb-4">
+          <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center text-primary-foreground font-bold text-xl mx-auto mb-3 shadow-lg shadow-primary/30">
+            N
+          </div>
+          <CardTitle className="text-2xl font-serif font-bold tracking-tight">Chào mừng trở lại</CardTitle>
+          <CardDescription className="text-xs">Đăng nhập vào phòng làm việc của bạn</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div>
-              <Input placeholder="Email" type="email" {...register('email')} />
-              {errors.email && <p className="text-sm text-destructive mt-1">{errors.email.message}</p>}
+              <Input
+                placeholder="Email của bạn"
+                type="email"
+                {...register('email')}
+                className="bg-card/70 rounded-xl"
+              />
+              {errors.email && <p className="text-xs text-destructive mt-1">{errors.email.message}</p>}
             </div>
             <div>
-              <Input placeholder="Mật khẩu" type="password" {...register('password')} />
-              {errors.password && <p className="text-sm text-destructive mt-1">{errors.password.message}</p>}
+              <Input
+                placeholder="Mật khẩu"
+                type="password"
+                {...register('password')}
+                className="bg-card/70 rounded-xl"
+              />
+              {errors.password && <p className="text-xs text-destructive mt-1">{errors.password.message}</p>}
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              Đăng nhập
+            <Button
+              type="submit"
+              className="w-full h-10 font-semibold rounded-xl bg-primary hover:bg-primary/90 shadow-md shadow-primary/25 btn-interactive flex items-center justify-center gap-2"
+              disabled={loading}
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <SparkleIcon size={14} color="currentColor" />}
+              <span>Đăng nhập</span>
             </Button>
           </form>
-          <div className="mt-6 text-center text-sm">
-            Chưa có tài khoản? <Link href="/register" className="text-primary hover:underline">Đăng ký</Link>
+          <div className="mt-6 text-center text-xs text-muted-foreground">
+            Chưa có tài khoản?{' '}
+            <Link href="/register" className="text-primary font-semibold hover:underline">
+              Đăng ký miễn phí
+            </Link>
           </div>
           <div className="mt-4 text-center">
-            <Link href="/" className="text-sm text-muted-foreground hover:underline">← Về trang chủ</Link>
+            <Link href="/" className="text-xs text-muted-foreground hover:text-foreground hover:underline">
+              ← Về trang chủ
+            </Link>
           </div>
         </CardContent>
       </Card>
