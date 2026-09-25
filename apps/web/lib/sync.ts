@@ -77,7 +77,7 @@ export function exportFullWorkspace() {
     user: getStoredJson('novelist_current_user', null),
     aiConfig: {
       provider: localStorage.getItem('ai_provider') || 'gemini',
-      model: localStorage.getItem('ai_model') || 'gemini-1.5-flash',
+      model: localStorage.getItem('ai_model') || 'gemini-3.5-flash',
       apiKey: localStorage.getItem('ai_api_key') || ''
     }
   };

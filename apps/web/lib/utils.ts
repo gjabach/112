@@ -245,7 +245,7 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
       email: body.email,
       name: body.name || body.email.split('@')[0],
       aiProvider: localStorage.getItem('ai_provider') || 'gemini',
-      aiModel: localStorage.getItem('ai_model') || 'gemini-1.5-flash',
+      aiModel: localStorage.getItem('ai_model') || 'gemini-3.5-flash',
       createdAt: now
     };
     users.push({ ...user, password: body.password });

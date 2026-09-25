@@ -13,7 +13,11 @@ import { SyncDialog } from '@/components/sync/sync-dialog';
 import { getSyncKey, pushSync, pullSync } from '@/lib/sync';
 
 const providers = [
-  { id: 'gemini', name: 'Google Gemini (Khuyên dùng)', models: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'] },
+  { 
+    id: 'gemini', 
+    name: 'Google Gemini (Khuyên dùng)', 
+    models: ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'] 
+  },
   { id: 'groq', name: 'Groq (miễn phí, nhanh)', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
   { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'] },
   { id: 'anthropic', name: 'Anthropic Claude', models: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'] },
@@ -23,7 +27,7 @@ const providers = [
 export default function SettingsPage() {
   const { user, setUser } = useAuthStore();
   const [aiProvider, setAiProvider] = useState('gemini');
-  const [aiModel, setAiModel] = useState('gemini-1.5-flash');
+  const [aiModel, setAiModel] = useState('gemini-3.5-flash');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -41,15 +45,22 @@ export default function SettingsPage() {
     const savedModel = localStorage.getItem('ai_model');
     const savedKey = localStorage.getItem('ai_api_key');
 
+    let activeModel = savedModel;
+    // Auto-migrate legacy 1.5-pro / 1.5-flash / 2.0-flash to 3.5-flash
+    if (activeModel && (activeModel === 'gemini-1.5-flash' || activeModel === 'gemini-1.5-pro' || activeModel === 'gemini-2.0-flash')) {
+      activeModel = 'gemini-3.5-flash';
+      localStorage.setItem('ai_model', 'gemini-3.5-flash');
+    }
+
     if (savedProvider) setAiProvider(savedProvider);
-    if (savedModel) setAiModel(savedModel);
+    if (activeModel) setAiModel(activeModel);
     if (savedKey) setApiKey(savedKey);
 
     // 2. Merge with user object
     if (user) {
       setProfileName(user.name || '');
       if (user.aiProvider && !savedProvider) setAiProvider(user.aiProvider);
-      if (user.aiModel && !savedModel) setAiModel(user.aiModel);
+      if (user.aiModel && !savedModel) setAiModel(user.aiModel === 'gemini-1.5-pro' || user.aiModel === 'gemini-1.5-flash' ? 'gemini-3.5-flash' : user.aiModel);
       if (user.aiApiKey && !savedKey) setApiKey(user.aiApiKey);
     }
   }, [user]);
@@ -170,7 +181,7 @@ export default function SettingsPage() {
         user: getStored('novelist_current_user', null),
         aiConfig: {
           provider: localStorage.getItem('ai_provider') || 'gemini',
-          model: localStorage.getItem('ai_model') || 'gemini-1.5-flash',
+          model: localStorage.getItem('ai_model') || 'gemini-3.5-flash',
           apiKey: localStorage.getItem('ai_api_key') || ''
         }
       };
@@ -245,7 +256,7 @@ export default function SettingsPage() {
           if (data.aiConfig.model) localStorage.setItem('ai_model', data.aiConfig.model);
           if (data.aiConfig.apiKey) localStorage.setItem('ai_api_key', data.aiConfig.apiKey);
           setAiProvider(data.aiConfig.provider || 'gemini');
-          setAiModel(data.aiConfig.model || 'gemini-1.5-flash');
+          setAiModel(data.aiConfig.model || 'gemini-3.5-flash');
           setApiKey(data.aiConfig.apiKey || '');
         }
 
