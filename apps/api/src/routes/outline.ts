@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, asc, isNull } from 'drizzle-orm';
 import { schema } from '../lib/db';
 import { generateId, nowTimestamp, decryptApiKey } from '../lib/auth';
 import type { Env } from '../index';
@@ -160,7 +160,7 @@ outline.post('/projects/:projectId/outline', async (c) => {
   const now = nowTimestamp();
 
   // Get max orderIndex for parent
-  const siblings = await db.select().from(schema.outlineNodes).where(and(eq(schema.outlineNodes.projectId, projectId), body.parentId ? eq(schema.outlineNodes.parentId, body.parentId) : eq(schema.outlineNodes.parentId, '' as any)));
+  const siblings = await db.select().from(schema.outlineNodes).where(and(eq(schema.outlineNodes.projectId, projectId), body.parentId ? eq(schema.outlineNodes.parentId, body.parentId) : isNull(schema.outlineNodes.parentId)));
   
   await db.insert(schema.outlineNodes).values({
     id,

@@ -237,7 +237,7 @@ export class GeminiProvider implements AIProvider {
     const model = (options.model || 'gemini-3.5-flash').trim().replace(/^models\//, '');
     const { systemInstruction, contents } = this.formatGeminiMessages(options.messages);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const bodyPayload: any = {
       contents,
@@ -288,7 +288,7 @@ export class GeminiProvider implements AIProvider {
     const model = (options.model || 'gemini-3.5-flash').trim().replace(/^models\//, '');
     const { systemInstruction, contents } = this.formatGeminiMessages(options.messages);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
 
     const bodyPayload: any = {
       contents,

@@ -120,9 +120,11 @@ exportRoutes.post('/:projectId', async (c) => {
     if (!fileUrl && result.data instanceof Uint8Array && result.data.length < 5 * 1024 * 1024) {
       // Convert to base64 for direct download (only for files < 5MB)
       const binary = result.data;
+      const chunkSize = 8192;
       let binaryStr = '';
-      for (let i = 0; i < binary.length; i++) {
-        binaryStr += String.fromCharCode(binary[i]);
+      for (let i = 0; i < binary.length; i += chunkSize) {
+        const chunk = binary.subarray(i, Math.min(i + chunkSize, binary.length));
+        binaryStr += String.fromCharCode.apply(null, chunk as unknown as number[]);
       }
       downloadData = btoa(binaryStr);
     }

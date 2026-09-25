@@ -1,4 +1,4 @@
-import { tiptapToPlainText, type ExportChapter, type ExportProject, generateFrontMatter, generateToc } from './utils';
+import { tiptapToPlainText, tiptapToHtml, type ExportChapter, type ExportProject, generateFrontMatter, generateToc } from './utils';
 
 export interface MarkdownOptions {
   includeFrontMatter?: boolean;
@@ -130,19 +130,16 @@ export function generateHtml(
 `;
 
   if (includeFrontMatter) {
-    const { generateFrontMatter: genFM } = require('./utils');
-    html += genFM({ ...project, authorName }, 'html');
+    html += generateFrontMatter({ ...project, authorName }, 'html');
   }
 
   if (includeToc) {
-    const { generateToc: genToc } = require('./utils');
-    html += genToc(chapters, 'html');
+    html += generateToc(chapters, 'html');
   }
 
   chapters
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .forEach((chapter, idx) => {
-      const { tiptapToHtml } = require('./utils');
       const htmlContent = tiptapToHtml(chapter.content);
       
       html += `

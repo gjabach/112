@@ -115,11 +115,12 @@ app.get('/api/stats/overview', async (c) => {
   const { schema } = await import('./lib/db');
 
   const projects = await db.select().from(schema.projects).where(eq(schema.projects.userId, payload.userId));
-  const chapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, projects[0]?.id || 'none'));
   
   let totalWords = 0;
+  let totalChapters = 0;
   for (const p of projects) {
     const chs = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, p.id));
+    totalChapters += chs.length;
     totalWords += chs.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
   }
 
@@ -127,7 +128,7 @@ app.get('/api/stats/overview', async (c) => {
     stats: {
       totalProjects: projects.length,
       totalWords,
-      totalChapters: chapters.length
+      totalChapters
     }
   });
 });
