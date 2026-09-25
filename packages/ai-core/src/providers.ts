@@ -278,7 +278,7 @@ export class GeminiProvider implements AIProvider {
       this.handleGeminiError(res.status, errorMsg);
     }
 
-    const json = await res.json();
+    const json = (await res.json()) as any;
     return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
   }
 

@@ -1,5 +1,6 @@
-// PDF Generator using pdf-lib (works in Cloudflare Workers)
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+// PDF Generator using pdf-lib and @pdf-lib/fontkit with Vietnamese Unicode support
+import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import { tiptapToPlainText, type ExportChapter, type ExportProject } from './utils';
 
 export interface PdfOptions {
@@ -9,6 +10,57 @@ export interface PdfOptions {
   fontSize?: number;
   lineSpacing?: number;
   authorName?: string;
+  fontBytes?: Uint8Array | ArrayBuffer;
+  boldFontBytes?: Uint8Array | ArrayBuffer;
+}
+
+let cachedRegularFont: ArrayBuffer | null = null;
+let cachedBoldFont: ArrayBuffer | null = null;
+
+async function loadUnicodeFonts(options: PdfOptions): Promise<{
+  regularBytes?: ArrayBuffer;
+  boldBytes?: ArrayBuffer;
+}> {
+  if (options.fontBytes) {
+    return {
+      regularBytes: options.fontBytes instanceof Uint8Array ? (options.fontBytes.buffer as ArrayBuffer) : (options.fontBytes as ArrayBuffer),
+      boldBytes: options.boldFontBytes ? (options.boldFontBytes instanceof Uint8Array ? (options.boldFontBytes.buffer as ArrayBuffer) : (options.boldFontBytes as ArrayBuffer)) : undefined
+    };
+  }
+
+  if (cachedRegularFont) {
+    return { regularBytes: cachedRegularFont, boldBytes: cachedBoldFont || cachedRegularFont };
+  }
+
+  try {
+    const [regRes, boldRes] = await Promise.all([
+      fetch('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/fonts/Roboto/Roboto-Regular.ttf'),
+      fetch('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/fonts/Roboto/Roboto-Medium.ttf')
+    ]);
+
+    if (regRes.ok) {
+      cachedRegularFont = await regRes.arrayBuffer();
+    }
+    if (boldRes.ok) {
+      cachedBoldFont = await boldRes.arrayBuffer();
+    }
+  } catch (e) {
+    console.warn('[PDF] Failed to fetch Unicode font from CDN:', e);
+  }
+
+  return {
+    regularBytes: cachedRegularFont || undefined,
+    boldBytes: cachedBoldFont || cachedRegularFont || undefined
+  };
+}
+
+// Fallback ASCII sanitizer used only when custom Unicode font cannot be loaded
+function sanitizeToWinAnsi(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D');
 }
 
 export async function generatePdf(
@@ -26,9 +78,36 @@ export async function generatePdf(
   } = options;
 
   const pdfDoc = await PDFDocument.create();
-  const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-  const timesBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
-  const timesItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+  pdfDoc.registerFontkit(fontkit);
+
+  let timesRoman: PDFFont;
+  let timesBold: PDFFont;
+  let timesItalic: PDFFont;
+  let isUnicodeFont = false;
+
+  const fontData = await loadUnicodeFonts(options);
+  if (fontData.regularBytes) {
+    try {
+      timesRoman = await pdfDoc.embedFont(fontData.regularBytes);
+      timesBold = fontData.boldBytes ? await pdfDoc.embedFont(fontData.boldBytes) : timesRoman;
+      timesItalic = timesRoman;
+      isUnicodeFont = true;
+    } catch (e) {
+      console.warn('[PDF] Could not embed custom font, falling back to StandardFonts:', e);
+      timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+      timesBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+      timesItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+    }
+  } else {
+    timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    timesBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+    timesItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+  }
+
+  const safeText = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return isUnicodeFont ? text : sanitizeToWinAnsi(text);
+  };
 
   const pageWidth = 595; // A4 width in points
   const pageHeight = 842; // A4 height
@@ -41,7 +120,6 @@ export async function generatePdf(
   const addNewPage = () => {
     currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
     y = pageHeight - margin;
-    // Add page number
     const pageNum = pdfDoc.getPageCount();
     currentPage.drawText(`${pageNum}`, {
       x: pageWidth / 2 - 10,
@@ -56,7 +134,7 @@ export async function generatePdf(
   const drawTextWrapped = (
     text: string,
     opts: {
-      font: any;
+      font: PDFFont;
       size: number;
       color?: any;
       lineHeight?: number;
@@ -64,7 +142,8 @@ export async function generatePdf(
     }
   ) => {
     const { font, size, color = rgb(0, 0, 0), lineHeight = 1.5, indent = 0 } = opts;
-    const words = text.split(' ');
+    const cleanStr = safeText(text);
+    const words = cleanStr.split(' ');
     let line = '';
     
     for (const word of words) {
@@ -72,7 +151,6 @@ export async function generatePdf(
       const testWidth = font.widthOfTextAtSize(testLine, size);
       
       if (testWidth > contentWidth - indent && line) {
-        // Draw current line
         if (y < margin + 40) addNewPage();
         
         currentPage.drawText(line, {
@@ -89,7 +167,6 @@ export async function generatePdf(
       }
     }
     
-    // Draw remaining
     if (line) {
       if (y < margin + 40) addNewPage();
       currentPage.drawText(line, {
@@ -131,13 +208,12 @@ export async function generatePdf(
     }
   };
 
-  const s = styles[style];
+  const s = styles[style] || styles.modern;
 
   // Front Matter
   if (includeFrontMatter) {
-    // Title
     y = pageHeight / 2 + 100;
-    const titleLines = project.title.split(' ');
+    const titleLines = safeText(project.title).split(' ');
     let titleLine = '';
     for (const word of titleLines) {
       const test = titleLine ? `${titleLine} ${word}` : word;
@@ -167,8 +243,9 @@ export async function generatePdf(
     }
 
     if (project.subtitle) {
-      currentPage.drawText(project.subtitle, {
-        x: margin + (contentWidth - timesRoman.widthOfTextAtSize(project.subtitle, s.subtitleSize)) / 2,
+      const cleanSub = safeText(project.subtitle);
+      currentPage.drawText(cleanSub, {
+        x: margin + (contentWidth - timesRoman.widthOfTextAtSize(cleanSub, s.subtitleSize)) / 2,
         y,
         size: s.subtitleSize,
         font: timesItalic,
@@ -178,9 +255,10 @@ export async function generatePdf(
     }
 
     if (authorName) {
+      const cleanAuthor = safeText(authorName);
       y -= 40;
-      currentPage.drawText(authorName, {
-        x: margin + (contentWidth - timesRoman.widthOfTextAtSize(authorName, 14)) / 2,
+      currentPage.drawText(cleanAuthor, {
+        x: margin + (contentWidth - timesRoman.widthOfTextAtSize(cleanAuthor, 14)) / 2,
         y,
         size: 14,
         font: timesRoman,
@@ -199,14 +277,14 @@ export async function generatePdf(
       });
     }
 
-    // New page after front matter
     addNewPage();
     y = pageHeight - margin;
   }
 
   // Table of Contents
   if (includeToc && chapters.length > 0) {
-    currentPage.drawText('Mục lục', {
+    const tocTitle = safeText('Mục lục');
+    currentPage.drawText(tocTitle, {
       x: margin,
       y,
       size: s.headingSize,
@@ -229,8 +307,7 @@ export async function generatePdf(
 
       const titleX = margin + 25;
       const maxTitleWidth = contentWidth - 50;
-      let title = ch.title;
-      // Truncate if too long
+      let title = safeText(ch.title);
       while (timesRoman.widthOfTextAtSize(title, s.bodySize) > maxTitleWidth && title.length > 10) {
         title = title.slice(0, -4) + '...';
       }
@@ -243,20 +320,21 @@ export async function generatePdf(
         color: rgb(0, 0, 0)
       });
 
-      // Dots
       const titleWidth = timesRoman.widthOfTextAtSize(title, s.bodySize);
       const dotsStart = titleX + titleWidth + 5;
       const dotsEnd = pageWidth - margin - 20;
       if (dotsEnd > dotsStart) {
         const dotWidth = timesRoman.widthOfTextAtSize('.', s.bodySize);
         const numDots = Math.floor((dotsEnd - dotsStart) / dotWidth);
-        currentPage.drawText('.'.repeat(numDots), {
-          x: dotsStart,
-          y,
-          size: s.bodySize,
-          font: timesRoman,
-          color: rgb(0.7, 0.7, 0.7)
-        });
+        if (numDots > 0) {
+          currentPage.drawText('.'.repeat(numDots), {
+            x: dotsStart,
+            y,
+            size: s.bodySize,
+            font: timesRoman,
+            color: rgb(0.7, 0.7, 0.7)
+          });
+        }
       }
 
       y -= s.bodySize * 1.6;
@@ -269,10 +347,9 @@ export async function generatePdf(
   chapters
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .forEach((chapter, idx) => {
-      // Chapter title
       if (y < margin + 100) addNewPage();
 
-      const chapterNum = `Chương ${idx + 1}`;
+      const chapterNum = safeText(`Chương ${idx + 1}`);
       currentPage.drawText(chapterNum, {
         x: margin,
         y,
@@ -290,7 +367,6 @@ export async function generatePdf(
       });
       y -= 10;
 
-      // Decorative line
       currentPage.drawLine({
         start: { x: margin, y },
         end: { x: margin + 50, y },
@@ -299,7 +375,6 @@ export async function generatePdf(
       });
       y -= 20;
 
-      // Chapter content
       const plainText = tiptapToPlainText(chapter.content);
       if (plainText) {
         const paragraphs = plainText.split('\n\n').filter(p => p.trim());
@@ -307,7 +382,6 @@ export async function generatePdf(
         for (const para of paragraphs) {
           if (!para.trim()) continue;
           
-          // Check if paragraph is heading-like (short and maybe all caps or starts with #)
           const isHeading = para.length < 100 && (para.startsWith('#') || para === para.toUpperCase());
           
           if (isHeading) {
@@ -325,9 +399,9 @@ export async function generatePdf(
               size: s.bodySize,
               color: rgb(0.1, 0.1, 0.1),
               lineHeight: lineSpacing,
-              indent: s.bodySize * 2 // First line indent
+              indent: s.bodySize * 2
             });
-            y -= 4; // Extra space between paragraphs
+            y -= 4;
           }
         }
       } else {
@@ -339,16 +413,15 @@ export async function generatePdf(
         });
       }
 
-      // Page break after each chapter (except last)
       if (idx < chapters.length - 1) {
         addNewPage();
       }
     });
 
-  // Footer on all pages - add page numbers to existing pages
+  // Footer on all pages
   const pages = pdfDoc.getPages();
   pages.forEach((page, idx) => {
-    if (idx === 0 && includeFrontMatter) return; // Skip title page
+    if (idx === 0 && includeFrontMatter) return;
     page.drawText(`${idx + 1}`, {
       x: pageWidth / 2 - 5,
       y: 30,

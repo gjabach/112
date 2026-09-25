@@ -188,10 +188,24 @@ chapters.post('/:id/reorder', async (c) => {
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
 
-  // Simple reorder: update orderIndex
-  await db.update(schema.chapters).set({ orderIndex: newIndex, updatedAt: nowTimestamp() }).where(eq(schema.chapters.id, id));
+  // Full contiguous reorder: retrieve all chapters, splice to new position, and update indexes
+  const allChapters = await db.select().from(schema.chapters)
+    .where(eq(schema.chapters.projectId, chapter.projectId))
+    .orderBy(asc(schema.chapters.orderIndex));
 
-  return c.json({ success: true });
+  const filtered = allChapters.filter((ch: any) => ch.id !== id);
+  const targetIndex = Math.max(0, Math.min(typeof newIndex === 'number' ? newIndex : 0, filtered.length));
+  filtered.splice(targetIndex, 0, chapter);
+
+  const now = nowTimestamp();
+  for (let i = 0; i < filtered.length; i++) {
+    const ch = filtered[i];
+    if (ch.orderIndex !== i) {
+      await db.update(schema.chapters).set({ orderIndex: i, updatedAt: now }).where(eq(schema.chapters.id, ch.id));
+    }
+  }
+
+  return c.json({ success: true, newIndex: targetIndex });
 });
 
 // GET /api/chapters/:id/revisions

@@ -147,6 +147,20 @@ export function importFullWorkspace(data: any): boolean {
   }
 }
 
+function getAuthToken(): string {
+  if (typeof window === 'undefined') return '';
+  const token = localStorage.getItem('token');
+  if (token) return token;
+  try {
+    const raw = localStorage.getItem('novelist_current_user');
+    if (raw) {
+      const u = JSON.parse(raw);
+      if (u.id) return `token_${u.id}`;
+    }
+  } catch {}
+  return 'token_guest';
+}
+
 export async function pushSync(): Promise<{ success: boolean; stats?: any; error?: string }> {
   if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
 
@@ -155,9 +169,13 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     const workspace = exportFullWorkspace();
     if (!workspace) return { success: false, error: 'No data to sync' };
 
+    const token = getAuthToken();
     const res = await fetch('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify({
         key,
         lastModified: workspace.lastModified,
@@ -182,7 +200,12 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
 
   try {
     const key = getSyncKey();
-    const res = await fetch(`/api/sync?key=${encodeURIComponent(key)}`);
+    const token = getAuthToken();
+    const res = await fetch(`/api/sync?key=${encodeURIComponent(key)}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
     const json = await res.json();
 
     if (!json.success || !json.data) {

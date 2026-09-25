@@ -9,6 +9,7 @@ import worldbuildingRoutes from './routes/worldbuilding';
 import exportRoutes from './routes/export';
 import outlineRoutes from './routes/outline';
 import timelineRoutes from './routes/timeline';
+import syncRoutes from './routes/sync';
 import { corsMiddleware } from './middleware/cors';
 
 export interface Env {
@@ -21,11 +22,17 @@ export interface Env {
   FRONTEND_URL: string;
 }
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { db: any } }>();
 
 // Global middleware
 app.use('*', corsMiddleware);
 app.use('*', async (c, next) => {
+  // Enforce foreign key constraints in D1
+  if (c.env?.DB) {
+    try {
+      await c.env.DB.prepare('PRAGMA foreign_keys = ON;').run();
+    } catch {}
+  }
   // Create DB instance per request
   const db = createDb(c.env.DB);
   c.set('db' as any, db);
@@ -53,6 +60,7 @@ app.route('/api', worldbuildingRoutes); // worldbuilding & locations
 app.route('/api/export', exportRoutes);
 app.route('/api', outlineRoutes); // outline: /projects/:id/outline and /outline/:id
 app.route('/api', timelineRoutes); // timeline: /projects/:id/timeline and /timeline/:id
+app.route('/api/sync', syncRoutes); // cloud workspace sync
 
 // Upload endpoint - returns presigned-like handling for R2
 app.post('/api/upload', async (c) => {

@@ -34,7 +34,7 @@ export const createChapterSchema = z.object({
   summary: z.string().max(1000).optional(),
   orderIndex: z.number().int().min(0),
   status: z.enum(CHAPTER_STATUSES as unknown as [string, ...string[]]).default('outline'),
-  parentId: z.string().uuid().optional().nullable(),
+  parentId: z.string().min(1).optional().nullable(),
   notes: z.string().optional(),
   pov: z.string().max(100).optional(),
   location: z.string().max(200).optional(),

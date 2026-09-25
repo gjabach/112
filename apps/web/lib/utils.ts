@@ -245,6 +245,18 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     } catch {}
   };
 
+  const hashLocalPassword = async (pwd: string): Promise<string> => {
+    try {
+      if (typeof crypto !== 'undefined' && crypto.subtle) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(pwd + ':novelist_salt_2026');
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+    } catch {}
+    return 'hashed_' + btoa(pwd);
+  };
+
   const getCurrentUser = () => {
     let u = getStorage('novelist_current_user', null);
     if (!u) {
@@ -259,10 +271,6 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
   // Auth - Register
   if (path === '/api/auth/register') {
     let users = getStorage('novelist_users', []);
-    try {
-      const res = await fetch('https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/global_users');
-      if (res.ok) users = await res.json();
-    } catch (e) {}
 
     const cleanEmail = (body.email || '').trim().toLowerCase();
     const cleanPassword = (body.password || '');
@@ -285,17 +293,9 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       aiApiKey: '',
       createdAt: now
     };
-    users.push({ ...user, password: cleanPassword });
+    const passwordHash = await hashLocalPassword(cleanPassword);
+    users.push({ ...user, passwordHash });
     setStorage('novelist_users', users);
-    
-    // Save to global DB so other devices can log in
-    try {
-      await fetch('https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/global_users', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(users)
-      });
-    } catch(e) {}
     
     setStorage('novelist_current_user', user);
 
@@ -362,28 +362,19 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     }
 
     let users = getStorage('novelist_users', []);
-    try {
-      const res = await fetch('https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/global_users');
-      if (res.ok) {
-          const globalUsers = await res.json();
-          if (Array.isArray(globalUsers)) {
-              users = globalUsers;
-              setStorage('novelist_users', users);
-          }
-      }
-    } catch (e) {}
-
     const user = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
 
     if (!user) {
       throw new Error('Tài khoản không tồn tại. Vui lòng kiểm tra lại email hoặc bấm Đăng ký tài khoản mới.');
     }
 
-    if (user.password !== cleanPassword) {
+    const inputHash = await hashLocalPassword(cleanPassword);
+    const isValid = user.passwordHash ? (user.passwordHash === inputHash) : (user.password === cleanPassword);
+    if (!isValid) {
       throw new Error('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
     }
 
-    const { password, ...safeUser } = user;
+    const { password, passwordHash, ...safeUser } = user;
     safeUser.aiProvider = safeUser.aiProvider || 'gemini';
     safeUser.aiModel = safeUser.aiModel || 'gemini-1.5-flash';
     safeUser.aiApiKey = safeUser.aiApiKey || '';

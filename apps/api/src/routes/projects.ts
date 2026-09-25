@@ -172,7 +172,21 @@ projects.delete('/:id', async (c) => {
   const existing = await db.select().from(schema.projects).where(and(eq(schema.projects.id, id), eq(schema.projects.userId, user.userId))).limit(1);
   if (existing.length === 0) return c.json({ error: 'Project not found' }, 404);
 
+  // Explicit cascade delete of all child entities to guarantee no orphaned data
+  const projectChapters = await db.select({ id: schema.chapters.id }).from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  for (const ch of projectChapters) {
+    await db.delete(schema.scenes).where(eq(schema.scenes.chapterId, ch.id));
+  }
+
+  await db.delete(schema.exportJobs).where(eq(schema.exportJobs.projectId, id));
+  await db.delete(schema.timelineEvents).where(eq(schema.timelineEvents.projectId, id));
+  await db.delete(schema.outlineNodes).where(eq(schema.outlineNodes.projectId, id));
+  await db.delete(schema.worldEntities).where(eq(schema.worldEntities.projectId, id));
+  await db.delete(schema.locations).where(eq(schema.locations.projectId, id));
+  await db.delete(schema.characters).where(eq(schema.characters.projectId, id));
+  await db.delete(schema.chapters).where(eq(schema.chapters.projectId, id));
   await db.delete(schema.projects).where(eq(schema.projects.id, id));
+
   return c.json({ success: true });
 });
 

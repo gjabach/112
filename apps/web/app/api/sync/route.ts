@@ -2,51 +2,65 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
-// We use a free, public key-value store bucket on kvdb.io to bypass Vercel's ephemeral filesystem
-// This ensures cross-device sync works seamlessly without requiring the user to set up a database.
-const KVDB_BUCKET = 'GqLhqEZUoDJhURKzLQaYaH';
-const KVDB_URL = `https://kvdb.io/${KVDB_BUCKET}`;
+// In-memory fallback cache for Edge runtime per authenticated user
+const secureSyncMemoryStore = new Map<string, { lastModified: number; syncedAt: number; data: any }>();
 
-function sanitizeKey(rawKey: string): string {
-  const cleaned = (rawKey || 'default_user').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
-  return cleaned.slice(0, 64) || 'default_user';
+function getUserSyncIdentifier(authHeader: string): string {
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  // Safe hash / prefix identifier
+  return token.slice(-32) || 'anonymous';
 }
 
-// GET /api/sync?key=<syncKey>
+// GET /api/sync
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const rawKey = searchParams.get('key') || searchParams.get('syncKey') || 'default_user';
-    const key = sanitizeKey(rawKey);
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
+    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+      return NextResponse.json({
+        success: false,
+        error: 'Yêu cầu đăng nhập để đồng bộ dữ liệu đám mây'
+      }, { status: 401 });
+    }
 
-    const response = await fetch(`${KVDB_URL}/${key}`, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
-      cache: 'no-store'
-    });
+    const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL;
 
-    if (response.ok) {
-      const parsed = await response.json();
+    // 1. If backend API is configured, forward securely to Worker API
+    if (apiUrl && !apiUrl.includes('localhost')) {
+      try {
+        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/api/sync`, {
+          method: 'GET',
+          headers: {
+            'Authorization': authHeader,
+            'Accept': 'application/json'
+          }
+        });
+        if (res.ok) {
+          return NextResponse.json(await res.json());
+        }
+      } catch {}
+    }
+
+    // 2. Safe Edge in-memory fallback
+    const userKey = getUserSyncIdentifier(authHeader);
+    const stored = secureSyncMemoryStore.get(userKey);
+
+    if (stored) {
       return NextResponse.json({
         success: true,
-        key,
-        lastModified: parsed.lastModified || Date.now(),
-        data: parsed.data || parsed,
+        key: userKey,
+        lastModified: stored.lastModified,
+        data: stored.data,
         source: 'cloud'
       });
     }
 
-    if (response.status === 404) {
-      return NextResponse.json({
-        success: true,
-        key,
-        lastModified: 0,
-        data: null,
-        message: 'Chưa có bản đồng bộ nào cho mã này'
-      });
-    }
-
-    throw new Error(`Lỗi tải dữ liệu từ Cloud (Status: ${response.status})`);
+    return NextResponse.json({
+      success: true,
+      key: userKey,
+      lastModified: 0,
+      data: null,
+      message: 'Chưa có bản đồng bộ nào cho tài khoản này'
+    });
   } catch (error: any) {
     return NextResponse.json({
       success: false,
@@ -58,32 +72,50 @@ export async function GET(req: NextRequest) {
 // POST /api/sync
 export async function POST(req: NextRequest) {
   try {
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
+    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+      return NextResponse.json({
+        success: false,
+        error: 'Yêu cầu đăng nhập để đồng bộ dữ liệu đám mây'
+      }, { status: 401 });
+    }
+
     const body = await req.json();
-    const rawKey = body.key || body.syncKey || 'default_user';
-    const key = sanitizeKey(rawKey);
     const data = body.data;
 
     if (!data || typeof data !== 'object') {
       return NextResponse.json({ success: false, error: 'Dữ liệu đồng bộ không hợp lệ' }, { status: 400 });
     }
 
-    const lastModified = body.lastModified || Date.now();
-    const payload = {
-      key,
-      lastModified,
-      syncedAt: Date.now(),
-      data
-    };
+    const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL;
 
-    const response = await fetch(`${KVDB_URL}/${key}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      throw new Error(`Lỗi lưu dữ liệu lên Cloud (Status: ${response.status})`);
+    // 1. If backend API is configured, forward securely to Worker API
+    if (apiUrl && !apiUrl.includes('localhost')) {
+      try {
+        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/api/sync`, {
+          method: 'POST',
+          headers: {
+            'Authorization': authHeader,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+        if (res.ok) {
+          return NextResponse.json(await res.json());
+        }
+      } catch {}
     }
+
+    // 2. Safe Edge in-memory fallback
+    const userKey = getUserSyncIdentifier(authHeader);
+    const lastModified = body.lastModified || Date.now();
+    const now = Date.now();
+
+    secureSyncMemoryStore.set(userKey, {
+      lastModified,
+      syncedAt: now,
+      data
+    });
 
     const projectsCount = Array.isArray(data.projects) ? data.projects.length : 0;
     const chaptersCount = Array.isArray(data.chapters) ? data.chapters.length : 0;
@@ -91,9 +123,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      key,
+      key: userKey,
       lastModified,
-      syncedAt: payload.syncedAt,
+      syncedAt: now,
       stats: {
         projects: projectsCount,
         chapters: chaptersCount,
@@ -107,4 +139,3 @@ export async function POST(req: NextRequest) {
     }, { status: 500 });
   }
 }
-

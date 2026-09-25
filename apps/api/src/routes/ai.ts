@@ -144,8 +144,8 @@ ai.post('/chat', async (c) => {
   const previousMessages = await db.select().from(schema.aiMessages).where(eq(schema.aiMessages.conversationId, convId)).orderBy(desc(schema.aiMessages.createdAt)).limit(10);
   const history = previousMessages.reverse().slice(0, -1).map((m: any) => ({ role: m.role as any, content: m.content }));
 
-  const messages = [
-    { role: 'system' as const, content: systemPrompt },
+  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+    { role: 'system', content: systemPrompt },
   ];
 
   if (projectContext && !skill) {
