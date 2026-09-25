@@ -213,6 +213,7 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     } catch {}
   }
   const now = Date.now();
+  const genId = (prefix: string) => `${prefix}_${now}_${Math.random().toString(36).slice(2, 7)}`;
 
   const getStorage = (key: string, def: any = []) => {
     try {
@@ -233,96 +234,215 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     } catch {}
   };
 
+  const getCurrentUser = () => {
+    let u = getStorage('novelist_current_user', null);
+    if (!u) {
+      const authStorage = getStorage('auth-storage', null);
+      if (authStorage?.state?.user) {
+        u = authStorage.state.user;
+      }
+    }
+    return u;
+  };
+
   // Auth - Register
   if (path === '/api/auth/register') {
     const users = getStorage('novelist_users', []);
-    const existing = users.find((u: any) => u.email === body.email);
+    const cleanEmail = (body.email || '').trim().toLowerCase();
+    const cleanPassword = (body.password || '');
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      throw new Error('Email không hợp lệ. Vui lòng kiểm tra lại định dạng email.');
+    }
+    if (!cleanPassword || cleanPassword.length < 8) {
+      throw new Error('Mật khẩu tối thiểu 8 ký tự.');
+    }
+    const existing = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
     if (existing) {
-      throw new Error('Email đã được sử dụng');
+      throw new Error('Email đã được sử dụng. Vui lòng đăng nhập hoặc sử dụng email khác.');
     }
     const user = {
-      id: 'usr_' + now,
-      email: body.email,
-      name: body.name || body.email.split('@')[0],
-      aiProvider: localStorage.getItem('ai_provider') || 'gemini',
-      aiModel: localStorage.getItem('ai_model') || 'gemini-3.5-flash',
+      id: genId('usr'),
+      email: cleanEmail,
+      name: (body.name || '').trim() || cleanEmail.split('@')[0],
+      aiProvider: 'gemini',
+      aiModel: 'gemini-1.5-flash',
+      aiApiKey: '',
       createdAt: now
     };
-    users.push({ ...user, password: body.password });
+    users.push({ ...user, password: cleanPassword });
     setStorage('novelist_users', users);
     setStorage('novelist_current_user', user);
+
+    // Initialize user AI settings
+    try {
+      localStorage.setItem('ai_provider', 'gemini');
+      localStorage.setItem('ai_model', 'gemini-1.5-flash');
+      localStorage.removeItem('ai_api_key');
+    } catch {}
+
+    // Auto-create initial personal project for this new user
+    const projects = getStorage('novelist_projects', []);
+    const initialProj = {
+      id: genId('proj'),
+      userId: user.id,
+      title: 'Tiểu thuyết đầu tay',
+      subtitle: `Tác phẩm đầu tiên của ${user.name}`,
+      description: 'Dự án khởi đầu cho sự nghiệp sáng tác của bạn.',
+      genre: 'fantasy',
+      status: 'planning',
+      wordCount: 0,
+      chapterCount: 1,
+      wordCountGoal: 50000,
+      createdAt: now,
+      updatedAt: now
+    };
+    projects.unshift(initialProj);
+    setStorage('novelist_projects', projects);
+
+    const chapters = getStorage('novelist_chapters', []);
+    const firstChap = {
+      id: genId('chap'),
+      projectId: initialProj.id,
+      title: 'Chương 1: Khởi đầu mới',
+      orderIndex: 1,
+      content: '',
+      wordCount: 0,
+      status: 'draft',
+      createdAt: now,
+      updatedAt: now
+    };
+    chapters.push(firstChap);
+    setStorage('novelist_chapters', chapters);
+
     return { user, token: 'token_' + user.id };
   }
 
   // Auth - Login
   if (path === '/api/auth/login') {
-    const users = getStorage('novelist_users', []);
-    const user = users.find((u: any) => u.email === body.email);
-    if (!user || user.password !== body.password) {
-      const newUser = {
-        id: 'usr_' + now,
-        email: body.email,
-        name: body.email.split('@')[0],
-        aiProvider: localStorage.getItem('ai_provider') || 'gemini',
-        aiModel: localStorage.getItem('ai_model') || 'gemini-1.5-flash',
-        createdAt: now
-      };
-      users.push({ ...newUser, password: body.password });
-      setStorage('novelist_users', users);
-      setStorage('novelist_current_user', newUser);
-      return { user: newUser, token: 'token_' + newUser.id };
+    const cleanEmail = (body.email || '').trim().toLowerCase();
+    const cleanPassword = (body.password || '');
+    if (!cleanEmail) {
+      throw new Error('Vui lòng nhập địa chỉ email.');
     }
+    if (!cleanPassword) {
+      throw new Error('Vui lòng nhập mật khẩu.');
+    }
+
+    const users = getStorage('novelist_users', []);
+    const user = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
+
+    if (!user) {
+      throw new Error('Tài khoản không tồn tại. Vui lòng kiểm tra lại email hoặc bấm Đăng ký tài khoản mới.');
+    }
+
+    if (user.password !== cleanPassword) {
+      throw new Error('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+    }
+
     const { password, ...safeUser } = user;
-    safeUser.aiProvider = localStorage.getItem('ai_provider') || safeUser.aiProvider || 'gemini';
-    safeUser.aiModel = localStorage.getItem('ai_model') || safeUser.aiModel || 'gemini-1.5-flash';
-    safeUser.aiApiKey = localStorage.getItem('ai_api_key') || safeUser.aiApiKey || '';
+    safeUser.aiProvider = safeUser.aiProvider || 'gemini';
+    safeUser.aiModel = safeUser.aiModel || 'gemini-1.5-flash';
+    safeUser.aiApiKey = safeUser.aiApiKey || '';
+
+    // Apply this user's specific AI settings to current session
+    try {
+      localStorage.setItem('ai_provider', safeUser.aiProvider);
+      localStorage.setItem('ai_model', safeUser.aiModel);
+      if (safeUser.aiApiKey) {
+        localStorage.setItem('ai_api_key', safeUser.aiApiKey);
+      } else {
+        localStorage.removeItem('ai_api_key');
+      }
+    } catch {}
+
     setStorage('novelist_current_user', safeUser);
     return { user: safeUser, token: 'token_' + user.id };
   }
 
   // Auth - Settings
   if (path === '/api/auth/settings' && method === 'PATCH') {
-    const user = getStorage('novelist_current_user', {
+    const user = getCurrentUser() || {
       id: 'usr_default',
       email: 'user@example.com',
       name: 'Tác giả'
-    });
+    };
 
+    if (body.name) {
+      user.name = body.name.trim();
+    }
     if (body.aiProvider) {
-      localStorage.setItem('ai_provider', body.aiProvider);
+      try { localStorage.setItem('ai_provider', body.aiProvider); } catch {}
       user.aiProvider = body.aiProvider;
     }
     if (body.aiModel) {
-      localStorage.setItem('ai_model', body.aiModel);
+      try { localStorage.setItem('ai_model', body.aiModel); } catch {}
       user.aiModel = body.aiModel;
     }
     if (body.aiApiKey !== undefined) {
       const cleanKey = (body.aiApiKey || '').trim();
-      localStorage.setItem('ai_api_key', cleanKey);
+      try {
+        if (cleanKey) {
+          localStorage.setItem('ai_api_key', cleanKey);
+        } else {
+          localStorage.removeItem('ai_api_key');
+        }
+      } catch {}
       user.aiApiKey = cleanKey;
     }
 
     setStorage('novelist_current_user', user);
+
+    // Keep user updated in novelist_users store
+    const users = getStorage('novelist_users', []);
+    const idx = users.findIndex((u: any) => u.id === user.id || u.email === user.email);
+    if (idx !== -1) {
+      users[idx] = { ...users[idx], ...user };
+      setStorage('novelist_users', users);
+    }
+
     return { success: true, user };
   }
 
   // Auth - Me
   if (path === '/api/auth/me') {
-    const user = getStorage('novelist_current_user', {
+    const user = getCurrentUser() || {
       id: 'usr_default',
       email: 'user@example.com',
-      name: 'Tác giả'
-    });
-    user.aiProvider = localStorage.getItem('ai_provider') || user.aiProvider || 'gemini';
-    user.aiModel = localStorage.getItem('ai_model') || user.aiModel || 'gemini-1.5-flash';
-    user.aiApiKey = localStorage.getItem('ai_api_key') || user.aiApiKey || '';
+      name: 'Tác giả',
+      aiProvider: 'gemini',
+      aiModel: 'gemini-1.5-flash',
+      aiApiKey: ''
+    };
+    try {
+      user.aiProvider = localStorage.getItem('ai_provider') || user.aiProvider || 'gemini';
+      user.aiModel = localStorage.getItem('ai_model') || user.aiModel || 'gemini-1.5-flash';
+      user.aiApiKey = localStorage.getItem('ai_api_key') || user.aiApiKey || '';
+    } catch {}
     return { user };
   }
 
   // Projects
   if (path === '/api/projects' && method === 'GET') {
+    const currentUser = getCurrentUser() || { id: 'usr_default' };
     const raw = getStorage('novelist_projects', []);
-    const sanitized = raw.map((p: any) => ({
+
+    // Backward compatibility: migrate unassigned legacy projects to active user so existing novels are never lost
+    let needsSave = false;
+    const migrated = raw.map((p: any) => {
+      if (!p.userId) {
+        needsSave = true;
+        return { ...p, userId: currentUser.id };
+      }
+      return p;
+    });
+    if (needsSave) {
+      setStorage('novelist_projects', migrated);
+    }
+
+    // Isolate projects strictly by active user
+    const userProjects = migrated.filter((p: any) => p.userId === currentUser.id);
+
+    const sanitized = userProjects.map((p: any) => ({
       ...p,
       wordCount: p.wordCount ?? 0,
       chapterCount: p.chapterCount ?? 0,
@@ -335,9 +455,11 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
   }
 
   if (path === '/api/projects' && method === 'POST') {
+    const currentUser = getCurrentUser() || { id: 'usr_default' };
     const projects = getStorage('novelist_projects', []);
     const newProj = {
-      id: 'proj_' + now,
+      id: genId('proj'),
+      userId: currentUser.id,
       title: body.title || 'Tiểu thuyết mới',
       subtitle: body.subtitle || '',
       description: body.description || '',
@@ -354,7 +476,7 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     // Auto-create Chapter 1
     const chapters = getStorage('novelist_chapters', []);
     const firstChap = {
-      id: 'chap_' + (now + 1),
+      id: genId('chap'),
       projectId: newProj.id,
       title: 'Chương 1: Mở đầu',
       orderIndex: 1,
@@ -1152,7 +1274,12 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
       const res = await fetch(`${customApiUrl}${path}`, { ...options, headers });
       if (res.ok) return await res.json();
-    } catch {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
+    } catch (e: any) {
+      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('NetworkError')) {
+        throw e;
+      }
       // fallback
     }
   }
@@ -1170,7 +1297,12 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       if (res.ok) {
         return await res.json();
       }
-    } catch {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
+    } catch (e: any) {
+      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('NetworkError')) {
+        throw e;
+      }
       // proceed to local fallback
     }
   }

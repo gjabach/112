@@ -8,7 +8,8 @@ import { useAuthStore } from '@/lib/store';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
-import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, CheckCircle2, Sun, Moon, Monitor, Smartphone, Cloud, QrCode } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, CheckCircle2, Sun, Moon, Monitor, Smartphone, Cloud, QrCode, LogOut } from 'lucide-react';
 import { SyncDialog } from '@/components/sync/sync-dialog';
 import { getSyncKey, pushSync, pullSync } from '@/lib/sync';
 
@@ -25,7 +26,8 @@ const providers = [
 ];
 
 export default function SettingsPage() {
-  const { user, setUser } = useAuthStore();
+  const router = useRouter();
+  const { user, setUser, logout } = useAuthStore();
   const [aiProvider, setAiProvider] = useState('gemini');
   const [aiModel, setAiModel] = useState('gemini-3.5-flash');
   const [apiKey, setApiKey] = useState('');
@@ -287,7 +289,19 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Input placeholder="Tên hiển thị" value={profileName} onChange={e => setProfileName(e.target.value)} />
-            <Button variant="outline" onClick={saveProfile}><Save className="w-4 h-4 mr-2" /> Lưu profile</Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="outline" onClick={saveProfile}><Save className="w-4 h-4 mr-2" /> Lưu profile</Button>
+              <Button 
+                variant="destructive" 
+                onClick={() => {
+                  logout();
+                  toast.success('Đã đăng xuất tài khoản thành công');
+                  router.push('/login');
+                }}
+              >
+                <LogOut className="w-4 h-4 mr-2" /> Đăng xuất
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

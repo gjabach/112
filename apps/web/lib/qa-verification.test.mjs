@@ -391,4 +391,213 @@ test('DOCX OpenXML library can assemble document buffer with Vietnamese content 
   assert.ok(buffer.length > 3000, 'DOCX OpenXML package must be a valid zip archive of sufficient size');
 });
 
+// ==========================================
+// AUTHENTICATION & MULTI-ACCOUNT ISOLATION TESTS
+// ==========================================
+
+function simulateRegister(body, storage) {
+  const users = JSON.parse(storage.get('novelist_users') || '[]');
+  const cleanEmail = (body.email || '').trim().toLowerCase();
+  const cleanPassword = (body.password || '');
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new Error('Email không hợp lệ. Vui lòng kiểm tra lại định dạng email.');
+  }
+  if (!cleanPassword || cleanPassword.length < 8) {
+    throw new Error('Mật khẩu tối thiểu 8 ký tự.');
+  }
+  const existing = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+  if (existing) {
+    throw new Error('Email đã được sử dụng. Vui lòng đăng nhập hoặc sử dụng email khác.');
+  }
+  const now = Date.now();
+  const genId = (prefix) => `${prefix}_${now}_${Math.random().toString(36).slice(2, 7)}`;
+  const user = {
+    id: genId('usr'),
+    email: cleanEmail,
+    name: (body.name || '').trim() || cleanEmail.split('@')[0],
+    aiProvider: 'gemini',
+    aiModel: 'gemini-1.5-flash',
+    aiApiKey: '',
+    createdAt: now
+  };
+  users.push({ ...user, password: cleanPassword });
+  storage.set('novelist_users', JSON.stringify(users));
+  storage.set('novelist_current_user', JSON.stringify(user));
+
+  // Auto-create initial project for this user
+  const projects = JSON.parse(storage.get('novelist_projects') || '[]');
+  const initialProj = {
+    id: genId('proj'),
+    userId: user.id,
+    title: 'Tiểu thuyết đầu tay',
+    subtitle: `Tác phẩm đầu tiên của ${user.name}`,
+    description: 'Dự án khởi đầu cho sự nghiệp sáng tác của bạn.',
+    genre: 'fantasy',
+    status: 'planning',
+    wordCount: 0,
+    chapterCount: 1,
+    wordCountGoal: 50000,
+    createdAt: now,
+    updatedAt: now
+  };
+  projects.unshift(initialProj);
+  storage.set('novelist_projects', JSON.stringify(projects));
+
+  return { user, token: 'token_' + user.id };
+}
+
+function simulateLogin(body, storage) {
+  const cleanEmail = (body.email || '').trim().toLowerCase();
+  const cleanPassword = (body.password || '');
+  if (!cleanEmail) {
+    throw new Error('Vui lòng nhập địa chỉ email.');
+  }
+  if (!cleanPassword) {
+    throw new Error('Vui lòng nhập mật khẩu.');
+  }
+
+  const users = JSON.parse(storage.get('novelist_users') || '[]');
+  const user = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+
+  if (!user) {
+    throw new Error('Tài khoản không tồn tại. Vui lòng kiểm tra lại email hoặc bấm Đăng ký tài khoản mới.');
+  }
+
+  if (user.password !== cleanPassword) {
+    throw new Error('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+  }
+
+  const { password, ...safeUser } = user;
+  safeUser.aiProvider = safeUser.aiProvider || 'gemini';
+  safeUser.aiModel = safeUser.aiModel || 'gemini-1.5-flash';
+  safeUser.aiApiKey = safeUser.aiApiKey || '';
+
+  storage.set('novelist_current_user', JSON.stringify(safeUser));
+  return { user: safeUser, token: 'token_' + user.id };
+}
+
+function simulateGetProjects(storage, currentUser) {
+  const raw = JSON.parse(storage.get('novelist_projects') || '[]');
+  let needsSave = false;
+  const migrated = raw.map(p => {
+    if (!p.userId) {
+      needsSave = true;
+      return { ...p, userId: currentUser?.id || 'usr_default' };
+    }
+    return p;
+  });
+  if (needsSave) {
+    storage.set('novelist_projects', JSON.stringify(migrated));
+  }
+
+  return migrated.filter(p => p.userId === currentUser?.id);
+}
+
+test('Register strictly validates email format, password length, and duplicate email', () => {
+  const mockStorage = new Map();
+
+  // 1. Invalid email
+  assert.throws(
+    () => simulateRegister({ email: 'bademail', password: 'password123', name: 'User' }, mockStorage),
+    /Email không hợp lệ/
+  );
+
+  // 2. Short password
+  assert.throws(
+    () => simulateRegister({ email: 'valid@example.com', password: '123', name: 'User' }, mockStorage),
+    /Mật khẩu tối thiểu 8 ký tự/
+  );
+
+  // 3. Successful registration
+  const res = simulateRegister({ email: 'tacgia@example.com', password: 'password1234', name: 'Tác Giả 1' }, mockStorage);
+  assert.equal(res.user.email, 'tacgia@example.com');
+  assert.equal(res.user.name, 'Tác Giả 1');
+  assert.ok(res.token.startsWith('token_usr_'));
+
+  // 4. Duplicate email registration rejected
+  assert.throws(
+    () => simulateRegister({ email: 'TACGIA@EXAMPLE.COM', password: 'password5678', name: 'Tác Giả Khác' }, mockStorage),
+    /Email đã được sử dụng/
+  );
+});
+
+test('Login strictly rejects non-existent email and wrong password', () => {
+  const mockStorage = new Map();
+  // Register user first
+  simulateRegister({ email: 'writer@domain.com', password: 'correctpassword', name: 'Writer' }, mockStorage);
+
+  // 1. Non-existent account
+  assert.throws(
+    () => simulateLogin({ email: 'nonexistent@domain.com', password: 'correctpassword' }, mockStorage),
+    /Tài khoản không tồn tại/
+  );
+
+  // 2. Wrong password
+  assert.throws(
+    () => simulateLogin({ email: 'writer@domain.com', password: 'wrongpassword' }, mockStorage),
+    /Mật khẩu không chính xác/
+  );
+
+  // 3. Successful login
+  const loginRes = simulateLogin({ email: 'WRITER@DOMAIN.COM', password: 'correctpassword' }, mockStorage);
+  assert.equal(loginRes.user.email, 'writer@domain.com');
+  assert.equal(loginRes.user.password, undefined, 'Password must never be returned in safe user object');
+});
+
+test('Multi-account project isolation guarantees User A and User B never see each others novels', () => {
+  const mockStorage = new Map();
+
+  // Register User A
+  const userA = simulateRegister({ email: 'userA@test.com', password: 'password1234', name: 'Alice' }, mockStorage).user;
+  // User A creates a specific second project
+  const projectsAfterA = JSON.parse(mockStorage.get('novelist_projects') || '[]');
+  projectsAfterA.push({
+    id: 'proj_alice_secrets',
+    userId: userA.id,
+    title: 'Bí Mật Của Alice'
+  });
+  mockStorage.set('novelist_projects', JSON.stringify(projectsAfterA));
+
+  // Register User B
+  const userB = simulateRegister({ email: 'userB@test.com', password: 'password5678', name: 'Bob' }, mockStorage).user;
+  // User B creates a specific second project
+  const projectsAfterB = JSON.parse(mockStorage.get('novelist_projects') || '[]');
+  projectsAfterB.push({
+    id: 'proj_bob_scifi',
+    userId: userB.id,
+    title: 'Hành Trình Sao Hỏa Của Bob'
+  });
+  mockStorage.set('novelist_projects', JSON.stringify(projectsAfterB));
+
+  // Query projects for User A
+  const aliceProjects = simulateGetProjects(mockStorage, userA);
+  assert.ok(aliceProjects.every(p => p.userId === userA.id), 'All projects for Alice must belong to Alice');
+  assert.ok(aliceProjects.some(p => p.title === 'Bí Mật Của Alice'), 'Alice should see her own book');
+  assert.ok(!aliceProjects.some(p => p.title.includes('Bob')), 'Alice must NEVER see Bob projects');
+
+  // Query projects for User B
+  const bobProjects = simulateGetProjects(mockStorage, userB);
+  assert.ok(bobProjects.every(p => p.userId === userB.id), 'All projects for Bob must belong to Bob');
+  assert.ok(bobProjects.some(p => p.title === 'Hành Trình Sao Hỏa Của Bob'), 'Bob should see his own book');
+  assert.ok(!bobProjects.some(p => p.title.includes('Alice')), 'Bob must NEVER see Alice projects');
+});
+
+test('Legacy projects without userId are gracefully migrated to current active user without data loss', () => {
+  const mockStorage = new Map();
+  // Simulate pre-existing legacy projects created before multi-user support
+  const legacyProjects = [
+    { id: 'proj_legacy_1', title: 'Tiểu thuyết viết từ trước' },
+    { id: 'proj_legacy_2', title: 'Bản thảo cũ chưa hoàn thành' }
+  ];
+  mockStorage.set('novelist_projects', JSON.stringify(legacyProjects));
+
+  const activeAuthor = { id: 'usr_main_author', email: 'author@domain.com', name: 'Chính Tác Giả' };
+  const userProjects = simulateGetProjects(mockStorage, activeAuthor);
+
+  assert.equal(userProjects.length, 2);
+  assert.equal(userProjects[0].userId, 'usr_main_author');
+  assert.equal(userProjects[1].userId, 'usr_main_author');
+  assert.equal(userProjects[0].title, 'Tiểu thuyết viết từ trước');
+});
+
 

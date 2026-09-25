@@ -30,16 +30,34 @@ export const useAuthStore = create<AuthState>()(
       setAuth: (user, token) => {
         if (typeof window !== 'undefined') {
           localStorage.setItem('token', token);
+          localStorage.setItem('novelist_current_user', JSON.stringify(user));
+          if (user.aiProvider) localStorage.setItem('ai_provider', user.aiProvider);
+          if (user.aiModel) localStorage.setItem('ai_model', user.aiModel);
+          if (user.aiApiKey) localStorage.setItem('ai_api_key', user.aiApiKey);
+          else localStorage.removeItem('ai_api_key');
         }
         set({ user, token, isAuthenticated: true });
       },
       logout: () => {
         if (typeof window !== 'undefined') {
           localStorage.removeItem('token');
+          localStorage.removeItem('novelist_current_user');
+          localStorage.removeItem('ai_api_key');
         }
         set({ user: null, token: null, isAuthenticated: false });
       },
-      setUser: (user) => set({ user })
+      setUser: (user) => {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('novelist_current_user', JSON.stringify(user));
+          if (user.aiProvider) localStorage.setItem('ai_provider', user.aiProvider);
+          if (user.aiModel) localStorage.setItem('ai_model', user.aiModel);
+          if (user.aiApiKey !== undefined) {
+            if (user.aiApiKey) localStorage.setItem('ai_api_key', user.aiApiKey);
+            else localStorage.removeItem('ai_api_key');
+          }
+        }
+        set({ user });
+      }
     }),
     {
       name: 'auth-storage',
