@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, startTransition } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -84,7 +84,9 @@ export default function ChapterEditorPage() {
     } catch (e: any) {
       toast.error(e.message || 'Lỗi tải chương');
     } finally {
-      setLoading(false);
+      startTransition(() => {
+        setLoading(false);
+      });
     }
   };
 

@@ -75,6 +75,7 @@ export function exportFullWorkspace() {
     timelineEras: getStoredJson('novelist_timeline_eras', []),
     outline: getStoredJson('novelist_outline', getStoredJson('novelist_outlines', [])),
     user: getStoredJson('novelist_current_user', null),
+    users: getStoredJson('novelist_users', []),
     aiConfig: {
       provider: localStorage.getItem('ai_provider') || 'gemini',
       model: localStorage.getItem('ai_model') || 'gemini-3.5-flash',
@@ -121,6 +122,9 @@ export function importFullWorkspace(data: any): boolean {
 
     if (data.user) {
       localStorage.setItem('novelist_current_user', JSON.stringify(data.user));
+    }
+    if (data.users && Array.isArray(data.users)) {
+      localStorage.setItem('novelist_users', JSON.stringify(data.users));
     }
 
     if (data.aiConfig) {

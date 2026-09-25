@@ -214,7 +214,7 @@ export const OUTLINE_TEMPLATES: Record<string, { name: string; nameVi: string; d
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
-export function handleLocalApi(path: string, options: RequestInit = {}): any {
+export async function handleLocalApi(path: string, options: RequestInit = {}): Promise<any> {
   if (typeof window === 'undefined') return {};
   const method = (options.method || 'GET').toUpperCase();
   let body: any = {};
@@ -258,7 +258,12 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
 
   // Auth - Register
   if (path === '/api/auth/register') {
-    const users = getStorage('novelist_users', []);
+    let users = getStorage('novelist_users', []);
+    try {
+      const res = await fetch('https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/global_users');
+      if (res.ok) users = await res.json();
+    } catch (e) {}
+
     const cleanEmail = (body.email || '').trim().toLowerCase();
     const cleanPassword = (body.password || '');
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -282,6 +287,16 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     };
     users.push({ ...user, password: cleanPassword });
     setStorage('novelist_users', users);
+    
+    // Save to global DB so other devices can log in
+    try {
+      await fetch('https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/global_users', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(users)
+      });
+    } catch(e) {}
+    
     setStorage('novelist_current_user', user);
 
     // Initialize user AI settings
@@ -324,6 +339,13 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     };
     chapters.push(firstChap);
     setStorage('novelist_chapters', chapters);
+    
+    // Try to auto push this new empty workspace to sync immediately
+    if (typeof window !== 'undefined') {
+        const syncKey = cleanEmail.replace(/[^a-z0-9_-]/g, '_');
+        localStorage.setItem('novelist_sync_key', syncKey);
+        setTimeout(() => { import('./sync').then(m => m.pushSync()).catch(() => {}) }, 500);
+    }
 
     return { user, token: 'token_' + user.id };
   }
@@ -339,7 +361,18 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
       throw new Error('Vui lòng nhập mật khẩu.');
     }
 
-    const users = getStorage('novelist_users', []);
+    let users = getStorage('novelist_users', []);
+    try {
+      const res = await fetch('https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/global_users');
+      if (res.ok) {
+          const globalUsers = await res.json();
+          if (Array.isArray(globalUsers)) {
+              users = globalUsers;
+              setStorage('novelist_users', users);
+          }
+      }
+    } catch (e) {}
+
     const user = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
 
     if (!user) {
@@ -367,7 +400,15 @@ export function handleLocalApi(path: string, options: RequestInit = {}): any {
     } catch {}
 
     setStorage('novelist_current_user', safeUser);
-    return { user: safeUser, token: 'token_' + user.id };
+    
+    // Auto sync on login
+    if (typeof window !== 'undefined') {
+        const syncKey = cleanEmail.replace(/[^a-z0-9_-]/g, '_');
+        localStorage.setItem('novelist_sync_key', syncKey);
+        setTimeout(() => { import('./sync').then(m => m.pullSync(true)).catch(() => {}) }, 500);
+    }
+
+    return { user: safeUser, token: 'token_' + safeUser.id };
   }
 
   // Auth - Settings
@@ -1296,7 +1337,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   // 2. In browser, try relative path on the same host (e.g. Next.js API routes on Vercel)
-  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
+  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
     try {
       const res = await fetch(path, {
         ...options,
