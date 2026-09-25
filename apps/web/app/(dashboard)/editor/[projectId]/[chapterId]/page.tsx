@@ -32,6 +32,7 @@ import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-s
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound } from '@/lib/sound';
 import { SoundToggleButton } from '@/components/layout/sound-provider';
+import { MechKeyboardProvider, MechKeyboardToggle } from '@/components/editor/mech-keyboard-provider';
 
 const TiptapEditor = dynamic(
   () => import('@/components/editor/tiptap-editor').then((m) => m.TiptapEditor),
@@ -377,6 +378,7 @@ export default function ChapterEditorPage() {
   );
 
   return (
+    <MechKeyboardProvider>
     <div className={`min-h-screen bg-background flex flex-col ${focusMode ? 'focus-mode' : ''}`}>
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-20 shadow-xs">
@@ -486,6 +488,9 @@ export default function ChapterEditorPage() {
 
             {/* Clicky Sound Controller */}
             <SoundToggleButton />
+            
+            {/* Mechanical Keyboard Sound */}
+            <MechKeyboardToggle />
 
             <Button variant="ghost" size="sm" className="h-8 text-xs hidden md:flex" onClick={() => setFocusMode(!focusMode)}>
               <Eye className="w-3.5 h-3.5 mr-1" /> {focusMode ? 'Thoát Focus' : 'Focus'}
@@ -604,5 +609,6 @@ export default function ChapterEditorPage() {
         )}
       </div>
     </div>
+    </MechKeyboardProvider>
   );
 }

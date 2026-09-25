@@ -50,6 +50,17 @@
     --ring: 263 70% 50%;
   }
 
+  /* Fix native <select> / <option> dark theme */
+  .dark select,
+  .dark option {
+    background-color: hsl(240 10% 3.9%);
+    color: hsl(0 0% 98%);
+  }
+
+  .dark select {
+    color-scheme: dark;
+  }
+
   .sepia {
     --background: 40 20% 94%;
     --foreground: 30 10% 15%;

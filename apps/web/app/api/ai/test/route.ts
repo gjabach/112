@@ -18,12 +18,12 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    const requestedModel = (reqModel || (providerName === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini')).trim();
+    const requestedModel = (reqModel || (providerName === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini')).trim();
     const provider = createAIProvider(providerName);
 
     // If gemini, prioritize requested model, but try modern active models if 404 occurs
     const candidateModels = providerName === 'gemini'
-      ? [requestedModel, 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'].filter((m, i, arr) => arr.indexOf(m) === i)
+      ? [requestedModel, 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'].filter((m, i, arr) => arr.indexOf(m) === i)
       : [requestedModel];
 
     let lastError: any = null;

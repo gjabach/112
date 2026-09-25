@@ -15,11 +15,11 @@ const providers = [
   { 
     id: 'gemini', 
     name: 'Google Gemini (Khuyên dùng)', 
-    models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'] 
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'] 
   },
   { id: 'groq', name: 'Groq (miễn phí, nhanh)', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
   { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'] },
-  { id: 'anthropic', name: 'Anthropic Claude', models: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'] },
+  { id: 'anthropic', name: 'Anthropic Claude', models: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'] },
   { id: 'ollama', name: 'Ollama Local', models: ['llama3.2', 'mistral', 'gemma2'] }
 ];
 
@@ -27,7 +27,7 @@ export default function SettingsPage() {
   const router = useRouter();
   const { user, setUser, logout } = useAuthStore();
   const [aiProvider, setAiProvider] = useState('gemini');
-  const [aiModel, setAiModel] = useState('gemini-2.0-flash');
+  const [aiModel, setAiModel] = useState('gemini-2.5-flash');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -45,9 +45,9 @@ export default function SettingsPage() {
     const savedKey = localStorage.getItem('ai_api_key');
 
     let activeModel = savedModel;
-    if (activeModel && (activeModel.includes('3.5-flash') || activeModel.includes('3.1-flash-lite') || activeModel.includes('3.6-flash') || activeModel.includes('3.7-flash'))) {
-      activeModel = 'gemini-2.0-flash';
-      localStorage.setItem('ai_model', 'gemini-2.0-flash');
+    if (activeModel && (activeModel.includes('3.5-flash') || activeModel.includes('3.1-flash-lite') || activeModel.includes('3.6-flash') || activeModel.includes('3.7-flash') || activeModel === 'gemini-1.5-flash' || activeModel === 'gemini-1.5-pro')) {
+      activeModel = 'gemini-2.5-flash';
+      localStorage.setItem('ai_model', 'gemini-2.5-flash');
     }
 
     if (savedProvider) setAiProvider(savedProvider);
@@ -179,7 +179,7 @@ export default function SettingsPage() {
         user: getStored('novelist_current_user', null),
         aiConfig: {
           provider: localStorage.getItem('ai_provider') || 'gemini',
-          model: localStorage.getItem('ai_model') || 'gemini-2.0-flash',
+          model: localStorage.getItem('ai_model') || 'gemini-2.5-flash',
           apiKey: localStorage.getItem('ai_api_key') || ''
         }
       };
@@ -325,7 +325,7 @@ export default function SettingsPage() {
 
             <div>
               <label className="text-sm font-medium mb-2 block">Model</label>
-              <select className="flex h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm" value={aiModel} onChange={e => setAiModel(e.target.value)}>
+              <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm" value={aiModel} onChange={e => setAiModel(e.target.value)}>
                 {providers.find(p => p.id === aiProvider)?.models.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
