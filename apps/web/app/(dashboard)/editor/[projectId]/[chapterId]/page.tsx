@@ -196,14 +196,12 @@ export default function ChapterEditorPage() {
     }
   };
 
-  if (loading) return <div className="p-8 animate-pulse text-muted-foreground">Đang mở trình soạn thảo...</div>;
-
   const currentWords = countWords(content);
   const wordGoalProgress = Math.min(100, Math.round((currentWords / targetWordCount) * 100));
 
   // Word count milestone celebration VFX
   useEffect(() => {
-    if (currentWords <= 0) return;
+    if (loading || currentWords <= 0) return;
     const milestones = [500, 1000, 2000, 3000, 5000, 10000];
     const reached = milestones.filter(m => currentWords >= m && lastMilestone < m);
     if (reached.length > 0) {
@@ -212,7 +210,9 @@ export default function ChapterEditorPage() {
       fireConfetti({ type: 'milestone', particleCount: 75 });
       toast.success(`🎉 Chúc mừng! Bản thảo đã vượt mốc ${topM.toLocaleString()} từ! Cố lên tác giả!`);
     }
-  }, [currentWords, lastMilestone]);
+  }, [loading, currentWords, lastMilestone]);
+
+  if (loading) return <div className="p-8 animate-pulse text-muted-foreground">Đang mở trình soạn thảo...</div>;
 
   const renderInspectorContent = () => (
     <>
