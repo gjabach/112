@@ -26,7 +26,6 @@ import {
 } from 'lucide-react';
 import { useEditorStore } from '@/lib/store';
 import { ZenAmbianceController } from '@/components/vfx/zen-ambiance';
-import { fireConfetti } from '@/components/vfx/confetti';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 
@@ -62,7 +61,6 @@ export default function ChapterEditorPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [targetWordCount, setTargetWordCount] = useState(2000);
   const [spotlightActive, setSpotlightActive] = useState(false);
-  const [lastMilestone, setLastMilestone] = useState(0);
 
   const { focusMode, setFocusMode, typewriterMode, setTypewriterMode } = useEditorStore();
 
@@ -198,19 +196,6 @@ export default function ChapterEditorPage() {
 
   const currentWords = countWords(content);
   const wordGoalProgress = Math.min(100, Math.round((currentWords / targetWordCount) * 100));
-
-  // Word count milestone celebration VFX
-  useEffect(() => {
-    if (loading || currentWords <= 0) return;
-    const milestones = [500, 1000, 2000, 3000, 5000, 10000];
-    const reached = milestones.filter(m => currentWords >= m && lastMilestone < m);
-    if (reached.length > 0) {
-      const topM = reached[reached.length - 1];
-      setLastMilestone(topM);
-      fireConfetti({ type: 'milestone', particleCount: 75 });
-      toast.success(`🎉 Chúc mừng! Bản thảo đã vượt mốc ${topM.toLocaleString()} từ! Cố lên tác giả!`);
-    }
-  }, [loading, currentWords, lastMilestone]);
 
   if (loading) return <div className="p-8 animate-pulse text-muted-foreground">Đang mở trình soạn thảo...</div>;
 
@@ -485,13 +470,12 @@ export default function ChapterEditorPage() {
               <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </Button>
 
-            {/* Save Button with Stardust celebration */}
+            {/* Save Button */}
             <Button
               size="sm"
               className="h-7 sm:h-8 px-2 sm:px-2.5 text-xs font-semibold btn-interactive shadow-xs"
               onClick={() => {
                 saveChapter();
-                fireConfetti({ type: 'stardust', particleCount: 20 });
               }}
               disabled={saving}
             >
