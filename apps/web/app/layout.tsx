@@ -4,6 +4,7 @@ import './globals.css';
 import { ThemeProvider } from '@/components/layout/theme-provider';
 import { Toaster } from '@/components/ui/toaster';
 import { ConfettiCanvas } from '@/components/vfx/confetti';
+import { SoundProvider } from '@/components/layout/sound-provider';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const crimson = Crimson_Pro({ subsets: ['latin'], variable: '--font-crimson' });
@@ -25,9 +26,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="vi" suppressHydrationWarning>
       <body className={`${inter.variable} ${crimson.variable} font-sans antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-          {children}
-          <Toaster />
-          <ConfettiCanvas />
+          <SoundProvider>
+            {children}
+            <Toaster />
+            <ConfettiCanvas />
+          </SoundProvider>
         </ThemeProvider>
       </body>
     </html>

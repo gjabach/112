@@ -52,9 +52,9 @@ export function MagicSparkles({ children, active = true, className = '' }: Magic
   );
 }
 
-export function GlowingDot({ color = 'bg-primary', ping = true }: { color?: string; ping?: boolean }) {
+export function GlowingDot({ color = 'bg-primary', ping = true, className = '' }: { color?: string; ping?: boolean; className?: string }) {
   return (
-    <span className="relative flex h-2 w-2">
+    <span className={`relative flex h-2 w-2 ${className}`}>
       {ping && (
         <span
           className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${color}`}

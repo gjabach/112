@@ -7,7 +7,7 @@ import Typography from '@tiptap/extension-typography';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
 import Highlight from '@tiptap/extension-highlight';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Bold, Italic, List, ListOrdered, Quote, Heading1, Heading2, Code, Undo, Redo, Strikethrough, Highlighter } from 'lucide-react';
 
@@ -19,6 +19,8 @@ interface TiptapEditorProps {
 }
 
 export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true }: TiptapEditorProps) {
+  const lastEmittedContentRef = useRef<string | null>(null);
+
   const initialContent = (() => {
     if (!content) return '';
     if (typeof content === 'object') return content;
@@ -48,24 +50,26 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     onUpdate: ({ editor }) => {
       try {
         const json = editor.getJSON();
-        onChange(JSON.stringify(json));
+        const jsonStr = JSON.stringify(json);
+        lastEmittedContentRef.current = jsonStr;
+        onChange(jsonStr);
       } catch {}
     },
     immediatelyRender: false
   });
 
   useEffect(() => {
-    if (editor && content) {
-      try {
-        const parsed = typeof content === 'object' ? content : JSON.parse(content);
-        if (JSON.stringify(editor.getJSON()) !== JSON.stringify(parsed)) {
-          editor.commands.setContent(parsed);
-        }
-      } catch {
-        // if content is plain text and editor is empty, set it
-        if (editor.isEmpty && content) {
-          editor.commands.setContent(`<p>${content}</p>`);
-        }
+    if (!editor || !content) return;
+    // Skip if content matches what this editor instance just emitted to avoid circular re-renders
+    if (content === lastEmittedContentRef.current) return;
+
+    try {
+      const parsed = typeof content === 'object' ? content : JSON.parse(content);
+      editor.commands.setContent(parsed);
+      lastEmittedContentRef.current = typeof content === 'string' ? content : JSON.stringify(content);
+    } catch {
+      if (editor.isEmpty && content) {
+        editor.commands.setContent(`<p>${content}</p>`);
       }
     }
   }, [content, editor]);

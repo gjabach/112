@@ -22,12 +22,16 @@ import {
   Maximize2,
   Minimize2,
   CheckCircle2,
-  X
+  X,
+  Loader2,
+  BookOpen
 } from 'lucide-react';
 import { useEditorStore } from '@/lib/store';
 import { ZenAmbianceController } from '@/components/vfx/zen-ambiance';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
+import { playChapterSwitchSound, playSuccessSound, playPopSound } from '@/lib/sound';
+import { SoundToggleButton } from '@/components/layout/sound-provider';
 
 const TiptapEditor = dynamic(
   () => import('@/components/editor/tiptap-editor').then((m) => m.TiptapEditor),
@@ -61,6 +65,9 @@ export default function ChapterEditorPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [targetWordCount, setTargetWordCount] = useState(2000);
   const [spotlightActive, setSpotlightActive] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [switchDirection, setSwitchDirection] = useState<'next' | 'prev' | 'fade'>('fade');
+  const [targetChapterInfo, setTargetChapterInfo] = useState<{ title: string; orderIndex?: number } | null>(null);
 
   const { focusMode, setFocusMode, typewriterMode, setTypewriterMode } = useEditorStore();
 
@@ -84,6 +91,8 @@ export default function ChapterEditorPage() {
     } finally {
       startTransition(() => {
         setLoading(false);
+        setIsSwitching(false);
+        setTargetChapterInfo(null);
       });
     }
   };
@@ -109,6 +118,7 @@ export default function ChapterEditorPage() {
       });
       setLastSaved(Date.now());
       setChapter((prev: any) => ({ ...prev, title: titleToSave, content: contentToSave }));
+      playSuccessSound();
     } catch (e: any) {
       toast.error('Lỗi lưu: ' + e.message);
     } finally {
@@ -132,11 +142,27 @@ export default function ChapterEditorPage() {
   const prevChapter = currentIndex > 0 ? allChapters[currentIndex - 1] : null;
   const nextChapter = currentIndex >= 0 && currentIndex < allChapters.length - 1 ? allChapters[currentIndex + 1] : null;
 
-  const navigateToChapter = async (targetId: string) => {
-    if (content !== chapter?.content || title !== chapter?.title) {
-      await saveChapter();
+  const navigateToChapter = (targetId: string, forcedDir?: 'next' | 'prev' | 'fade') => {
+    if (!targetId || targetId === chapterId || isSwitching) return;
+
+    const targetIdx = allChapters.findIndex(c => c?.id === targetId);
+    const targetChap = allChapters[targetIdx];
+    const dir = forcedDir || (targetIdx > currentIndex ? 'next' : targetIdx < currentIndex ? 'prev' : 'fade');
+
+    playChapterSwitchSound();
+    setIsSwitching(true);
+    setSwitchDirection(dir);
+    if (targetChap) {
+      setTargetChapterInfo({ title: targetChap.title, orderIndex: targetChap.orderIndex });
     }
-    router.push(`/editor/${projectId}/${targetId}`);
+
+    if (content !== chapter?.content || title !== chapter?.title) {
+      saveChapter().catch(() => {});
+    }
+
+    setTimeout(() => {
+      router.push(`/editor/${projectId}/${targetId}`);
+    }, 120);
   };
 
   const toggleFullscreen = () => {
@@ -367,18 +393,23 @@ export default function ChapterEditorPage() {
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              disabled={!prevChapter}
-              onClick={() => prevChapter && navigateToChapter(prevChapter.id)}
+              disabled={!prevChapter || isSwitching}
+              onClick={() => prevChapter && navigateToChapter(prevChapter.id, 'prev')}
               title={prevChapter ? `Chương trước: ${prevChapter?.title || ''}` : 'Đầu danh sách'}
             >
-              <ChevronLeft className="w-3.5 h-3.5" />
+              {isSwitching && switchDirection === 'prev' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              ) : (
+                <ChevronLeft className="w-3.5 h-3.5" />
+              )}
             </Button>
 
             {allChapters.length > 0 && (
               <select
                 className="h-7 text-xs border rounded bg-transparent px-1 max-w-[90px] sm:max-w-[140px] md:max-w-[180px] truncate"
                 value={chapterId}
-                onChange={e => navigateToChapter(e.target.value)}
+                disabled={isSwitching}
+                onChange={e => navigateToChapter(e.target.value, 'fade')}
               >
                 {allChapters.filter(Boolean).map((ch, idx) => (
                   <option key={ch.id || idx} value={ch.id || ''}>
@@ -392,11 +423,15 @@ export default function ChapterEditorPage() {
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              disabled={!nextChapter}
-              onClick={() => nextChapter && navigateToChapter(nextChapter.id)}
+              disabled={!nextChapter || isSwitching}
+              onClick={() => nextChapter && navigateToChapter(nextChapter.id, 'next')}
               title={nextChapter ? `Chương sau: ${nextChapter?.title || ''}` : 'Cuối danh sách'}
             >
-              <ChevronRight className="w-3.5 h-3.5" />
+              {isSwitching && switchDirection === 'next' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
             </Button>
           </div>
 
@@ -449,6 +484,9 @@ export default function ChapterEditorPage() {
             {/* Zen Ambiance sound & lighting controller */}
             <ZenAmbianceController onToggleSpotlight={setSpotlightActive} />
 
+            {/* Clicky Sound Controller */}
+            <SoundToggleButton />
+
             <Button variant="ghost" size="sm" className="h-8 text-xs hidden md:flex" onClick={() => setFocusMode(!focusMode)}>
               <Eye className="w-3.5 h-3.5 mr-1" /> {focusMode ? 'Thoát Focus' : 'Focus'}
             </Button>
@@ -487,13 +525,55 @@ export default function ChapterEditorPage() {
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Editor Canvas with optional Zen Spotlight */}
-        <main className={`flex-1 overflow-auto ${typewriterMode ? 'flex items-center' : ''} ${spotlightActive ? 'zen-spotlight' : ''}`}>
-          <div className={`w-full ${typewriterMode ? 'py-[40vh]' : ''}`}>
+        {/* Editor Canvas with optional Zen Spotlight and silky smooth chapter transition */}
+        <main className={`flex-1 overflow-auto relative ${typewriterMode ? 'flex items-center' : ''} ${spotlightActive ? 'zen-spotlight' : ''}`}>
+          <div
+            key={chapterId}
+            className={`w-full transition-all duration-300 ease-out will-change-transform will-change-opacity ${
+              isSwitching
+                ? switchDirection === 'next'
+                  ? 'opacity-0 -translate-x-8 blur-xs pointer-events-none'
+                  : switchDirection === 'prev'
+                    ? 'opacity-0 translate-x-8 blur-xs pointer-events-none'
+                    : 'opacity-0 scale-98 blur-xs pointer-events-none'
+                : 'opacity-100 translate-x-0 blur-none animate-in fade-in-50 duration-300'
+            } ${typewriterMode ? 'py-[40vh]' : ''}`}
+          >
             <EditorErrorBoundary content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này...">
-              <TiptapEditor content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..." />
+              <TiptapEditor
+                key={chapterId}
+                content={content}
+                onChange={setContent}
+                placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..."
+              />
             </EditorErrorBoundary>
           </div>
+
+          {/* Smooth Chapter Switch Transition Shimmer Overlay */}
+          {isSwitching && (
+            <div className="absolute inset-0 z-30 bg-background/80 backdrop-blur-xs flex flex-col items-center justify-center animate-in fade-in duration-150">
+              <div className="glass-card p-6 rounded-2xl border border-primary/25 shadow-2xl flex flex-col items-center gap-3.5 max-w-sm mx-4 text-center transform animate-in zoom-in-95 duration-200">
+                <div className="relative">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 text-primary">
+                    <BookOpen className="w-6 h-6 text-primary animate-pulse" />
+                  </div>
+                  <GlowingDot className="absolute -top-1 -right-1" />
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center justify-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-primary animate-spin" />
+                    <span>Đang chuyển bản thảo...</span>
+                  </div>
+                  <div className="text-base font-serif font-bold text-foreground mt-1 truncate max-w-[260px]">
+                    {targetChapterInfo?.title || 'Chương tiếp theo'}
+                  </div>
+                </div>
+                <div className="w-36 bg-muted rounded-full h-1.5 overflow-hidden mt-0.5">
+                  <div className="bg-gradient-to-r from-primary to-indigo-500 h-full rounded-full animate-pulse w-3/4" />
+                </div>
+              </div>
+            </div>
+          )}
         </main>
 
         {/* Desktop Inspector Sidebar */}

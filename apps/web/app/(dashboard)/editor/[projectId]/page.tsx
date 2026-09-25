@@ -7,11 +7,13 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download, ChevronUp, ChevronDown, Search } from 'lucide-react';
+import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download, ChevronUp, ChevronDown, Search, Check, X } from 'lucide-react';
 import { useProjectStore } from '@/lib/store';
 import { BookCoverArt } from '@/components/vfx/book-cover';
 import { fireConfetti } from '@/components/vfx/confetti';
 import { SparkleIcon } from '@/components/vfx/magic-sparkles';
+import { playSuccessSound, playDeleteSound, playPopSound } from '@/lib/sound';
+import { SoundToggleButton } from '@/components/layout/sound-provider';
 
 interface Chapter {
   id: string;
@@ -30,7 +32,43 @@ export default function ProjectEditorPage() {
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [searchChapter, setSearchChapter] = useState('');
   const [activeTab, setActiveTab] = useState<'chapters' | 'overview'>('chapters');
+  const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const setCurrentProjectId = useProjectStore(s => s.setCurrentProjectId);
+
+  const startRename = (ch: Chapter) => {
+    setEditingChapterId(ch.id);
+    setEditingTitle(ch.title || '');
+  };
+
+  const cancelRename = () => {
+    setEditingChapterId(null);
+    setEditingTitle('');
+  };
+
+  const saveChapterRename = async (chapterId: string) => {
+    const trimmed = editingTitle.trim();
+    if (!trimmed) {
+      toast.error('Tên chương không được để trống');
+      return;
+    }
+    const prevChapters = [...chapters];
+    setChapters(prev => prev.map(c => c.id === chapterId ? { ...c, title: trimmed } : c));
+    setEditingChapterId(null);
+
+    try {
+      await apiFetch(`/api/chapters/${chapterId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: trimmed })
+      });
+      playSuccessSound();
+      toast.success('Đã cập nhật tên chương thành công');
+      fetchData();
+    } catch (e: any) {
+      toast.error('Lỗi khi sửa tên chương: ' + (e.message || ''));
+      setChapters(prevChapters);
+    }
+  };
 
   const moveChapter = async (index: number, direction: 'up' | 'down') => {
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
@@ -89,6 +127,7 @@ export default function ProjectEditorPage() {
         })
       });
       setNewChapterTitle('');
+      playSuccessSound();
       toast.success('Tạo chương mới thành công');
       fireConfetti({ type: 'stardust', particleCount: 20 });
       fetchData();
@@ -101,6 +140,7 @@ export default function ProjectEditorPage() {
     if (!confirm('Xóa chương này?')) return;
     try {
       await apiFetch(`/api/chapters/${id}`, { method: 'DELETE' });
+      playDeleteSound();
       toast.success('Đã xóa chương');
       fetchData();
     } catch (e: any) {
@@ -137,6 +177,7 @@ export default function ProjectEditorPage() {
 
           {/* Mobile Action Buttons */}
           <div className="flex md:hidden items-center gap-1.5 shrink-0">
+            <SoundToggleButton />
             <Button
               size="sm"
               onClick={() => {
@@ -151,6 +192,7 @@ export default function ProjectEditorPage() {
                       status: 'outline'
                     })
                   }).then(() => {
+                    playSuccessSound();
                     toast.success('Đã tạo chương mới');
                     fetchData();
                   });
@@ -170,6 +212,7 @@ export default function ProjectEditorPage() {
 
           {/* Desktop Navigation Buttons */}
           <div className="hidden md:flex gap-2 items-center shrink-0">
+            <SoundToggleButton />
             <Link href={`/outline/${projectId}`}>
               <Button variant="outline" size="sm" className="bg-blue-50/50 dark:bg-blue-950/20 border-blue-200/50">
                 <LayoutList className="w-4 h-4 mr-1 text-blue-500" /> Dàn ý
@@ -254,7 +297,10 @@ export default function ProjectEditorPage() {
           <div className="grid grid-cols-2 gap-1 p-0.5 bg-muted rounded-lg text-xs font-medium">
             <button
               type="button"
-              onClick={() => setActiveTab('chapters')}
+              onClick={() => {
+                setActiveTab('chapters');
+                playPopSound();
+              }}
               className={`py-1.5 px-3 rounded-md transition-all flex items-center justify-center gap-1.5 ${
                 activeTab === 'chapters'
                   ? 'bg-card text-foreground shadow-xs font-semibold'
@@ -266,7 +312,10 @@ export default function ProjectEditorPage() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('overview')}
+              onClick={() => {
+                setActiveTab('overview');
+                playPopSound();
+              }}
               className={`py-1.5 px-3 rounded-md transition-all flex items-center justify-center gap-1.5 ${
                 activeTab === 'overview'
                   ? 'bg-card text-foreground shadow-xs font-semibold'
@@ -381,37 +430,87 @@ export default function ProjectEditorPage() {
 
                     <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
 
-                    {/* Chapter details link */}
-                    <Link href={`/editor/${projectId}/${ch.id}`} className="flex-1 min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground group-hover:text-primary transition-colors">
-                        {ch.title}
-                      </div>
-                      <div className="flex gap-2 items-center mt-0.5">
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
-                          {ch.status || 'draft'}
-                        </Badge>
-                        <span className="text-[11px] text-muted-foreground">
-                          {(ch.wordCount || 0).toLocaleString()} từ
-                        </span>
-                      </div>
-                    </Link>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Link href={`/editor/${projectId}/${ch.id}`}>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                          <Edit3 className="w-3.5 h-3.5" />
+                    {/* Chapter details link or inline rename */}
+                    {editingChapterId === ch.id ? (
+                      <div className="flex-1 min-w-0 flex items-center gap-1.5 py-0.5" onClick={e => e.stopPropagation()}>
+                        <Input
+                          value={editingTitle}
+                          onChange={e => setEditingTitle(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              saveChapterRename(ch.id);
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelRename();
+                            }
+                          }}
+                          className="h-8 text-xs font-medium py-1 px-2.5 flex-1 bg-background border-primary/50 focus-visible:ring-1"
+                          autoFocus
+                          placeholder="Nhập tên chương..."
+                        />
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 shrink-0"
+                          onClick={() => saveChapterRename(ch.id)}
+                          title="Lưu tên chương (Enter)"
+                        >
+                          <Check className="w-4 h-4" />
                         </Button>
-                      </Link>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                        onClick={() => deleteChapter(ch.id)}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
+                          onClick={cancelRename}
+                          title="Hủy (Esc)"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <Link href={`/editor/${projectId}/${ch.id}`} className="flex-1 min-w-0">
+                          <div className="truncate text-sm font-medium text-foreground group-hover:text-primary transition-colors">
+                            {ch.title}
+                          </div>
+                          <div className="flex gap-2 items-center mt-0.5">
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
+                              {ch.status || 'draft'}
+                            </Badge>
+                            <span className="text-[11px] text-muted-foreground">
+                              {(ch.wordCount || 0).toLocaleString()} từ
+                            </span>
+                          </div>
+                        </Link>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              startRename(ch);
+                            }}
+                            title="Sửa tên chương"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                            onClick={() => deleteChapter(ch.id)}
+                            title="Xóa chương"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))
             )}
