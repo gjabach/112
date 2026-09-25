@@ -327,7 +327,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       email: cleanEmail,
       name: (body.name || '').trim() || cleanEmail.split('@')[0],
       aiProvider: 'gemini',
-      aiModel: 'gemini-1.5-flash',
+      aiModel: 'gemini-3.8-flash',
       aiApiKey: '',
       createdAt: now
     };
@@ -349,7 +349,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     // Initialize user AI settings
     try {
       localStorage.setItem('ai_provider', 'gemini');
-      localStorage.setItem('ai_model', 'gemini-1.5-flash');
+      localStorage.setItem('ai_model', 'gemini-3.8-flash');
       localStorage.removeItem('ai_api_key');
     } catch {}
 
@@ -454,7 +454,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
     const { password, passwordHash, ...safeUser } = user;
     safeUser.aiProvider = safeUser.aiProvider || 'gemini';
-    safeUser.aiModel = safeUser.aiModel || 'gemini-1.5-flash';
+    safeUser.aiModel = safeUser.aiModel || 'gemini-3.8-flash';
     safeUser.aiApiKey = safeUser.aiApiKey || '';
 
     // Apply this user's specific AI settings to current session
@@ -543,12 +543,12 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       email: 'user@example.com',
       name: 'Tác giả',
       aiProvider: 'gemini',
-      aiModel: 'gemini-1.5-flash',
+      aiModel: 'gemini-3.8-flash',
       aiApiKey: ''
     };
     try {
       user.aiProvider = localStorage.getItem('ai_provider') || user.aiProvider || 'gemini';
-      user.aiModel = localStorage.getItem('ai_model') || user.aiModel || 'gemini-1.5-flash';
+      user.aiModel = localStorage.getItem('ai_model') || user.aiModel || 'gemini-3.8-flash';
       user.aiApiKey = localStorage.getItem('ai_api_key') || user.aiApiKey || '';
     } catch {}
     return { user };

@@ -100,7 +100,7 @@ export function exportFullWorkspace() {
     user: getStoredJson('novelist_current_user', null),
     aiConfig: {
       provider: localStorage.getItem('ai_provider') || 'gemini',
-      model: localStorage.getItem('ai_model') || 'gemini-2.0-flash'
+      model: localStorage.getItem('ai_model') || 'gemini-3.8-flash'
     }
   };
 }

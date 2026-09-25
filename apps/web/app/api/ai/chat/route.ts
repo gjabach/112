@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    const modelName = (reqModel || (providerName === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini')).trim();
+    const modelName = (reqModel || (providerName === 'gemini' ? 'gemini-3.8-flash' : 'gpt-4o-mini')).trim();
     const provider = createAIProvider(providerName);
 
     const messages: any[] = [];

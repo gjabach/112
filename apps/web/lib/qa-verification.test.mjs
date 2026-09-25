@@ -172,9 +172,9 @@ test('Gemini API key and model sanitization trims whitespace, newlines, and mode
   const cleanKey = dirtyKey.trim();
   assert.equal(cleanKey, 'AIzaSyD-exampleKey123');
 
-  const dirtyModel = '  models/gemini-1.5-flash  ';
+  const dirtyModel = '  models/gemini-3.8-flash  ';
   const cleanModel = dirtyModel.trim().replace(/^models\//, '');
-  assert.equal(cleanModel, 'gemini-1.5-flash');
+  assert.equal(cleanModel, 'gemini-3.8-flash');
 });
 
 test('Gemini message formatting ensures alternating roles and first turn is user', () => {
@@ -256,7 +256,7 @@ test('Workspace sync snapshot schema contains all essential creative entities', 
     entities: [{ id: 'e1', name: 'Hành tinh X', type: 'location' }],
     timeline: [{ id: 't1', title: 'Biến cố thiên hà' }],
     outline: [{ id: 'o1', title: 'Hồi 1' }],
-    aiConfig: { provider: 'gemini', model: 'gemini-2.0-flash' }
+    aiConfig: { provider: 'gemini', model: 'gemini-3.8-flash' }
   };
 
   assert.ok(Array.isArray(mockSnapshot.projects));
@@ -416,7 +416,7 @@ function simulateRegister(body, storage) {
     email: cleanEmail,
     name: (body.name || '').trim() || cleanEmail.split('@')[0],
     aiProvider: 'gemini',
-    aiModel: 'gemini-1.5-flash',
+    aiModel: 'gemini-3.8-flash',
     aiApiKey: '',
     createdAt: now
   };
@@ -469,7 +469,7 @@ function simulateLogin(body, storage) {
 
   const { password, ...safeUser } = user;
   safeUser.aiProvider = safeUser.aiProvider || 'gemini';
-  safeUser.aiModel = safeUser.aiModel || 'gemini-1.5-flash';
+  safeUser.aiModel = safeUser.aiModel || 'gemini-3.8-flash';
   safeUser.aiApiKey = safeUser.aiApiKey || '';
 
   storage.set('novelist_current_user', JSON.stringify(safeUser));

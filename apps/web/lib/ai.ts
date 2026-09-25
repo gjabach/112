@@ -9,24 +9,25 @@ export interface AISettings {
 
 export function getAISettings(): AISettings {
   if (typeof window === 'undefined') {
-    return { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: '' };
+    return { provider: 'gemini', model: 'gemini-3.8-flash', apiKey: '' };
   }
   const provider = (localStorage.getItem('ai_provider') as AIProviderName) || 'gemini';
   const apiKey = (localStorage.getItem('ai_api_key') || '').trim();
   let model = (localStorage.getItem('ai_model') || '').trim();
 
-  // Clean up any legacy hallucinated models
-  if (model.includes('3.5-flash') || model.includes('3.1-flash-lite') || model.includes('3.6-flash') || model.includes('3.7-flash') || model === 'gemini-1.5-flash' || model === 'gemini-1.5-pro') {
-    model = 'gemini-2.5-flash';
-    localStorage.setItem('ai_model', 'gemini-2.5-flash');
+  // Clean up any legacy or deprecated models and migrate to gemini-3.8-flash
+  const deprecatedGeminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+  if (deprecatedGeminiModels.includes(model) || model.includes('2.0-flash') || model.includes('1.5-flash') || model.includes('3.1-flash') || model.includes('3.6-flash') || model.includes('3.7-flash')) {
+    model = 'gemini-3.8-flash';
+    localStorage.setItem('ai_model', 'gemini-3.8-flash');
   }
 
   if (!model) {
-    if (provider === 'gemini') model = 'gemini-2.5-flash';
+    if (provider === 'gemini') model = 'gemini-3.8-flash';
     else if (provider === 'groq') model = 'llama-3.3-70b-versatile';
     else if (provider === 'openai') model = 'gpt-4o-mini';
     else if (provider === 'anthropic') model = 'claude-3-5-sonnet-20241022';
-    else model = 'gemini-2.5-flash';
+    else model = 'gemini-3.8-flash';
   }
 
   return { provider, model, apiKey };
@@ -47,7 +48,7 @@ export function saveAISettings(settings: Partial<AISettings>): void {
     if (userStr) {
       const user = JSON.parse(userStr);
       user.aiProvider = settings.provider || user.aiProvider || 'gemini';
-      user.aiModel = settings.model || user.aiModel || 'gemini-2.5-flash';
+      user.aiModel = settings.model || user.aiModel || 'gemini-3.8-flash';
       if (settings.apiKey !== undefined) {
         user.aiApiKey = settings.apiKey.trim();
       }
@@ -115,7 +116,7 @@ export function buildProjectContext(projectId?: string, chapterId?: string): Ski
 export async function executeAIChat(params: StreamChatParams): Promise<string> {
   const settings = getAISettings();
   const providerName = params.overrideProvider || settings.provider || 'gemini';
-  const model = (params.overrideModel || settings.model || (providerName === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini')).trim();
+  const model = (params.overrideModel || settings.model || (providerName === 'gemini' ? 'gemini-3.8-flash' : 'gpt-4o-mini')).trim();
   const apiKey = (params.overrideApiKey || settings.apiKey || '').trim();
 
   if (!apiKey && providerName !== 'ollama') {
