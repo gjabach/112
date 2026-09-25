@@ -28,8 +28,19 @@ export function formatRelativeTime(timestamp: number): string {
   return formatDate(Number(timestamp));
 }
 
-export function countWords(text: string): number {
+export function countWords(text: any): number {
   if (!text) return 0;
+  if (typeof text !== 'string') {
+    if (typeof text === 'object') {
+      try {
+        const plain = extractText(text);
+        return plain.trim().split(/\s+/).filter(Boolean).length;
+      } catch {
+        return 0;
+      }
+    }
+    return 0;
+  }
   try {
     const json = JSON.parse(text);
     if (json && typeof json === 'object') {
@@ -37,13 +48,13 @@ export function countWords(text: string): number {
       return plain.trim().split(/\s+/).filter(Boolean).length;
     }
   } catch {}
-  return text.trim().split(/\s+/).filter(Boolean).length;
+  return String(text).trim().split(/\s+/).filter(Boolean).length;
 }
 
 function extractText(node: any): string {
   if (!node) return '';
   if (typeof node === 'string') return node;
-  if (node.text) return node.text;
+  if (node.text) return String(node.text);
   if (Array.isArray(node.content)) {
     return node.content.map(extractText).join(' ');
   }

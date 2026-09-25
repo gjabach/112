@@ -28,6 +28,7 @@ import { useEditorStore } from '@/lib/store';
 import { ZenAmbianceController } from '@/components/vfx/zen-ambiance';
 import { fireConfetti } from '@/components/vfx/confetti';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
+import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 
 const TiptapEditor = dynamic(
   () => import('@/components/editor/tiptap-editor').then((m) => m.TiptapEditor),
@@ -75,7 +76,9 @@ export default function ChapterEditorPage() {
       if (res?.chapter) {
         setChapter(res.chapter);
         setTitle(res.chapter.title || 'Chương');
-        setContent(res.chapter.content || '');
+        const rawContent = res.chapter.content;
+        const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
+        setContent(safeContent);
       }
       setAllChapters(Array.isArray(listRes?.chapters) ? listRes.chapters : []);
     } catch (e: any) {
@@ -222,7 +225,7 @@ export default function ChapterEditorPage() {
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Ký tự</span>
-            <span>{content.length.toLocaleString()}</span>
+            <span>{(content || '').length.toLocaleString()}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Thời gian đọc ước tính</span>
@@ -379,7 +382,7 @@ export default function ChapterEditorPage() {
               className="h-7 w-7"
               disabled={!prevChapter}
               onClick={() => prevChapter && navigateToChapter(prevChapter.id)}
-              title={prevChapter ? `Chương trước: ${prevChapter.title}` : 'Đầu danh sách'}
+              title={prevChapter ? `Chương trước: ${prevChapter?.title || ''}` : 'Đầu danh sách'}
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </Button>
@@ -390,9 +393,9 @@ export default function ChapterEditorPage() {
                 value={chapterId}
                 onChange={e => navigateToChapter(e.target.value)}
               >
-                {allChapters.map((ch, idx) => (
-                  <option key={ch.id} value={ch.id}>
-                    {idx + 1}. {ch.title}
+                {allChapters.filter(Boolean).map((ch, idx) => (
+                  <option key={ch.id || idx} value={ch.id || ''}>
+                    {idx + 1}. {ch.title || 'Chương'}
                   </option>
                 ))}
               </select>
@@ -404,7 +407,7 @@ export default function ChapterEditorPage() {
               className="h-7 w-7"
               disabled={!nextChapter}
               onClick={() => nextChapter && navigateToChapter(nextChapter.id)}
-              title={nextChapter ? `Chương sau: ${nextChapter.title}` : 'Cuối danh sách'}
+              title={nextChapter ? `Chương sau: ${nextChapter?.title || ''}` : 'Cuối danh sách'}
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </Button>
@@ -501,7 +504,9 @@ export default function ChapterEditorPage() {
         {/* Editor Canvas with optional Zen Spotlight */}
         <main className={`flex-1 overflow-auto ${typewriterMode ? 'flex items-center' : ''} ${spotlightActive ? 'zen-spotlight' : ''}`}>
           <div className={`w-full ${typewriterMode ? 'py-[40vh]' : ''}`}>
-            <TiptapEditor content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..." />
+            <EditorErrorBoundary content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này...">
+              <TiptapEditor content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..." />
+            </EditorErrorBoundary>
           </div>
         </main>
 

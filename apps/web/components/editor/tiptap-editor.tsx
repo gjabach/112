@@ -19,6 +19,18 @@ interface TiptapEditorProps {
 }
 
 export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true }: TiptapEditorProps) {
+  const initialContent = (() => {
+    if (!content) return '';
+    if (typeof content === 'object') return content;
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed === 'object') return parsed;
+      return `<p>${content}</p>`;
+    } catch {
+      return `<p>${content}</p>`;
+    }
+  })();
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -31,11 +43,13 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       Image,
       Highlight
     ],
-    content: content ? (() => { try { return JSON.parse(content); } catch { return `<p>${content}</p>`; } })() : '',
+    content: initialContent,
     editable,
     onUpdate: ({ editor }) => {
-      const json = editor.getJSON();
-      onChange(JSON.stringify(json));
+      try {
+        const json = editor.getJSON();
+        onChange(JSON.stringify(json));
+      } catch {}
     },
     immediatelyRender: false
   });
@@ -43,7 +57,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   useEffect(() => {
     if (editor && content) {
       try {
-        const parsed = JSON.parse(content);
+        const parsed = typeof content === 'object' ? content : JSON.parse(content);
         if (JSON.stringify(editor.getJSON()) !== JSON.stringify(parsed)) {
           editor.commands.setContent(parsed);
         }

@@ -24,9 +24,17 @@ export default function GlobalError({
           <AlertTriangle className="w-8 h-8" />
         </div>
         <h2 className="text-xl font-bold mb-2">Đã xảy ra sự cố khi tải trang</h2>
-        <p className="text-sm text-muted-foreground mb-6">
+        <p className="text-sm text-muted-foreground mb-4">
           Hệ thống gặp lỗi nhỏ khi xử lý dữ liệu. Đừng lo, dữ liệu tiểu thuyết của bạn vẫn an toàn trên đám mây.
         </p>
+
+        {error?.message && (
+          <div className="text-xs text-red-400 bg-red-950/40 p-3 rounded-lg mb-6 max-w-full overflow-x-auto text-left font-mono border border-red-800/40 break-all select-all">
+            <div className="font-bold text-red-300 mb-1">Chi tiết lỗi:</div>
+            <div>{error.message}</div>
+            {error?.digest && <div className="text-[10px] text-muted-foreground mt-1">Mã digest: {error.digest}</div>}
+          </div>
+        )}
 
         <div className="flex flex-col sm:flex-row gap-3 w-full">
           <Button
