@@ -257,6 +257,26 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     return 'hashed_' + btoa(pwd);
   };
 
+  const getCloudAccountKeys = async (email: string) => {
+    const clean = (email || '').trim().toLowerCase();
+    try {
+      if (typeof crypto !== 'undefined' && crypto.subtle) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(clean + ':novelist_auth_v2');
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        return { userKey: `u_${hex}`, dataKey: `d_${hex}` };
+      }
+    } catch {}
+    let hash = 0;
+    for (let i = 0; i < clean.length; i++) {
+      hash = ((hash << 5) - hash) + clean.charCodeAt(i);
+      hash |= 0;
+    }
+    const hex = Math.abs(hash).toString(36);
+    return { userKey: `u_${hex}`, dataKey: `d_${hex}` };
+  };
+
   const getCurrentUser = () => {
     let u = getStorage('novelist_current_user', null);
     if (!u) {
@@ -280,10 +300,28 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     if (!cleanPassword || cleanPassword.length < 8) {
       throw new Error('Mật khẩu tối thiểu 8 ký tự.');
     }
-    const existing = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
+
+    const { userKey, dataKey } = await getCloudAccountKeys(cleanEmail);
+
+    let existing = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
+
+    // Also check cloud store for existing account
+    if (!existing) {
+      try {
+        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`);
+        if (res.ok) {
+          const remoteUser = await res.json();
+          if (remoteUser && remoteUser.email) {
+            existing = remoteUser;
+          }
+        }
+      } catch {}
+    }
+
     if (existing) {
       throw new Error('Email đã được sử dụng. Vui lòng đăng nhập hoặc sử dụng email khác.');
     }
+
     const user = {
       id: genId('usr'),
       email: cleanEmail,
@@ -297,6 +335,15 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     users.push({ ...user, passwordHash });
     setStorage('novelist_users', users);
     
+    // Save account securely to cloud store for multi-device login (e.g. mobile)
+    try {
+      await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...user, passwordHash })
+      });
+    } catch {}
+
     setStorage('novelist_current_user', user);
 
     // Initialize user AI settings
@@ -340,11 +387,11 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     chapters.push(firstChap);
     setStorage('novelist_chapters', chapters);
     
-    // Try to auto push this new empty workspace to sync immediately
+    // Auto push initial workspace to cloud immediately
     if (typeof window !== 'undefined') {
-        const syncKey = cleanEmail.replace(/[^a-z0-9_-]/g, '_');
-        localStorage.setItem('novelist_sync_key', syncKey);
-        setTimeout(() => { import('./sync').then(m => m.pushSync()).catch(() => {}) }, 500);
+      setTimeout(() => {
+        import('./sync').then(m => m.pushSync()).catch(() => {});
+      }, 500);
     }
 
     return { user, token: 'token_' + user.id };
@@ -361,8 +408,25 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       throw new Error('Vui lòng nhập mật khẩu.');
     }
 
+    const { userKey, dataKey } = await getCloudAccountKeys(cleanEmail);
+
     let users = getStorage('novelist_users', []);
-    const user = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
+    let user = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
+
+    // If not found in this device's local storage (e.g. logging into phone for first time), look up from cloud
+    if (!user) {
+      try {
+        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`);
+        if (res.ok) {
+          const remoteUser = await res.json();
+          if (remoteUser && remoteUser.email) {
+            user = remoteUser;
+            users.push(user);
+            setStorage('novelist_users', users);
+          }
+        }
+      } catch {}
+    }
 
     if (!user) {
       throw new Error('Tài khoản không tồn tại. Vui lòng kiểm tra lại email hoặc bấm Đăng ký tài khoản mới.');
@@ -372,6 +436,20 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     const isValid = user.passwordHash ? (user.passwordHash === inputHash) : (user.password === cleanPassword);
     if (!isValid) {
       throw new Error('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+    }
+
+    // Upgrade plaintext password to hash if needed
+    if (!user.passwordHash) {
+      user.passwordHash = inputHash;
+      delete user.password;
+      setStorage('novelist_users', users);
+      try {
+        fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(user)
+        }).catch(() => {});
+      } catch {}
     }
 
     const { password, passwordHash, ...safeUser } = user;
@@ -392,11 +470,23 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
     setStorage('novelist_current_user', safeUser);
     
+    // CRITICAL: Immediately pull full workspace (projects, chapters, drafts) from cloud to this device
+    try {
+      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
+      if (res.ok) {
+        const cloudData = await res.json();
+        if (cloudData && typeof cloudData === 'object') {
+          const { importFullWorkspace } = await import('./sync');
+          importFullWorkspace(cloudData);
+        }
+      }
+    } catch {}
+
     // Auto sync on login
     if (typeof window !== 'undefined') {
-        const syncKey = cleanEmail.replace(/[^a-z0-9_-]/g, '_');
-        localStorage.setItem('novelist_sync_key', syncKey);
-        setTimeout(() => { import('./sync').then(m => m.pullSync(true)).catch(() => {}) }, 500);
+      setTimeout(() => {
+        import('./sync').then(m => m.pullSync(true)).catch(() => {});
+      }, 300);
     }
 
     return { user: safeUser, token: 'token_' + safeUser.id };

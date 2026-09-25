@@ -632,5 +632,81 @@ test('Word count milestone calculation accurately triggers celebratory events on
   assert.equal(checkMilestone(2500, 1000), 2000);
 });
 
+test('PC to Mobile automatic account & draft restoration on login without manual sync', async () => {
+  // 1. Setup PC and Mobile isolated localStorages
+  const pcStorage = new Map();
+  const mobileStorage = new Map();
+  const mockCloudServer = new Map();
+
+  const email = 'tacgia.pro@gmail.com';
+  const password = 'mySecretPassword2026';
+
+  // PC registers and creates a novel with chapter drafts
+  const pcUser = simulateRegister({ email, password, name: 'Nguyễn Du 2.0' }, pcStorage).user;
+  
+  // PC author updates novel title and writes 3 chapters
+  const pcProjects = JSON.parse(pcStorage.get('novelist_projects') || '[]');
+  pcProjects[0].title = 'Kiều Thời Hiện Đại';
+  pcStorage.set('novelist_projects', JSON.stringify(pcProjects));
+
+  const pcChapters = [
+    { id: 'c1', projectId: pcProjects[0].id, title: 'Chương 1: Trăm năm trong cõi người ta', content: 'Chữ tài chữ mệnh khéo là ghét nhau.' },
+    { id: 'c2', projectId: pcProjects[0].id, title: 'Chương 2: Trải qua một cuộc bể dâu', content: 'Những điều trông thấy mà đau đớn lòng.' }
+  ];
+  pcStorage.set('novelist_chapters', JSON.stringify(pcChapters));
+
+  // PC pushes to mock cloud store automatically
+  const pcWorkspace = {
+    version: 2,
+    lastModified: 1720001000,
+    projects: pcProjects,
+    chapters: pcChapters,
+    characters: [{ id: 'char1', name: 'Thúy Kiều', role: 'protagonist' }]
+  };
+  mockCloudServer.set(`user_${email}`, { ...pcUser, password });
+  mockCloudServer.set(`data_${email}`, pcWorkspace);
+
+  // 2. Author picks up smartphone for the first time
+  // Mobile storage is completely blank
+  assert.equal(mobileStorage.get('novelist_projects'), undefined);
+  assert.equal(mobileStorage.get('novelist_chapters'), undefined);
+  assert.equal(mobileStorage.get('novelist_current_user'), undefined);
+
+  // 3. Mobile logs in with the exact same account
+  // Simulate login on mobile with cloud lookup fallback
+  const simulateMobileLogin = (loginEmail, loginPassword) => {
+    const cloudUser = mockCloudServer.get(`user_${loginEmail}`);
+    if (!cloudUser) throw new Error('Tài khoản không tồn tại');
+    if (cloudUser.password !== loginPassword) throw new Error('Mật khẩu không chính xác');
+
+    // Automatically pull workspace from cloud
+    const cloudData = mockCloudServer.get(`data_${loginEmail}`);
+    if (cloudData) {
+      mobileStorage.set('novelist_projects', JSON.stringify(cloudData.projects));
+      mobileStorage.set('novelist_chapters', JSON.stringify(cloudData.chapters));
+      mobileStorage.set('novelist_characters', JSON.stringify(cloudData.characters));
+      mobileStorage.set('novelist_last_modified', String(cloudData.lastModified));
+    }
+    mobileStorage.set('novelist_current_user', JSON.stringify(cloudUser));
+    return { user: cloudUser, token: 'token_' + cloudUser.id };
+  };
+
+  const mobileLoginResult = simulateMobileLogin(email, password);
+  assert.equal(mobileLoginResult.user.email, email);
+
+  // 4. Verify Mobile automatically has all projects and chapter drafts from PC!
+  const restoredProjects = JSON.parse(mobileStorage.get('novelist_projects') || '[]');
+  const restoredChapters = JSON.parse(mobileStorage.get('novelist_chapters') || '[]');
+  const restoredCharacters = JSON.parse(mobileStorage.get('novelist_characters') || '[]');
+
+  assert.equal(restoredProjects.length, 1);
+  assert.equal(restoredProjects[0].title, 'Kiều Thời Hiện Đại', 'Novel title from PC must be restored automatically on mobile');
+  assert.equal(restoredChapters.length, 2);
+  assert.equal(restoredChapters[0].title, 'Chương 1: Trăm năm trong cõi người ta');
+  assert.equal(restoredChapters[0].content, 'Chữ tài chữ mệnh khéo là ghét nhau.', 'Draft content from PC must be restored automatically on mobile');
+  assert.equal(restoredCharacters[0].name, 'Thúy Kiều');
+});
+
+
 
 

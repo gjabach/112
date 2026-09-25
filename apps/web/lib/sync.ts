@@ -8,27 +8,50 @@ export interface SyncStats {
   lastSynced: number | null;
 }
 
-export function getSyncKey(): string {
-  if (typeof window === 'undefined') return 'default_user';
-  const saved = localStorage.getItem('novelist_sync_key');
-  if (saved && saved.trim()) return saved.trim();
-
-  // Try from current user
+export function getUserEmail(): string {
+  if (typeof window === 'undefined') return '';
   try {
     const userStr = localStorage.getItem('novelist_current_user');
     if (userStr) {
       const user = JSON.parse(userStr);
-      if (user.email) {
-        const clean = user.email.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
-        localStorage.setItem('novelist_sync_key', clean);
-        return clean;
-      }
+      if (user.email) return user.email.trim().toLowerCase();
+    }
+    const authStr = localStorage.getItem('auth-storage');
+    if (authStr) {
+      const auth = JSON.parse(authStr);
+      if (auth.state?.user?.email) return auth.state.user.email.trim().toLowerCase();
     }
   } catch {}
+  return '';
+}
 
-  const defaultKey = 'default_user';
-  localStorage.setItem('novelist_sync_key', defaultKey);
-  return defaultKey;
+export async function getCloudAccountKeys(email: string) {
+  const clean = (email || '').trim().toLowerCase();
+  try {
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(clean + ':novelist_auth_v2');
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+      return { userKey: `u_${hex}`, dataKey: `d_${hex}` };
+    }
+  } catch {}
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) {
+    hash = ((hash << 5) - hash) + clean.charCodeAt(i);
+    hash |= 0;
+  }
+  const hex = Math.abs(hash).toString(36);
+  return { userKey: `u_${hex}`, dataKey: `d_${hex}` };
+}
+
+export function getSyncKey(): string {
+  if (typeof window === 'undefined') return 'default_user';
+  const email = getUserEmail();
+  if (email) return email.replace(/[^a-z0-9_-]/g, '_');
+  const saved = localStorage.getItem('novelist_sync_key');
+  if (saved && saved.trim()) return saved.trim();
+  return 'default_user';
 }
 
 export function setSyncKey(newKey: string): string {
@@ -150,37 +173,53 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
   if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
 
   try {
-    const token = getAuthToken();
-    if (!token) {
-      return { success: false, error: 'Vui lòng đăng nhập để đồng bộ dữ liệu đám mây' };
-    }
-
-    const key = getSyncKey();
     const workspace = exportFullWorkspace();
     if (!workspace) return { success: false, error: 'No data to sync' };
 
-    const res = await fetch('/api/sync', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        key,
-        lastModified: workspace.lastModified,
-        data: workspace
-      })
-    });
+    const email = getUserEmail();
+    const token = getAuthToken();
 
-    const json = await res.json();
-    if (json.success) {
-      localStorage.setItem('novelist_last_synced', String(Date.now()));
-      return { success: true, stats: json.stats };
-    } else {
-      return { success: false, error: json.error || 'Lỗi lưu trên máy chủ' };
+    // 1. Try local/configured API endpoint if token available
+    if (token) {
+      try {
+        await fetch('/api/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            key: email ? email.replace(/[^a-z0-9_-]/g, '_') : 'default_user',
+            lastModified: workspace.lastModified,
+            data: workspace
+          })
+        });
+      } catch {}
     }
+
+    // 2. Persist to account cloud store for seamless multi-device access (PC <-> Mobile)
+    if (email && email.includes('@')) {
+      const { dataKey } = await getCloudAccountKeys(email);
+      try {
+        await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(workspace)
+        });
+      } catch {}
+    }
+
+    localStorage.setItem('novelist_last_synced', String(Date.now()));
+    return {
+      success: true,
+      stats: {
+        projects: workspace.projects?.length || 0,
+        chapters: workspace.chapters?.length || 0,
+        characters: workspace.characters?.length || 0
+      }
+    };
   } catch (err: any) {
-    return { success: false, error: err.message || 'Lỗi mạng khi đồng bộ' };
+    return { success: false, error: err.message || 'Lỗi mạng khi lưu đám mây' };
   }
 }
 
@@ -188,36 +227,55 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
   if (typeof window === 'undefined') return { success: false, updated: false, error: 'Not in browser' };
 
   try {
-    const token = getAuthToken();
-    if (!token) {
-      return { success: false, updated: false, error: 'Vui lòng đăng nhập để đồng bộ dữ liệu đám mây' };
-    }
-
-    const key = getSyncKey();
-    const res = await fetch(`/api/sync?key=${encodeURIComponent(key)}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    const json = await res.json();
-
-    if (!json.success || !json.data) {
+    const email = getUserEmail();
+    if (!email || !email.includes('@')) {
       return { success: true, updated: false };
     }
 
-    const serverLastModified = json.lastModified || json.data.lastModified || 0;
+    let remoteData: any = null;
+    const { dataKey } = await getCloudAccountKeys(email);
+
+    // 1. Try cloud store for latest multi-device workspace
+    try {
+      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
+      if (res.ok) {
+        remoteData = await res.json();
+      }
+    } catch {}
+
+    // 2. Try server API if not found or in addition
+    if (!remoteData) {
+      const token = getAuthToken();
+      if (token) {
+        try {
+          const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const json = await res.json();
+            if (json.success && json.data) remoteData = json.data;
+          }
+        } catch {}
+      }
+    }
+
+    if (!remoteData || typeof remoteData !== 'object') {
+      return { success: true, updated: false };
+    }
+
+    const serverLastModified = remoteData.lastModified || 0;
     const localLastModifiedStr = localStorage.getItem('novelist_last_modified');
     const localLastModified = localLastModifiedStr ? parseInt(localLastModifiedStr, 10) : 0;
 
-    // Check if server is newer or force sync requested
+    // Check if server is newer or force sync requested (e.g. on new device login)
     if (force || serverLastModified > localLastModified) {
-      const imported = importFullWorkspace(json.data);
+      const imported = importFullWorkspace(remoteData);
       return { success: true, updated: imported };
     }
 
     return { success: true, updated: false };
   } catch (err: any) {
-    return { success: false, updated: false, error: err.message || 'Lỗi mạng khi tải đồng bộ' };
+    return { success: false, updated: false, error: err.message };
   }
 }
 

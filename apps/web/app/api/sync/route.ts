@@ -40,8 +40,24 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    // 2. Safe Edge in-memory fallback
+    // 2. Persistent cloud store lookup
     const userKey = getUserSyncIdentifier(authHeader);
+    try {
+      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/d_${userKey}`);
+      if (res.ok) {
+        const stored = await res.json();
+        if (stored) {
+          return NextResponse.json({
+            success: true,
+            key: userKey,
+            lastModified: stored.lastModified || 0,
+            data: stored.data || stored,
+            source: 'cloud'
+          });
+        }
+      }
+    } catch {}
+
     const stored = secureSyncMemoryStore.get(userKey);
 
     if (stored) {
@@ -106,7 +122,7 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
-    // 2. Safe Edge in-memory fallback
+    // 2. Safe Edge in-memory & cloud store persistence
     const userKey = getUserSyncIdentifier(authHeader);
     const lastModified = body.lastModified || Date.now();
     const now = Date.now();
@@ -116,6 +132,14 @@ export async function POST(req: NextRequest) {
       syncedAt: now,
       data
     });
+
+    try {
+      await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/d_${userKey}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lastModified, syncedAt: now, data })
+      });
+    } catch {}
 
     const projectsCount = Array.isArray(data.projects) ? data.projects.length : 0;
     const chaptersCount = Array.isArray(data.chapters) ? data.chapters.length : 0;

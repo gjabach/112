@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { 
@@ -15,16 +15,13 @@ import {
   BarChart3, 
   LayoutList, 
   Clock,
-  Smartphone,
   Cloud,
   CheckCircle2
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { initAutoSync, setSyncKey, pullSync } from '@/lib/sync';
-import { SyncDialog } from '@/components/sync/sync-dialog';
+import { useEffect } from 'react';
+import { initAutoSync } from '@/lib/sync';
 import { AmbientBackground } from '@/components/vfx/ambient-background';
 import { SparkleIcon } from '@/components/vfx/magic-sparkles';
-import { toast } from 'sonner';
 
 const navItems = [
   { href: '/projects', label: 'Dự án', icon: LayoutDashboard },
@@ -36,7 +33,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isAuthenticated, logout } = useAuthStore();
-  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -44,25 +40,8 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // 1. Initialize auto-sync engine
+    // Initialize silent background auto-sync across devices
     initAutoSync();
-
-    // 2. Check for sync_key query parameter (e.g. from QR code scan or share link)
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      const incomingSyncKey = urlParams.get('sync_key');
-      if (incomingSyncKey) {
-        setSyncKey(incomingSyncKey);
-        pullSync(true).then((res) => {
-          if (res.success) {
-            toast.success('🎉 Đã đồng bộ thành công! Toàn bộ dữ liệu từ máy tính đã được tải về điện thoại.');
-          }
-        });
-        // Clean URL parameter
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, '', newUrl);
-      }
-    }
   }, [isAuthenticated, router]);
 
   if (!isAuthenticated) return null;
@@ -78,15 +57,10 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-sm shadow-sm">N</div>
           <span className="tracking-tight">Novelist Studio</span>
         </Link>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={() => setSyncDialogOpen(true)}
-          className="h-8 text-xs border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary flex items-center gap-1.5 rounded-lg"
-        >
-          <Smartphone className="w-3.5 h-3.5" />
-          <span>Đồng bộ</span>
-        </Button>
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="truncate max-w-[120px]">{user?.name || user?.email?.split('@')[0]}</span>
+        </div>
       </header>
 
       {/* Desktop Sidebar */}
@@ -111,24 +85,11 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
-
-          {/* Sync Button in Sidebar */}
-          <button
-            type="button"
-            onClick={() => setSyncDialogOpen(true)}
-            className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary transition-all mt-4"
-          >
-            <div className="flex items-center gap-2.5">
-              <Smartphone className="w-4 h-4" />
-              <span>Đồng bộ điện thoại</span>
-            </div>
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          </button>
         </nav>
 
         <div className="p-4 border-t">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center text-sm font-medium">{user?.name?.[0] || user?.email[0].toUpperCase()}</div>
+            <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center text-sm font-medium">{user?.name?.[0] || user?.email?.[0]?.toUpperCase()}</div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{user?.name || 'Nhà văn'}</p>
               <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
@@ -165,13 +126,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           <Sparkles className="w-4 h-4" />
           <span>AI</span>
         </Link>
-        <button 
-          onClick={() => setSyncDialogOpen(true)}
-          className="flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 text-primary font-medium transition-all active:scale-95"
-        >
-          <Smartphone className="w-4 h-4" />
-          <span>Đồng bộ</span>
-        </button>
         <Link 
           href="/settings" 
           className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 transition-all active:scale-95 ${
@@ -182,10 +136,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           <span>Cài đặt</span>
         </Link>
       </nav>
-
-      {/* Sync Dialog Modal */}
-      <SyncDialog open={syncDialogOpen} onOpenChange={setSyncDialogOpen} />
     </div>
   );
 }
-

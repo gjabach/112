@@ -9,9 +9,7 @@ import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, CheckCircle2, Sun, Moon, Monitor, Smartphone, Cloud, QrCode, LogOut } from 'lucide-react';
-import { SyncDialog } from '@/components/sync/sync-dialog';
-import { getSyncKey, pushSync, pullSync } from '@/lib/sync';
+import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, CheckCircle2, Sun, Moon, Monitor, Cloud, LogOut } from 'lucide-react';
 
 const providers = [
   { 
@@ -36,7 +34,6 @@ export default function SettingsPage() {
   const [testingKey, setTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [profileName, setProfileName] = useState(user?.name || '');
-  const [syncModalOpen, setSyncModalOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -403,54 +400,38 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Multi-Device Cloud Sync Card */}
-        <Card className="border-blue-500/20 bg-gradient-to-br from-card to-blue-500/5">
+        {/* Account Cloud Auto-Save Status */}
+        <Card className="border-emerald-500/20 bg-gradient-to-br from-card to-emerald-500/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Smartphone className="w-5 h-5 text-blue-500" />
-              📱 Đồng bộ Đa thiết bị (PC & Điện thoại)
+              <Cloud className="w-5 h-5 text-emerald-500" />
+              Lưu trữ đám mây tự động theo tài khoản (Cloud Auto-Save)
             </CardTitle>
             <CardDescription>
-              Tự động lưu và truyền dữ liệu thời gian thực giữa máy tính và điện thoại. Quét mã QR hoặc nhập mã đồng bộ để mở cùng một tiểu thuyết trên điện thoại.
+              Tất cả dự án và bản thảo của bạn được tự động lưu trữ và đồng bộ hóa 24/7 theo tài khoản. Khi bạn đăng nhập cùng tài khoản trên điện thoại, máy tính bảng hay máy tính khác, toàn bộ tiểu thuyết sẽ tự động xuất hiện.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border bg-card">
+          <CardContent>
+            <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border bg-card/60">
               <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Mã đồng bộ hiện tại:</div>
-                <div className="text-base font-mono font-bold text-primary">
-                  {getSyncKey()}
+                <div className="text-xs text-muted-foreground">Tài khoản đang liên kết:</div>
+                <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
+                  {user?.email || 'Chưa đăng nhập'}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Dữ liệu được lưu trữ tự động trên đám mây khi bạn viết bài.
+                  Trạng thái: Tự động lưu và cập nhật bản thảo giữa PC và Điện thoại
                 </p>
               </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button 
-                  onClick={() => setSyncModalOpen(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  <QrCode className="w-4 h-4 mr-2" />
-                  Mở mã QR kết nối Điện thoại
-                </Button>
-                <Button 
-                  variant="outline"
-                  onClick={async () => {
-                    const res = await pushSync();
-                    if (res.success) toast.success('Đã đồng bộ lên đám mây thành công!');
-                    else toast.error('Lỗi: ' + res.error);
-                  }}
-                >
-                  <Cloud className="w-4 h-4 mr-2" />
-                  Đẩy dữ liệu lên Cloud
-                </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Đang hoạt động tự động
+                </span>
               </div>
             </div>
           </CardContent>
         </Card>
-
-        <SyncDialog open={syncModalOpen} onOpenChange={setSyncModalOpen} />
 
         <Card className="border-amber-500/20">
           <CardHeader>
