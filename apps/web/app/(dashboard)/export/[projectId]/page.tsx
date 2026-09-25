@@ -19,10 +19,16 @@ export default function ExportPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [dialogFormat, setDialogFormat] = useState('pdf');
 
   useEffect(() => {
     fetchData();
   }, [projectId]);
+
+  const openExportModal = (format: string = 'pdf') => {
+    setDialogFormat(format);
+    setShowExportDialog(true);
+  };
 
   const fetchData = async () => {
     try {
@@ -61,9 +67,8 @@ export default function ExportPage() {
         }
       }
 
-      // Local download fallback: open export dialog with full formatting support
-      setShowExportDialog(true);
-      toast.info(`Mở hộp thoại xuất bản ${job.format?.toUpperCase() || ''}`);
+      // Open export dialog directly with selected job format
+      openExportModal(job.format || 'docx');
     } catch (e: any) {
       toast.error(e.message || 'Lỗi khi tải file');
     }
@@ -125,35 +130,35 @@ export default function ExportPage() {
         <div>
           <h2 className="font-semibold mb-4">Xuất nhanh</h2>
           <div className="grid md:grid-cols-3 gap-4">
-            <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-red-200" onClick={() => setShowExportDialog(true)}>
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-red-200" onClick={() => openExportModal('pdf')}>
               <CardHeader className="pb-3">
                 <div className="w-12 h-12 bg-red-500 rounded-xl flex items-center justify-center text-white mb-2"><FileText className="w-6 h-6" /></div>
-                <CardTitle className="text-base">PDF - Sách in</CardTitle>
-                <CardDescription className="text-xs">Layout sách, mục lục, đánh số trang, font serif đẹp. Gửi in hoặc đọc.</CardDescription>
+                <CardTitle className="text-base">PDF - Sách in A4</CardTitle>
+                <CardDescription className="text-xs">Layout sách A4, mục lục, đánh số trang, font tiếng Việt sắc nét. Mở bản in & Lưu PDF trực tiếp.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="flex gap-2">
-                  <Badge variant="secondary" className="text-xs">A4</Badge>
-                  <Badge variant="secondary" className="text-xs">Modern/Classic/Minimal</Badge>
+                  <Badge variant="secondary" className="text-xs">A4 Chuẩn</Badge>
+                  <Badge variant="secondary" className="text-xs">Lưu PDF</Badge>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-blue-200" onClick={() => setShowExportDialog(true)}>
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-blue-200" onClick={() => openExportModal('docx')}>
               <CardHeader className="pb-3">
                 <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-white mb-2"><File className="w-6 h-6" /></div>
                 <CardTitle className="text-base">DOCX - Word</CardTitle>
-                <CardDescription className="text-xs">Gửi nhà xuất bản, chỉnh sửa trong Word, Google Docs. Giữ heading, style.</CardDescription>
+                <CardDescription className="text-xs">Gửi nhà xuất bản, chỉnh sửa trong Word, Google Docs. Giữ heading, giãn dòng 1.5, ngắt trang.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="flex gap-2">
-                  <Badge variant="secondary" className="text-xs">Word</Badge>
-                  <Badge variant="secondary" className="text-xs">NXB</Badge>
+                  <Badge variant="secondary" className="text-xs">Word .docx</Badge>
+                  <Badge variant="secondary" className="text-xs">Chuẩn NXB</Badge>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-green-200" onClick={() => setShowExportDialog(true)}>
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-green-200" onClick={() => openExportModal('epub')}>
               <CardHeader className="pb-3">
                 <div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center text-white mb-2"><BookOpen className="w-6 h-6" /></div>
                 <CardTitle className="text-base">EPUB - Ebook</CardTitle>
@@ -244,6 +249,7 @@ export default function ExportPage() {
         open={showExportDialog}
         onOpenChange={setShowExportDialog}
         chapters={chapters}
+        initialFormat={dialogFormat}
       />
     </div>
   );

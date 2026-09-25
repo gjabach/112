@@ -1158,7 +1158,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   // 2. In browser, try relative path on the same host (e.g. Next.js API routes on Vercel)
-  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings') || path.startsWith('/api/sync'))) {
+  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
     try {
       const res = await fetch(path, {
         ...options,
