@@ -2,10 +2,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { TiptapEditor } from '@/components/editor/tiptap-editor';
 import { apiFetch, countWords } from '@/lib/utils';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
@@ -29,11 +29,24 @@ import { ZenAmbianceController } from '@/components/vfx/zen-ambiance';
 import { fireConfetti } from '@/components/vfx/confetti';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 
+const TiptapEditor = dynamic(
+  () => import('@/components/editor/tiptap-editor').then((m) => m.TiptapEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex flex-col items-center justify-center p-12 min-h-[50vh] text-muted-foreground animate-pulse gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <span className="text-sm">Đang tải trình soạn thảo thông minh...</span>
+      </div>
+    )
+  }
+);
+
 export default function ChapterEditorPage() {
   const params = useParams();
   const router = useRouter();
-  const projectId = params.projectId as string;
-  const chapterId = params.chapterId as string;
+  const projectId = (params?.projectId || '') as string;
+  const chapterId = (params?.chapterId || '') as string;
 
   const [chapter, setChapter] = useState<any>(null);
   const [allChapters, setAllChapters] = useState<any[]>([]);
@@ -53,14 +66,17 @@ export default function ChapterEditorPage() {
   const { focusMode, setFocusMode, typewriterMode, setTypewriterMode } = useEditorStore();
 
   const fetchChapterData = async () => {
+    if (!chapterId || !projectId) return;
     try {
       const [res, listRes] = await Promise.all([
         apiFetch(`/api/chapters/${chapterId}`),
         apiFetch(`/api/projects/${projectId}/chapters`)
       ]);
-      setChapter(res.chapter);
-      setTitle(res.chapter.title || 'Chương');
-      setContent(res.chapter.content || '');
+      if (res?.chapter) {
+        setChapter(res.chapter);
+        setTitle(res.chapter.title || 'Chương');
+        setContent(res.chapter.content || '');
+      }
       setAllChapters(Array.isArray(listRes?.chapters) ? listRes.chapters : []);
     } catch (e: any) {
       toast.error(e.message || 'Lỗi tải chương');
@@ -70,8 +86,10 @@ export default function ChapterEditorPage() {
   };
 
   useEffect(() => {
-    fetchChapterData();
-  }, [chapterId]);
+    if (chapterId && projectId) {
+      fetchChapterData();
+    }
+  }, [chapterId, projectId]);
 
   const saveChapter = useCallback(async (newContent?: string, newTitle?: string) => {
     const contentToSave = newContent !== undefined ? newContent : content;
@@ -107,7 +125,7 @@ export default function ChapterEditorPage() {
   }, [content, title, chapter, saveChapter]);
 
   // Chapter Navigation
-  const currentIndex = allChapters.findIndex(c => c.id === chapterId);
+  const currentIndex = allChapters.findIndex(c => c?.id === chapterId);
   const prevChapter = currentIndex > 0 ? allChapters[currentIndex - 1] : null;
   const nextChapter = currentIndex >= 0 && currentIndex < allChapters.length - 1 ? allChapters[currentIndex + 1] : null;
 
@@ -414,7 +432,13 @@ export default function ChapterEditorPage() {
               <Badge variant="outline" className="animate-pulse text-[10px] sm:text-xs px-1.5 py-0">Đang lưu...</Badge>
             ) : lastSaved ? (
               <Badge variant="outline" className="text-green-600 dark:text-green-400 text-[10px] sm:text-xs hidden sm:flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> {new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                <CheckCircle2 className="w-3 h-3" /> {(() => {
+                  try {
+                    return new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  } catch {
+                    return 'Đã lưu';
+                  }
+                })()}
               </Badge>
             ) : null}
 
