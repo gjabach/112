@@ -52,7 +52,6 @@ export function ExportDialog({
   const [authorName, setAuthorName] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [history, setHistory] = useState<any[]>([]);
 
   useEffect(() => {
     if (open) {
@@ -60,7 +59,6 @@ export function ExportDialog({
         setSelectedFormat(initialFormat);
       }
       setSelectedChapters(chapters.map((c: any) => c.id));
-      fetchHistory();
 
       // Read author name from user profile or localStorage
       try {
@@ -74,36 +72,10 @@ export function ExportDialog({
     }
   }, [open, chapters, initialFormat]);
 
-  const fetchHistory = async () => {
-    try {
-      const res = await apiFetch(`/api/export/${projectId}/history`);
-      if (res && res.jobs) {
-        setHistory(res.jobs.slice(0, 5));
-      }
-    } catch {}
-  };
-
   const toggleChapter = (id: string) => {
     setSelectedChapters(prev =>
       prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
     );
-  };
-
-  const saveJobToHistory = (format: string, size: number = 1024) => {
-    const job = {
-      id: 'job_' + Date.now(),
-      format,
-      status: 'done',
-      createdAt: Date.now(),
-      completedAt: Date.now() + 200,
-      size
-    };
-    try {
-      const existing = JSON.parse(localStorage.getItem('novelist_export_jobs') || '[]');
-      existing.unshift(job);
-      localStorage.setItem('novelist_export_jobs', JSON.stringify(existing));
-      setHistory(existing.slice(0, 5));
-    } catch {}
   };
 
   const downloadBlob = (blob: Blob, filename: string) => {
@@ -175,7 +147,6 @@ export function ExportDialog({
           toast.info('Trình duyệt đã chặn cửa sổ in. Đã tự động tải file HTML; bạn chỉ cần mở file và nhấn Ctrl+P để lưu PDF!');
         }
 
-        saveJobToHistory('pdf', Math.max(1024, filteredChapters.length * 2048));
         setResult({
           format: 'pdf',
           extension: 'pdf',
@@ -212,14 +183,12 @@ export function ExportDialog({
             }
             const blob = new Blob([bytes], { type: res.mimeType });
             downloadBlob(blob, `${projectTitle}.${res.extension}`);
-            saveJobToHistory(res.format, res.size);
             setResult(res);
             toast.success(`Đã xuất tệp Word (.${res.extension}) thành công!`);
             serverHandled = true;
           } else if (res.textContent) {
             const blob = new Blob([res.textContent], { type: res.mimeType });
             downloadBlob(blob, `${projectTitle}.${res.extension}`);
-            saveJobToHistory(res.format, res.size);
             setResult(res);
             toast.success(`Đã xuất tệp ${selectedFormat.toUpperCase()} thành công!`);
             serverHandled = true;
@@ -325,7 +294,7 @@ export function ExportDialog({
                 spacing: { after: 140 },
                 children: [
                   new TextRun({
-                    text: `${idx + 1}. ${ch.title || 'Chương'}`,
+                    text: ch.title || `Chương ${idx + 1}`,
                     size: 22,
                     font: 'Times New Roman'
                   })
@@ -350,7 +319,7 @@ export function ExportDialog({
               spacing: { before: 400, after: 300 },
               children: [
                 new TextRun({
-                  text: `Chương ${idx + 1}: ${ch.title || ''}`,
+                  text: ch.title || `Chương ${idx + 1}`,
                   size: 30,
                   bold: true,
                   font: 'Times New Roman'
@@ -563,7 +532,7 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
         let md = `# ${projectTitle}\n\n`;
         if (authorName) md += `*Tác giả: ${authorName}*\n\n`;
         filteredChapters.forEach((ch: any, idx: number) => {
-          md += `## Chương ${idx + 1}: ${ch.title}\n\n`;
+          md += `## ${ch.title || `Chương ${idx + 1}`}\n\n`;
           const paras = parseChapterParagraphs(ch.content);
           md += paras.join('\n\n') + '\n\n---\n\n';
         });
@@ -585,7 +554,7 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
         // Plain text
         let text = `${projectTitle}\n${authorName ? `Tác giả: ${authorName}\n` : ''}\n====================\n\n`;
         filteredChapters.forEach((ch: any, idx: number) => {
-          text += `\n\n--- Chương ${idx + 1}: ${ch.title} ---\n\n`;
+          text += `\n\n--- ${ch.title || `Chương ${idx + 1}`} ---\n\n`;
           const paras = parseChapterParagraphs(ch.content);
           text += paras.join('\n\n') + '\n';
         });
@@ -593,7 +562,6 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
       }
 
       downloadBlob(blob, `${projectTitle}.${ext}`);
-      saveJobToHistory(ext, blob.size);
       setResult({ format: ext, extension: ext, size: blob.size });
       toast.success(`Xuất ${ext.toUpperCase()} thành công!`);
     } catch (e: any) {
@@ -838,25 +806,6 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
                 )}
               </CardContent>
             </Card>
-
-            {history.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs font-semibold">Lịch sử xuất gần đây</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {history.map((job: any) => (
-                    <div key={job.id} className="flex items-center justify-between text-xs p-2 bg-muted/40 rounded-lg border border-border/50">
-                      <div>
-                        <div className="font-medium text-foreground">{job.format?.toUpperCase()}</div>
-                        <div className="text-[10px] text-muted-foreground">{new Date(job.createdAt).toLocaleString('vi-VN')}</div>
-                      </div>
-                      <Badge variant="outline" className="text-[10px] text-green-600 dark:text-green-400">Hoàn thành</Badge>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
 
             <div className="text-xs text-muted-foreground bg-muted/40 p-3.5 rounded-xl border border-border/50 space-y-1.5">
               <div className="font-semibold text-foreground text-xs">💡 Lưu ý quan trọng:</div>

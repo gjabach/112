@@ -92,7 +92,7 @@ export function generatePrintableBookHtml(
         <div class="toc-list">
           ${chapters.map((ch, idx) => `
             <div class="toc-item">
-              <span class="toc-title">${idx + 1}. ${escapeHtml(ch.title || `Chương ${idx + 1}`)}</span>
+              <span class="toc-title">${escapeHtml(ch.title || `Chương ${idx + 1}`)}</span>
               <span class="toc-dots"></span>
               <span class="toc-page-num">${idx + 1}</span>
             </div>
@@ -109,7 +109,6 @@ export function generatePrintableBookHtml(
     bodyContent += `
       <article class="chapter-article">
         <header class="chapter-header">
-          <div class="chapter-label">CHƯƠNG ${idx + 1}</div>
           <h2 class="chapter-title">${escapeHtml(ch.title || `Chương ${idx + 1}`)}</h2>
         </header>
         <div class="chapter-body">
@@ -353,19 +352,6 @@ export function generatePrintableBookHtml(
       text-indent: 1.5em;
       margin-bottom: 0.8em;
       color: #1e293b;
-    }
-
-    .chapter-body p:first-of-type {
-      text-indent: 0;
-    }
-
-    .chapter-body p:first-of-type::first-letter {
-      font-size: 2.6em;
-      float: left;
-      line-height: 0.9;
-      margin-right: 8px;
-      color: #2563eb;
-      font-weight: bold;
     }
 
     @media print {

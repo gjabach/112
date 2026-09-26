@@ -364,28 +364,13 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       genre: 'fantasy',
       status: 'planning',
       wordCount: 0,
-      chapterCount: 1,
+      chapterCount: 0,
       wordCountGoal: 50000,
       createdAt: now,
       updatedAt: now
     };
     projects.unshift(initialProj);
     setStorage('novelist_projects', projects);
-
-    const chapters = getStorage('novelist_chapters', []);
-    const firstChap = {
-      id: genId('chap'),
-      projectId: initialProj.id,
-      title: 'Chương 1: Khởi đầu mới',
-      orderIndex: 1,
-      content: '',
-      wordCount: 0,
-      status: 'draft',
-      createdAt: now,
-      updatedAt: now
-    };
-    chapters.push(firstChap);
-    setStorage('novelist_chapters', chapters);
     
     // Auto push initial workspace to cloud immediately
     if (typeof window !== 'undefined') {
@@ -616,28 +601,12 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       genre: body.genre || 'fantasy',
       status: body.status || 'planning',
       wordCount: 0,
-      chapterCount: 1,
+      chapterCount: 0,
       wordCountGoal: body.wordCountGoal || 50000,
       createdAt: now,
       updatedAt: now
     };
     projects.unshift(newProj);
-
-    // Auto-create Chapter 1
-    const chapters = getStorage('novelist_chapters', []);
-    const firstChap = {
-      id: genId('chap'),
-      projectId: newProj.id,
-      title: 'Chương 1: Mở đầu',
-      orderIndex: 1,
-      content: '',
-      wordCount: 0,
-      status: 'draft',
-      createdAt: now,
-      updatedAt: now
-    };
-    chapters.push(firstChap);
-    setStorage('novelist_chapters', chapters);
     setStorage('novelist_projects', projects);
     return { project: newProj };
   }

@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
               spacing: { after: 140 },
               children: [
                 new TextRun({
-                  text: `${idx + 1}. ${ch.title || 'Chương'}`,
+                  text: ch.title || `Chương ${idx + 1}`,
                   size: 22,
                   font: 'Times New Roman'
                 })
@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
             spacing: { before: 400, after: 300 },
             children: [
               new TextRun({
-                text: `Chương ${idx + 1}: ${ch.title || ''}`,
+                text: ch.title || `Chương ${idx + 1}`,
                 size: 30,
                 bold: true,
                 font: 'Times New Roman'
