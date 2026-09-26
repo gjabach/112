@@ -1,5 +1,5 @@
 import { Extension } from '@tiptap/react';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { FindMatch } from '@/lib/find-replace';
 
@@ -73,18 +73,6 @@ export const FindAndReplaceExtension = Extension.create({
   }
 });
 
-export function updateFindDecorations(editor: any, matches: FindMatch[], activeIndex: number) {
-  if (!editor?.view?.state) return;
-  const doc = editor.state.doc;
-  const decorations = createSearchDecorations(doc, matches, activeIndex);
-  const tr = editor.state.tr.setMeta(findAndReplacePluginKey, {
-    decorations,
-    matches,
-    activeIndex
-  });
-  editor.view.dispatch(tr);
-}
-
 export function clearFindDecorations(editor: any) {
   if (!editor?.view?.state) return;
   const tr = editor.state.tr.setMeta(findAndReplacePluginKey, {
@@ -95,26 +83,69 @@ export function clearFindDecorations(editor: any) {
   editor.view.dispatch(tr);
 }
 
-export function scrollActiveMatchIntoView(editor: any, match?: FindMatch) {
-  if (!editor?.view?.dom) return;
-  try {
-    setTimeout(() => {
-      const activeEl = editor.view.dom.querySelector('.find-match-active');
-      if (activeEl) {
-        activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } else if (match) {
+/**
+ * Navigates to a specific match:
+ * 1. Re-renders decorations so active match is highlighted with .find-match-active
+ * 2. Sets ProseMirror TextSelection to match boundaries
+ * 3. Smoothly centers the scroll container on the active match
+ */
+export function goToMatch(editor: any, matches: FindMatch[], activeIndex: number) {
+  if (!editor?.view?.state || !matches || matches.length === 0) return;
+  const doc = editor.state.doc;
+  const match = matches[activeIndex];
+  if (!match) return;
+
+  const decorations = createSearchDecorations(doc, matches, activeIndex);
+  const tr = editor.state.tr.setMeta(findAndReplacePluginKey, {
+    decorations,
+    matches,
+    activeIndex
+  });
+
+  const maxPos = doc.content?.size ?? 0;
+  const from = Math.min(match.from, maxPos);
+  const to = Math.min(match.to, maxPos);
+  if (from <= to) {
+    try {
+      tr.setSelection(TextSelection.create(doc, from, to));
+      tr.scrollIntoView();
+    } catch {}
+  }
+
+  editor.view.dispatch(tr);
+
+  // Smoothly center the active match in the scrollable manuscript container
+  requestAnimationFrame(() => {
+    try {
+      const viewDom = editor.view?.dom;
+      if (!viewDom) return;
+
+      const scrollContainer = viewDom.closest('.overflow-y-auto') || viewDom.parentElement;
+      const activeEl = viewDom.querySelector('.find-match-active');
+
+      if (activeEl && scrollContainer) {
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const elRect = activeEl.getBoundingClientRect();
+        const relativeTop = elRect.top - containerRect.top + scrollContainer.scrollTop;
+        const targetScrollTop = relativeTop - containerRect.height / 2 + elRect.height / 2;
+        scrollContainer.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: 'smooth'
+        });
+      } else if (match && scrollContainer) {
         const coords = editor.view.coordsAtPos?.(match.from);
         if (coords) {
-          const scrollContainer = editor.view.dom.closest('.overflow-y-auto');
-          if (scrollContainer) {
-            const containerRect = scrollContainer.getBoundingClientRect();
-            const topOffset = coords.top - containerRect.top + scrollContainer.scrollTop - 120;
-            scrollContainer.scrollTo({ top: topOffset, behavior: 'smooth' });
-          }
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const relativeTop = coords.top - containerRect.top + scrollContainer.scrollTop;
+          const targetScrollTop = relativeTop - containerRect.height / 2;
+          scrollContainer.scrollTo({
+            top: Math.max(0, targetScrollTop),
+            behavior: 'smooth'
+          });
         }
       }
-    }, 30);
-  } catch (err) {
-    console.error('Error scrolling active match into view:', err);
-  }
+    } catch (e) {
+      console.error('Error centering active match:', e);
+    }
+  });
 }

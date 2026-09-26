@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Editor } from '@tiptap/react';
-import { X, HelpCircle, Check } from 'lucide-react';
+import { X, Check } from 'lucide-react';
 import {
   FindMatch,
   FindOptions,
@@ -10,9 +10,8 @@ import {
   processReplacementText
 } from '@/lib/find-replace';
 import {
-  updateFindDecorations,
   clearFindDecorations,
-  scrollActiveMatchIntoView
+  goToMatch
 } from './find-replace-extension';
 import { toast } from 'sonner';
 
@@ -39,17 +38,22 @@ export function FindReplaceDialog({
   const [matches, setMatches] = useState<FindMatch[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  // Refs to avoid circular dependency triggers during next/prev cycling
+  const activeIndexRef = useRef(0);
+  const matchesRef = useRef<FindMatch[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Recalculate matches whenever search parameters or editor doc changes
-  const runFind = useCallback(
-    (targetDoc?: any, keepIndex = false) => {
+  // Core search execution function
+  const executeSearch = useCallback(
+    (targetDoc?: any, preserveIndex = false) => {
       if (!editor || !isOpen) return;
 
       const doc = targetDoc || editor.state.doc;
       if (!searchTerm) {
+        matchesRef.current = [];
         setMatches([]);
+        activeIndexRef.current = 0;
         setActiveIndex(0);
         clearFindDecorations(editor);
         return;
@@ -62,19 +66,25 @@ export function FindReplaceDialog({
       };
 
       const found = findMatchesInDoc(doc, searchTerm, options);
+      matchesRef.current = found;
       setMatches(found);
 
-      const nextIndex = keepIndex
-        ? Math.min(activeIndex, Math.max(0, found.length - 1))
-        : 0;
-      setActiveIndex(nextIndex);
-
-      updateFindDecorations(editor, found, nextIndex);
-      if (found.length > 0) {
-        scrollActiveMatchIntoView(editor, found[nextIndex]);
+      if (found.length === 0) {
+        activeIndexRef.current = 0;
+        setActiveIndex(0);
+        clearFindDecorations(editor);
+        return;
       }
+
+      const targetIdx = preserveIndex
+        ? Math.min(activeIndexRef.current, found.length - 1)
+        : 0;
+
+      activeIndexRef.current = targetIdx;
+      setActiveIndex(targetIdx);
+      goToMatch(editor, found, targetIdx);
     },
-    [editor, isOpen, searchTerm, caseSensitive, useRegex, ignoreDiacritics, activeIndex]
+    [editor, isOpen, searchTerm, caseSensitive, useRegex, ignoreDiacritics]
   );
 
   // When dialog opens or initial search changes
@@ -94,21 +104,20 @@ export function FindReplaceDialog({
     }
   }, [isOpen, initialSearch, editor]);
 
-  // Re-run search when search inputs change
+  // Run search only when search parameters change (searchTerm, options, or dialog open state)
   useEffect(() => {
     if (isOpen && editor) {
-      runFind();
+      executeSearch();
     }
-  }, [runFind, isOpen, editor]);
+  }, [executeSearch, isOpen, editor]);
 
   // Listen for editor updates (e.g. typing or undo) while dialog is open
   useEffect(() => {
     if (!editor || !isOpen) return;
 
     const handleTransaction = ({ transaction }: any) => {
-      // If doc changed, refresh matches while preserving current active index
       if (transaction.docChanged) {
-        runFind(transaction.doc, true);
+        executeSearch(transaction.doc, true);
       }
     };
 
@@ -116,30 +125,36 @@ export function FindReplaceDialog({
     return () => {
       editor.off('transaction', handleTransaction);
     };
-  }, [editor, isOpen, runFind]);
+  }, [editor, isOpen, executeSearch]);
 
   // Navigate to next match
-  const handleNext = () => {
-    if (matches.length === 0 || !editor) return;
-    const next = (activeIndex + 1) % matches.length;
+  const handleNext = useCallback(() => {
+    const curMatches = matchesRef.current;
+    if (curMatches.length === 0 || !editor) return;
+
+    const next = (activeIndexRef.current + 1) % curMatches.length;
+    activeIndexRef.current = next;
     setActiveIndex(next);
-    updateFindDecorations(editor, matches, next);
-    scrollActiveMatchIntoView(editor, matches[next]);
-  };
+    goToMatch(editor, curMatches, next);
+  }, [editor]);
 
   // Navigate to previous match
-  const handlePrev = () => {
-    if (matches.length === 0 || !editor) return;
-    const prev = (activeIndex - 1 + matches.length) % matches.length;
+  const handlePrev = useCallback(() => {
+    const curMatches = matchesRef.current;
+    if (curMatches.length === 0 || !editor) return;
+
+    const prev = (activeIndexRef.current - 1 + curMatches.length) % curMatches.length;
+    activeIndexRef.current = prev;
     setActiveIndex(prev);
-    updateFindDecorations(editor, matches, prev);
-    scrollActiveMatchIntoView(editor, matches[prev]);
-  };
+    goToMatch(editor, curMatches, prev);
+  }, [editor]);
 
   // Replace single active match
-  const handleReplace = () => {
-    if (matches.length === 0 || !editor) return;
-    const active = matches[activeIndex];
+  const handleReplace = useCallback(() => {
+    const curMatches = matchesRef.current;
+    if (curMatches.length === 0 || !editor) return;
+
+    const active = curMatches[activeIndexRef.current];
     if (!active) return;
 
     const textToInsert = processReplacementText(replaceTerm, useRegex);
@@ -155,21 +170,20 @@ export function FindReplaceDialog({
 
     const tr = editor.state.tr.insertText(replacement, active.from, active.to);
     editor.view.dispatch(tr);
-
-    // Matches will be recalculated via transaction listener
-  };
+  }, [editor, replaceTerm, useRegex, caseSensitive, searchTerm]);
 
   // Replace all matches in one atomic transaction
-  const handleReplaceAll = () => {
-    if (matches.length === 0 || !editor) return;
+  const handleReplaceAll = useCallback(() => {
+    const curMatches = matchesRef.current;
+    if (curMatches.length === 0 || !editor) return;
 
-    const count = matches.length;
+    const count = curMatches.length;
     const textToInsert = processReplacementText(replaceTerm, useRegex);
     const tr = editor.state.tr;
 
-    // Iterate backwards from highest doc position to lowest to avoid offset shifting
-    for (let i = matches.length - 1; i >= 0; i--) {
-      const m = matches[i];
+    // Iterate backwards from highest doc position to lowest to prevent index shifting
+    for (let i = curMatches.length - 1; i >= 0; i--) {
+      const m = curMatches[i];
       let replacement = textToInsert;
       if (useRegex) {
         try {
@@ -183,7 +197,7 @@ export function FindReplaceDialog({
 
     editor.view.dispatch(tr);
     toast.success(`Đã thay thế ${count} kết quả`);
-  };
+  }, [editor, replaceTerm, useRegex, caseSensitive, searchTerm]);
 
   // Keyboard navigation inside inputs
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -363,6 +377,7 @@ export function FindReplaceDialog({
       <div className="mt-6 pt-3 flex items-center justify-between border-t border-neutral-700/60 flex-wrap gap-1">
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={handleReplace}
           disabled={!hasMatches}
           className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
@@ -372,6 +387,7 @@ export function FindReplaceDialog({
 
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={handleReplaceAll}
           disabled={!hasMatches}
           className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
@@ -381,6 +397,7 @@ export function FindReplaceDialog({
 
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={handlePrev}
           disabled={!hasMatches}
           className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
@@ -390,6 +407,7 @@ export function FindReplaceDialog({
 
         <button
           type="button"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={handleNext}
           disabled={!hasMatches}
           className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
