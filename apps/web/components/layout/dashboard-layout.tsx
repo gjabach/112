@@ -16,9 +16,10 @@ import {
   LayoutList, 
   Clock,
   Cloud,
-  CheckCircle2
+  CheckCircle2,
+  Loader2
 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { initAutoSync } from '@/lib/sync';
 import { AmbientBackground } from '@/components/vfx/ambient-background';
 import { SparkleIcon } from '@/components/vfx/magic-sparkles';
@@ -32,18 +33,41 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isAuthenticated, logout } = useAuthStore();
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
-      return;
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('token');
+      const userStr = localStorage.getItem('novelist_current_user');
+      if (token && userStr) {
+        try {
+          const u = JSON.parse(userStr);
+          if (!useAuthStore.getState().isAuthenticated) {
+            useAuthStore.getState().setAuth(u, token);
+          }
+          setIsReady(true);
+          initAutoSync();
+          return;
+        } catch {}
+      }
     }
 
-    // Initialize silent background auto-sync across devices
-    initAutoSync();
-  }, [isAuthenticated, router]);
+    if (!useAuthStore.getState().isAuthenticated) {
+      router.push('/login');
+    } else {
+      setIsReady(true);
+      initAutoSync();
+    }
+  }, [router]);
 
-  if (!isAuthenticated) return null;
+  if (!isReady && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <span className="text-xs text-muted-foreground animate-pulse">Đang khôi phục phiên làm việc...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen bg-background flex flex-col md:flex-row pb-16 md:pb-0 overflow-x-hidden">

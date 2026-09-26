@@ -21,12 +21,29 @@ interface AuthState {
   setUser: (user: User) => void;
 }
 
+const getInitialAuth = () => {
+  if (typeof window === 'undefined') {
+    return { user: null, token: null, isAuthenticated: false };
+  }
+  try {
+    const token = localStorage.getItem('token');
+    const userStr = localStorage.getItem('novelist_current_user');
+    if (token && userStr) {
+      const user = JSON.parse(userStr);
+      return { user, token, isAuthenticated: true };
+    }
+  } catch {}
+  return { user: null, token: null, isAuthenticated: false };
+};
+
+const initialAuth = getInitialAuth();
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      user: null,
-      token: null,
-      isAuthenticated: false,
+      user: initialAuth.user,
+      token: initialAuth.token,
+      isAuthenticated: initialAuth.isAuthenticated,
       setAuth: (user, token) => {
         if (typeof window !== 'undefined') {
           localStorage.setItem('token', token);

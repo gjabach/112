@@ -14,19 +14,67 @@ import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { AmbientBackground } from '@/components/vfx/ambient-background';
 import { SparkleIcon } from '@/components/vfx/magic-sparkles';
+import { useEffect } from 'react';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const router = useRouter();
   const setAuth = useAuthStore(s => s.setAuth);
 
-  const { register, handleSubmit, formState: { errors } } = useForm<LoginInput>({
-    resolver: zodResolver(loginSchema)
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<LoginInput>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: '',
+      password: ''
+    }
   });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // 1. If already logged in, redirect directly to projects
+      const token = localStorage.getItem('token');
+      const userStr = localStorage.getItem('novelist_current_user');
+      if (token && userStr) {
+        router.push('/projects');
+        return;
+      }
+
+      // 2. Pre-fill remembered credentials if user enabled remember password
+      const savedRemember = localStorage.getItem('novelist_remember_me');
+      const savedEmail = localStorage.getItem('novelist_remember_email');
+      const savedPassword = localStorage.getItem('novelist_remember_password');
+
+      if (savedRemember === 'false') {
+        setRememberMe(false);
+      } else {
+        setRememberMe(true);
+      }
+
+      if (savedEmail) {
+        setValue('email', savedEmail);
+      }
+      if (savedPassword) {
+        setValue('password', savedPassword);
+      }
+    }
+  }, [router, setValue]);
 
   const onSubmit = async (data: LoginInput) => {
     setLoading(true);
     try {
+      if (typeof window !== 'undefined') {
+        if (rememberMe) {
+          localStorage.setItem('novelist_remember_me', 'true');
+          localStorage.setItem('novelist_remember_email', data.email);
+          localStorage.setItem('novelist_remember_password', data.password);
+        } else {
+          localStorage.setItem('novelist_remember_me', 'false');
+          localStorage.removeItem('novelist_remember_email');
+          localStorage.removeItem('novelist_remember_password');
+        }
+      }
+
       const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify(data)
@@ -74,6 +122,20 @@ export default function LoginPage() {
               />
               {errors.password && <p className="text-xs text-destructive mt-1">{errors.password.message}</p>}
             </div>
+
+            {/* Remember Me Checkbox */}
+            <div className="flex items-center justify-between text-xs py-0.5">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-muted-foreground hover:text-foreground transition-colors">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="w-4 h-4 rounded border-border accent-primary cursor-pointer"
+                />
+                <span>Ghi nhớ tài khoản & mật khẩu</span>
+              </label>
+            </div>
+
             <Button
               type="submit"
               className="w-full h-10 font-semibold rounded-xl bg-primary hover:bg-primary/90 shadow-md shadow-primary/25 btn-interactive flex items-center justify-center gap-2"

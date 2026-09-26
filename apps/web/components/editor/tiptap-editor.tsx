@@ -10,7 +10,6 @@ import Highlight from '@tiptap/extension-highlight';
 import { useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Bold, Italic, List, ListOrdered, Quote, Heading1, Heading2, Code, Undo, Redo, Strikethrough, Highlighter } from 'lucide-react';
-import { useEditorStore } from '@/lib/store';
 
 interface TiptapEditorProps {
   content: string;
@@ -20,7 +19,6 @@ interface TiptapEditorProps {
 }
 
 export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true }: TiptapEditorProps) {
-  const { typewriterMode } = useEditorStore();
   const lastEmittedContentRef = useRef<string | null>(null);
 
   const initialContent = (() => {
@@ -104,7 +102,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       </div>
 
       {/* Independently Scrollable Manuscript Canvas */}
-      <div className={`flex-1 overflow-y-auto p-4 sm:p-6 md:p-12 min-h-0 ${typewriterMode ? 'py-[35vh]' : ''}`}>
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-12 min-h-0">
         <EditorContent editor={editor} className="max-w-3xl mx-auto prose prose-neutral dark:prose-invert focus:outline-none min-h-[60vh] text-base sm:text-lg" />
       </div>
     </div>

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { AmbientBackground } from '@/components/vfx/ambient-background';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
+import { LandingNav } from '@/components/layout/landing-nav';
 
 export default function LandingPage() {
   return (
@@ -39,18 +40,7 @@ export default function LandingPage() {
               Studio Edition
             </Badge>
           </Link>
-          <div className="flex items-center gap-3">
-            <Link href="/login">
-              <Button variant="ghost" className="font-medium text-sm">Đăng nhập</Button>
-            </Link>
-            <Link href="/register">
-              <MagicSparkles>
-                <Button className="font-medium text-sm shadow-md shadow-primary/25 bg-primary hover:bg-primary/90">
-                  Bắt đầu viết miễn phí
-                </Button>
-              </MagicSparkles>
-            </Link>
-          </div>
+          <LandingNav />
         </div>
       </header>
 
@@ -197,7 +187,7 @@ export default function LandingPage() {
                 </div>
                 <CardTitle className="text-xl font-bold">Trình Soạn Thảo Chuyên Nghiệp</CardTitle>
                 <CardDescription className="text-sm leading-relaxed">
-                  Rich text TipTap chuẩn A4, Zen Focus Mode, Typewriter mode khóa tiêu cự con trỏ, tự động lưu thời gian thực và đếm từ chính xác.
+                  Rich text TipTap chuẩn A4, thanh công cụ cố định tiện lợi, tự động lưu thời gian thực và đếm từ chính xác.
                 </CardDescription>
               </CardHeader>
             </Card>

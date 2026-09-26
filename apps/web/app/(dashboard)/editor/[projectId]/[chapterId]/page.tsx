@@ -13,9 +13,6 @@ import {
   ArrowLeft,
   Save,
   Sparkles,
-  Eye,
-  EyeOff,
-  Type,
   FileText,
   ChevronLeft,
   ChevronRight,
@@ -26,8 +23,6 @@ import {
   Loader2,
   BookOpen
 } from 'lucide-react';
-import { useEditorStore } from '@/lib/store';
-import { ZenAmbianceController } from '@/components/vfx/zen-ambiance';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound } from '@/lib/sound';
@@ -82,12 +77,9 @@ export default function ChapterEditorPage() {
   const [aiSuggestion, setAiSuggestion] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [targetWordCount, setTargetWordCount] = useState(2000);
-  const [spotlightActive, setSpotlightActive] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const [switchDirection, setSwitchDirection] = useState<'next' | 'prev' | 'fade'>('fade');
   const [targetChapterInfo, setTargetChapterInfo] = useState<{ title: string; orderIndex?: number } | null>(null);
-
-  const { focusMode, setFocusMode, typewriterMode, setTypewriterMode } = useEditorStore();
 
   const fetchChapterData = async () => {
     if (!chapterId || !projectId) return;
@@ -396,7 +388,7 @@ export default function ChapterEditorPage() {
 
   return (
     <MechKeyboardProvider>
-    <div className={`h-screen max-h-screen overflow-hidden bg-background flex flex-col ${focusMode ? 'focus-mode' : ''}`}>
+    <div className="h-screen max-h-screen overflow-hidden bg-background flex flex-col">
       {/* Header */}
       <header className="border-b bg-card/95 backdrop-blur-sm shrink-0 z-30 shadow-xs">
         <div className="flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 max-w-[1600px] mx-auto w-full">
@@ -500,21 +492,12 @@ export default function ChapterEditorPage() {
               </Button>
             </MagicSparkles>
 
-            {/* Zen Ambiance sound & lighting controller */}
-            <ZenAmbianceController onToggleSpotlight={setSpotlightActive} />
-
             {/* Clicky Sound Controller */}
             <SoundToggleButton />
             
             {/* Mechanical Keyboard Sound */}
             <MechKeyboardToggle />
 
-            <Button variant="ghost" size="sm" className="h-8 text-xs hidden md:flex" onClick={() => setFocusMode(!focusMode)}>
-              <Eye className="w-3.5 h-3.5 mr-1" /> {focusMode ? 'Thoát Focus' : 'Focus'}
-            </Button>
-            <Button variant="ghost" size="sm" className="h-8 text-xs hidden lg:flex" onClick={() => setTypewriterMode(!typewriterMode)}>
-              <Type className="w-3.5 h-3.5 mr-1" /> Typewriter
-            </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 hidden md:flex" onClick={toggleFullscreen} title="Toàn màn hình">
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </Button>
@@ -549,7 +532,7 @@ export default function ChapterEditorPage() {
 
       <div className="flex-1 flex overflow-hidden min-h-0 relative">
         {/* Editor Canvas with independently scrolling text and docked top toolbar */}
-        <main className={`flex-1 flex flex-col h-full overflow-hidden min-h-0 relative ${typewriterMode ? 'flex items-center' : ''} ${spotlightActive ? 'zen-spotlight' : ''}`}>
+        <main className="flex-1 flex flex-col h-full overflow-hidden min-h-0 relative">
           <div
             key={chapterId}
             className={`w-full h-full flex flex-col min-h-0 transition-all duration-300 ease-out will-change-transform will-change-opacity ${

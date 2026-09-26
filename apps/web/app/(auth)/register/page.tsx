@@ -15,11 +15,22 @@ import { Loader2 } from 'lucide-react';
 import { AmbientBackground } from '@/components/vfx/ambient-background';
 import { SparkleIcon } from '@/components/vfx/magic-sparkles';
 import { fireConfetti } from '@/components/vfx/confetti';
+import { useEffect } from 'react';
 
 export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const setAuth = useAuthStore(s => s.setAuth);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('token');
+      const userStr = localStorage.getItem('novelist_current_user');
+      if (token && userStr) {
+        router.push('/projects');
+      }
+    }
+  }, [router]);
 
   const { register, handleSubmit, formState: { errors } } = useForm<RegisterInput>({
     resolver: zodResolver(registerSchema)
@@ -28,6 +39,12 @@ export default function RegisterPage() {
   const onSubmit = async (data: RegisterInput) => {
     setLoading(true);
     try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('novelist_remember_me', 'true');
+        localStorage.setItem('novelist_remember_email', data.email);
+        localStorage.setItem('novelist_remember_password', data.password);
+      }
+
       const res = await apiFetch('/api/auth/register', {
         method: 'POST',
         body: JSON.stringify(data)
