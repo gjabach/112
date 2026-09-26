@@ -291,17 +291,33 @@
   transform: scale(0.96);
 }
 
-/* Zen Spotlight Focus */
-.zen-spotlight {
-  position: relative;
+/* Find & Replace search match highlights */
+.find-match {
+  background-color: rgba(234, 179, 8, 0.35);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(234, 179, 8, 0.45);
 }
-.zen-spotlight::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background: radial-gradient(circle at 50% 40%, transparent 400px, rgba(0, 0, 0, 0.35) 900px);
-  pointer-events: none;
-  z-index: 5;
-  transition: opacity 0.5s ease;
+
+.dark .find-match {
+  background-color: rgba(234, 179, 8, 0.32);
+  box-shadow: 0 0 0 1px rgba(234, 179, 8, 0.55);
 }
+
+.find-match-active {
+  background-color: rgba(249, 115, 22, 0.75) !important;
+  color: #ffffff !important;
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 1), 0 0 10px rgba(249, 115, 22, 0.6) !important;
+  animation: findMatchPulse 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes findMatchPulse {
+  0% {
+    box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.9), 0 0 5px rgba(249, 115, 22, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 2px rgba(249, 115, 22, 1), 0 0 12px rgba(249, 115, 22, 0.85);
+  }
+}
+
 

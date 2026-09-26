@@ -707,6 +707,142 @@ test('PC to Mobile automatic account & draft restoration on login without manual
   assert.equal(restoredCharacters[0].name, 'Thúy Kiều');
 });
 
+// ==========================================
+// Google Docs Style Find & Replace Verification
+// ==========================================
+
+function stripDiacritics1to1(str) {
+  if (!str) return '';
+  return str.split('').map(ch => {
+    if (ch === 'đ') return 'd';
+    if (ch === 'Đ') return 'D';
+    const nfd = ch.normalize('NFD');
+    return nfd[0];
+  }).join('');
+}
+
+function findMatchesInString(text, searchTerm, options) {
+  if (!text || !searchTerm) return [];
+  const targetText = options.ignoreDiacritics ? stripDiacritics1to1(text) : text;
+  let searchStr = options.ignoreDiacritics ? stripDiacritics1to1(searchTerm) : searchTerm;
+  const flags = options.caseSensitive ? 'g' : 'gi';
+
+  let regex;
+  try {
+    if (options.useRegex) {
+      regex = new RegExp(searchStr, flags);
+    } else {
+      const escaped = searchStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      regex = new RegExp(escaped, flags);
+    }
+  } catch {
+    return [];
+  }
+
+  const results = [];
+  let match;
+  while ((match = regex.exec(targetText)) !== null) {
+    const len = match[0].length;
+    if (len === 0) {
+      regex.lastIndex++;
+      continue;
+    }
+    const start = match.index;
+    const end = start + len;
+    results.push({
+      start,
+      end,
+      text: text.slice(start, end)
+    });
+  }
+  return results;
+}
+
+function processReplacementText(replacement, useRegex) {
+  if (!useRegex) return replacement;
+  return replacement
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\\r/g, '\r');
+}
+
+test('Find & Replace: stripDiacritics1to1 satisfies 1-to-1 length and character equality', () => {
+  const sample = 'Nguyễn Văn Đức - Thế Giới Đẹp Đẽ! ā = a, E = É, א = א';
+  const stripped = stripDiacritics1to1(sample);
+  assert.equal(stripped.length, sample.length, 'Length must be identical 1-to-1');
+  assert.equal(stripped.includes('Nguyen Van Duc'), true);
+  assert.equal(stripped.includes('The Gioi Dep De'), true);
+  assert.equal(stripped.includes('a = a, E = E, א = א'), true);
+});
+
+test('Find & Replace: Bỏ qua các dấu (ignore diacritics) matches accented Vietnamese seamlessly', () => {
+  const text = 'Chào mừng bạn đến với thế giới tiểu thuyết. THẾ GIỚI này thuộc về bạn.';
+  const matches = findMatchesInString(text, 'the gioi', {
+    ignoreDiacritics: true,
+    caseSensitive: false,
+    useRegex: false
+  });
+  assert.equal(matches.length, 2);
+  assert.equal(matches[0].text, 'thế giới');
+  assert.equal(matches[1].text, 'THẾ GIỚI');
+});
+
+test('Find & Replace: Khớp chữ hoa chữ thường (match case) respects casing', () => {
+  const text = 'Hà Nội và hà nội trong sương sớm.';
+  const caseSensitiveMatches = findMatchesInString(text, 'Hà Nội', {
+    ignoreDiacritics: false,
+    caseSensitive: true,
+    useRegex: false
+  });
+  assert.equal(caseSensitiveMatches.length, 1);
+  assert.equal(caseSensitiveMatches[0].text, 'Hà Nội');
+
+  const caseInsensitiveMatches = findMatchesInString(text, 'Hà Nội', {
+    ignoreDiacritics: false,
+    caseSensitive: false,
+    useRegex: false
+  });
+  assert.equal(caseInsensitiveMatches.length, 2);
+});
+
+test('Find & Replace: Sử dụng biểu thức chính quy (use regex) supports pattern matching and unescaping', () => {
+  const text = 'Chương 1: Khởi nguyên. Chương 2: Biến cố. Chương 10: Hồi kết.';
+  const regexMatches = findMatchesInString(text, 'Chương \\d+', {
+    ignoreDiacritics: false,
+    caseSensitive: false,
+    useRegex: true
+  });
+  assert.equal(regexMatches.length, 3);
+  assert.equal(regexMatches[0].text, 'Chương 1');
+  assert.equal(regexMatches[1].text, 'Chương 2');
+  assert.equal(regexMatches[2].text, 'Chương 10');
+
+  // Verify unescaping \n and \t for replacement
+  const replacementWithEscapes = '\\n\\tĐoạn mới';
+  assert.equal(processReplacementText(replacementWithEscapes, true), '\n\tĐoạn mới');
+  assert.equal(processReplacementText(replacementWithEscapes, false), '\\n\\tĐoạn mới');
+});
+
+test('Find & Replace: Reverse-order replacement maintains atomic doc integrity', () => {
+  let doc = 'Mèo trắng nhảy qua mèo đen, gặp một con mèo khác.';
+  const matches = findMatchesInString(doc, 'mèo', {
+    ignoreDiacritics: true,
+    caseSensitive: false,
+    useRegex: false
+  });
+  assert.equal(matches.length, 3);
+
+  // Replace all occurrences in reverse order
+  const replacement = 'cún';
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const m = matches[i];
+    doc = doc.slice(0, m.start) + replacement + doc.slice(m.end);
+  }
+
+  assert.equal(doc, 'cún trắng nhảy qua cún đen, gặp một con cún khác.');
+});
+
+
 
 
 
