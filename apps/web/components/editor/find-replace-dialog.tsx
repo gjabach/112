@@ -11,6 +11,7 @@ import {
 } from '@/lib/find-replace';
 import {
   clearFindDecorations,
+  updateMatchDecorations,
   goToMatch
 } from './find-replace-extension';
 import { toast } from 'sonner';
@@ -38,54 +39,49 @@ export function FindReplaceDialog({
   const [matches, setMatches] = useState<FindMatch[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // Refs to avoid circular dependency triggers during next/prev cycling
+  // Refs to avoid circular dependency triggers and maintain current state across events
   const activeIndexRef = useRef(0);
   const matchesRef = useRef<FindMatch[]>([]);
+  const isInternalOperationRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Core search execution function
-  const executeSearch = useCallback(
-    (targetDoc?: any, preserveIndex = false) => {
-      if (!editor || !isOpen) return;
+  // Core search execution when search input or options change
+  const executeSearch = useCallback(() => {
+    if (!editor || !isOpen) return;
 
-      const doc = targetDoc || editor.state.doc;
-      if (!searchTerm) {
-        matchesRef.current = [];
-        setMatches([]);
-        activeIndexRef.current = 0;
-        setActiveIndex(0);
-        clearFindDecorations(editor);
-        return;
-      }
+    const doc = editor.state.doc;
+    if (!searchTerm) {
+      matchesRef.current = [];
+      setMatches([]);
+      activeIndexRef.current = 0;
+      setActiveIndex(0);
+      clearFindDecorations(editor);
+      return;
+    }
 
-      const options: FindOptions = {
-        caseSensitive,
-        useRegex,
-        ignoreDiacritics
-      };
+    const options: FindOptions = {
+      caseSensitive,
+      useRegex,
+      ignoreDiacritics
+    };
 
-      const found = findMatchesInDoc(doc, searchTerm, options);
-      matchesRef.current = found;
-      setMatches(found);
+    const found = findMatchesInDoc(doc, searchTerm, options);
+    matchesRef.current = found;
+    setMatches(found);
 
-      if (found.length === 0) {
-        activeIndexRef.current = 0;
-        setActiveIndex(0);
-        clearFindDecorations(editor);
-        return;
-      }
+    if (found.length === 0) {
+      activeIndexRef.current = 0;
+      setActiveIndex(0);
+      clearFindDecorations(editor);
+      return;
+    }
 
-      const targetIdx = preserveIndex
-        ? Math.min(activeIndexRef.current, found.length - 1)
-        : 0;
-
-      activeIndexRef.current = targetIdx;
-      setActiveIndex(targetIdx);
-      goToMatch(editor, found, targetIdx);
-    },
-    [editor, isOpen, searchTerm, caseSensitive, useRegex, ignoreDiacritics]
-  );
+    const targetIdx = 0;
+    activeIndexRef.current = targetIdx;
+    setActiveIndex(targetIdx);
+    goToMatch(editor, found, targetIdx);
+  }, [editor, isOpen, searchTerm, caseSensitive, useRegex, ignoreDiacritics]);
 
   // When dialog opens or initial search changes
   useEffect(() => {
@@ -104,20 +100,66 @@ export function FindReplaceDialog({
     }
   }, [isOpen, initialSearch, editor]);
 
-  // Run search only when search parameters change (searchTerm, options, or dialog open state)
+  // Run search when search parameters change (searchTerm, options, or dialog open state)
   useEffect(() => {
     if (isOpen && editor) {
       executeSearch();
     }
   }, [executeSearch, isOpen, editor]);
 
-  // Listen for editor updates (e.g. typing or undo) while dialog is open
+  // Listen for editor updates (e.g. user manually typing, deleting, or editing in the document)
   useEffect(() => {
     if (!editor || !isOpen) return;
 
     const handleTransaction = ({ transaction }: any) => {
+      // Skip if change originated from our own Replace / ReplaceAll button click
+      if (isInternalOperationRef.current) return;
+
       if (transaction.docChanged) {
-        executeSearch(transaction.doc, true);
+        if (!searchTerm) {
+          matchesRef.current = [];
+          setMatches([]);
+          activeIndexRef.current = 0;
+          setActiveIndex(0);
+          clearFindDecorations(editor);
+          return;
+        }
+
+        const options: FindOptions = {
+          caseSensitive,
+          useRegex,
+          ignoreDiacritics
+        };
+
+        const found = findMatchesInDoc(transaction.doc, searchTerm, options);
+        matchesRef.current = found;
+        setMatches(found);
+
+        if (found.length === 0) {
+          activeIndexRef.current = 0;
+          setActiveIndex(0);
+          clearFindDecorations(editor);
+          return;
+        }
+
+        // Find match closest to user's current caret position, or preserve index
+        const caretPos = transaction.selection?.from ?? 0;
+        let bestIdx = 0;
+        let minDiff = Infinity;
+        found.forEach((m, idx) => {
+          const diff = Math.abs(m.from - caretPos);
+          if (diff < minDiff) {
+            minDiff = diff;
+            bestIdx = idx;
+          }
+        });
+
+        activeIndexRef.current = bestIdx;
+        setActiveIndex(bestIdx);
+
+        // Crucial: ONLY update visual decorations! DO NOT set selection, DO NOT scroll!
+        // The user's caret stays exactly where they are typing in the manuscript!
+        updateMatchDecorations(editor, found, bestIdx);
       }
     };
 
@@ -125,7 +167,7 @@ export function FindReplaceDialog({
     return () => {
       editor.off('transaction', handleTransaction);
     };
-  }, [editor, isOpen, executeSearch]);
+  }, [editor, isOpen, searchTerm, caseSensitive, useRegex, ignoreDiacritics]);
 
   // Navigate to next match
   const handleNext = useCallback(() => {
@@ -168,9 +210,35 @@ export function FindReplaceDialog({
       } catch {}
     }
 
-    const tr = editor.state.tr.insertText(replacement, active.from, active.to);
-    editor.view.dispatch(tr);
-  }, [editor, replaceTerm, useRegex, caseSensitive, searchTerm]);
+    isInternalOperationRef.current = true;
+    try {
+      const tr = editor.state.tr.insertText(replacement, active.from, active.to);
+      editor.view.dispatch(tr);
+
+      // Re-scan after replacement
+      const options: FindOptions = {
+        caseSensitive,
+        useRegex,
+        ignoreDiacritics
+      };
+      const newMatches = findMatchesInDoc(editor.state.doc, searchTerm, options);
+      matchesRef.current = newMatches;
+      setMatches(newMatches);
+
+      if (newMatches.length > 0) {
+        const nextIdx = activeIndexRef.current < newMatches.length ? activeIndexRef.current : 0;
+        activeIndexRef.current = nextIdx;
+        setActiveIndex(nextIdx);
+        goToMatch(editor, newMatches, nextIdx);
+      } else {
+        activeIndexRef.current = 0;
+        setActiveIndex(0);
+        clearFindDecorations(editor);
+      }
+    } finally {
+      isInternalOperationRef.current = false;
+    }
+  }, [editor, replaceTerm, useRegex, caseSensitive, searchTerm, ignoreDiacritics]);
 
   // Replace all matches in one atomic transaction
   const handleReplaceAll = useCallback(() => {
@@ -179,24 +247,35 @@ export function FindReplaceDialog({
 
     const count = curMatches.length;
     const textToInsert = processReplacementText(replaceTerm, useRegex);
-    const tr = editor.state.tr;
 
-    // Iterate backwards from highest doc position to lowest to prevent index shifting
-    for (let i = curMatches.length - 1; i >= 0; i--) {
-      const m = curMatches[i];
-      let replacement = textToInsert;
-      if (useRegex) {
-        try {
-          const flags = caseSensitive ? '' : 'i';
-          const reg = new RegExp(searchTerm, flags);
-          replacement = m.text.replace(reg, textToInsert);
-        } catch {}
+    isInternalOperationRef.current = true;
+    try {
+      const tr = editor.state.tr;
+      for (let i = curMatches.length - 1; i >= 0; i--) {
+        const m = curMatches[i];
+        let replacement = textToInsert;
+        if (useRegex) {
+          try {
+            const flags = caseSensitive ? '' : 'i';
+            const reg = new RegExp(searchTerm, flags);
+            replacement = m.text.replace(reg, textToInsert);
+          } catch {}
+        }
+        tr.insertText(replacement, m.from, m.to);
       }
-      tr.insertText(replacement, m.from, m.to);
-    }
 
-    editor.view.dispatch(tr);
-    toast.success(`Đã thay thế ${count} kết quả`);
+      editor.view.dispatch(tr);
+
+      matchesRef.current = [];
+      setMatches([]);
+      activeIndexRef.current = 0;
+      setActiveIndex(0);
+      clearFindDecorations(editor);
+
+      toast.success(`Đã thay thế ${count} kết quả`);
+    } finally {
+      isInternalOperationRef.current = false;
+    }
   }, [editor, replaceTerm, useRegex, caseSensitive, searchTerm]);
 
   // Keyboard navigation inside inputs

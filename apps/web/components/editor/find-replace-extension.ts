@@ -84,6 +84,22 @@ export function clearFindDecorations(editor: any) {
 }
 
 /**
+ * Updates decorations ONLY without touching ProseMirror selection or scroll position.
+ * Essential when user is editing/typing in the document so cursor NEVER jumps away!
+ */
+export function updateMatchDecorations(editor: any, matches: FindMatch[], activeIndex: number) {
+  if (!editor?.view?.state) return;
+  const doc = editor.state.doc;
+  const decorations = createSearchDecorations(doc, matches, activeIndex);
+  const tr = editor.state.tr.setMeta(findAndReplacePluginKey, {
+    decorations,
+    matches,
+    activeIndex
+  });
+  editor.view.dispatch(tr);
+}
+
+/**
  * Navigates to a specific match:
  * 1. Re-renders decorations so active match is highlighted with .find-match-active
  * 2. Sets ProseMirror TextSelection to match boundaries
