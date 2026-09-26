@@ -9,7 +9,7 @@ import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { apiFetch } from '@/lib/utils';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
-import { Send, Sparkles, Trash2, Copy, Check, ArrowLeft, Bot, User as UserIcon, FileText } from 'lucide-react';
+import { Send, Sparkles, Trash2, Copy, Check, ArrowLeft, Bot, User as UserIcon, FileText, BookOpen } from 'lucide-react';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { fireConfetti } from '@/components/vfx/confetti';
 
@@ -111,6 +111,27 @@ function AIAssistantContent() {
       setLoading(false);
     }
   };
+
+  if (!projectId) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center min-h-[65vh] text-center p-6 max-w-md mx-auto">
+          <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-4 shadow-sm">
+            <Sparkles className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-serif font-bold mb-2 text-foreground">Trợ lý AI cần ngữ cảnh tác phẩm</h2>
+          <p className="text-xs sm:text-sm text-muted-foreground mb-6 leading-relaxed">
+            Để AI có thể hỗ trợ viết tiếp, biên soạn và phê bình bám sát cốt truyện, bạn hãy mở Trợ lý AI từ thanh công cụ bên trong bản thảo tác phẩm.
+          </p>
+          <Link href="/projects">
+            <Button className="font-semibold shadow-md shadow-primary/20">
+              <BookOpen className="w-4 h-4 mr-2" /> Đến Kệ Sách Sáng Tác
+            </Button>
+          </Link>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

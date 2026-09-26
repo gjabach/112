@@ -30,31 +30,57 @@ export const useAuthStore = create<AuthState>()(
       setAuth: (user, token) => {
         if (typeof window !== 'undefined') {
           localStorage.setItem('token', token);
+          const emailClean = (user.email || '').trim().toLowerCase();
+          const existingKey = (user.aiApiKey || '').trim() 
+            || (localStorage.getItem('ai_api_key') || '').trim() 
+            || (emailClean ? (localStorage.getItem(`novelist_api_key_${emailClean}`) || '').trim() : '');
+
+          if (existingKey) {
+            user.aiApiKey = existingKey;
+            localStorage.setItem('ai_api_key', existingKey);
+            if (emailClean) localStorage.setItem(`novelist_api_key_${emailClean}`, existingKey);
+          }
+
           localStorage.setItem('novelist_current_user', JSON.stringify(user));
           if (user.aiProvider) localStorage.setItem('ai_provider', user.aiProvider);
           if (user.aiModel) localStorage.setItem('ai_model', user.aiModel);
-          if (user.aiApiKey) localStorage.setItem('ai_api_key', user.aiApiKey);
-          else localStorage.removeItem('ai_api_key');
         }
         set({ user, token, isAuthenticated: true });
       },
       logout: () => {
         if (typeof window !== 'undefined') {
+          // Backup current API key with user email before logging out
+          try {
+            const userStr = localStorage.getItem('novelist_current_user');
+            if (userStr) {
+              const u = JSON.parse(userStr);
+              const emailClean = (u.email || '').trim().toLowerCase();
+              const currentKey = (localStorage.getItem('ai_api_key') || u.aiApiKey || '').trim();
+              if (emailClean && currentKey) {
+                localStorage.setItem(`novelist_api_key_${emailClean}`, currentKey);
+              }
+            }
+          } catch {}
           localStorage.removeItem('token');
           localStorage.removeItem('novelist_current_user');
-          localStorage.removeItem('ai_api_key');
+          // Preserve ai_api_key in localStorage so logging out and back in never loses the user's key
         }
         set({ user: null, token: null, isAuthenticated: false });
       },
       setUser: (user) => {
         if (typeof window !== 'undefined') {
+          const emailClean = (user.email || '').trim().toLowerCase();
+          const cleanKey = (user.aiApiKey || '').trim();
+          if (cleanKey) {
+            localStorage.setItem('ai_api_key', cleanKey);
+            if (emailClean) localStorage.setItem(`novelist_api_key_${emailClean}`, cleanKey);
+          } else if (user.aiApiKey === '') {
+            localStorage.removeItem('ai_api_key');
+            if (emailClean) localStorage.removeItem(`novelist_api_key_${emailClean}`);
+          }
           localStorage.setItem('novelist_current_user', JSON.stringify(user));
           if (user.aiProvider) localStorage.setItem('ai_provider', user.aiProvider);
           if (user.aiModel) localStorage.setItem('ai_model', user.aiModel);
-          if (user.aiApiKey !== undefined) {
-            if (user.aiApiKey) localStorage.setItem('ai_api_key', user.aiApiKey);
-            else localStorage.removeItem('ai_api_key');
-          }
         }
         set({ user });
       }

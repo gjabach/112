@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { apiFetch, formatRelativeTime } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Plus, BookOpen, Search, Trash2, Copy, FileText, Sparkles, Layers } from 'lucide-react';
+import { Plus, BookOpen, Search, Trash2, Copy, FileText, Sparkles, Layers, Edit3, Upload, Image as ImageIcon, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { BookCoverArt } from '@/components/vfx/book-cover';
@@ -21,6 +21,7 @@ interface Project {
   subtitle?: string;
   description?: string;
   genre?: string;
+  coverUrl?: string;
   status: string;
   wordCount: number;
   chapterCount: number;
@@ -68,13 +69,113 @@ export default function ProjectsPage() {
     return () => window.removeEventListener('novelist-sync-updated', handleSyncUpdated);
   }, []);
 
+  // Edit Project Dialog State
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editForm, setEditForm] = useState({
+    title: '',
+    subtitle: '',
+    description: '',
+    genre: 'fantasy',
+    coverUrl: '',
+    wordCountGoal: 50000,
+    status: 'planning'
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const openEditDialog = (proj: Project) => {
+    setEditingProject(proj);
+    setEditForm({
+      title: proj.title || '',
+      subtitle: proj.subtitle || '',
+      description: proj.description || '',
+      genre: proj.genre || 'fantasy',
+      coverUrl: proj.coverUrl || '',
+      wordCountGoal: proj.wordCountGoal || 50000,
+      status: proj.status || 'planning'
+    });
+    setShowEditDialog(true);
+  };
+
+  const handleCoverImageFile = (file: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Vui lòng chọn file hình ảnh hợp lệ (PNG, JPG, WebP)');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 800;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          const compressed = canvas.toDataURL('image/jpeg', 0.82);
+          setEditForm(prev => ({ ...prev, coverUrl: compressed }));
+          toast.success('Đã tải ảnh bìa lên thành công!');
+        } else {
+          setEditForm(prev => ({ ...prev, coverUrl: dataUrl }));
+        }
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveProjectEdit = async () => {
+    if (!editingProject) return;
+    if (!editForm.title.trim()) {
+      toast.error('Tên tác phẩm không được để trống');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await apiFetch(`/api/projects/${editingProject.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          title: editForm.title.trim(),
+          subtitle: editForm.subtitle.trim(),
+          description: editForm.description.trim(),
+          genre: editForm.genre,
+          coverUrl: editForm.coverUrl.trim(),
+          wordCountGoal: Number(editForm.wordCountGoal) || 50000,
+          status: editForm.status
+        })
+      });
+      toast.success('Đã cập nhật thông tin tác phẩm thành công!');
+      setShowEditDialog(false);
+      setEditingProject(null);
+      fetchProjects();
+    } catch (e: any) {
+      toast.error('Lỗi khi lưu: ' + (e.message || 'Không xác định'));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const createProject = async () => {
     if (!newProject.title.trim()) {
       toast.error('Vui lòng nhập tên dự án');
       return;
     }
     try {
-      await apiFetch('/api/projects', {
+      const res = await apiFetch('/api/projects', {
         method: 'POST',
         body: JSON.stringify({
           title: newProject.title,
@@ -84,11 +185,15 @@ export default function ProjectsPage() {
           status: 'planning'
         })
       });
-      toast.success('Tạo dự án thành công!');
+      toast.success('Tạo dự án thành công! Bạn có thể chỉnh sửa bìa và thông tin chi tiết ngay bây giờ.');
       fireConfetti({ type: 'celebration' });
       setShowNewDialog(false);
+      const created = res?.project;
       setNewProject({ title: '', description: '', genre: 'fantasy', template: 'fantasy' });
-      fetchProjects();
+      await fetchProjects();
+      if (created) {
+        openEditDialog(created);
+      }
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -228,6 +333,7 @@ export default function ProjectsPage() {
                       <BookCoverArt
                         title={project.title}
                         genre={project.genre}
+                        coverUrl={project.coverUrl}
                         wordCount={project.wordCount}
                         size="sm"
                         className="group-hover/cover:scale-105 transition-transform duration-300"
@@ -245,6 +351,15 @@ export default function ProjectsPage() {
                           </Link>
                           {/* Actions */}
                           <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-muted-foreground hover:text-primary"
+                              title="Chỉnh sửa thông tin tác phẩm (Tên, Bìa, Thể loại, Tóm tắt...)"
+                              onClick={() => openEditDialog(project)}
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -411,6 +526,176 @@ export default function ProjectsPage() {
                 Tạo tiểu thuyết
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Project Modal */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent onClose={() => setShowEditDialog(false)} className="glass-card sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl flex items-center gap-2">
+              <Edit3 className="w-5 h-5 text-primary" />
+              <span>Chỉnh sửa thông tin tác phẩm</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Tùy chỉnh tên, ảnh bìa, thể loại, thông tin tóm tắt và mục tiêu sáng tác
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 pt-2">
+            {/* Left: Live Book Cover Preview & Upload */}
+            <div className="md:col-span-5 flex flex-col items-center text-center space-y-3 p-3 rounded-2xl bg-muted/20 border border-border/50">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Xem trước bìa sách</span>
+              <BookCoverArt
+                title={editForm.title}
+                genre={editForm.genre}
+                coverUrl={editForm.coverUrl}
+                author={editForm.subtitle || 'Tác giả'}
+                size="md"
+              />
+              <div className="w-full space-y-2 pt-2">
+                <label
+                  htmlFor="cover-upload-input"
+                  className="cursor-pointer flex items-center justify-center gap-1.5 w-full py-1.5 px-3 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-all duration-200"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Tải ảnh từ máy tính</span>
+                  <input
+                    id="cover-upload-input"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={e => {
+                      if (e.target.files?.[0]) {
+                        handleCoverImageFile(e.target.files[0]);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </label>
+
+                {editForm.coverUrl && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-xs text-muted-foreground hover:text-destructive h-7"
+                    onClick={() => setEditForm(prev => ({ ...prev, coverUrl: '' }))}
+                  >
+                    <X className="w-3.5 h-3.5 mr-1" /> Dùng bìa đồ họa mặc định
+                  </Button>
+                )}
+                <p className="text-[10px] text-muted-foreground leading-relaxed px-1">
+                  💡 Hỗ trợ tải file ảnh trực tiếp hoặc dán đường dẫn link ảnh online bên cạnh.
+                </p>
+              </div>
+            </div>
+
+            {/* Right: Metadata Form Fields */}
+            <div className="md:col-span-7 space-y-3.5">
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1">Tên tiểu thuyết *</label>
+                <Input
+                  placeholder="Ví dụ: Thiên Mệnh Kỷ, Đêm Trăng Máu..."
+                  value={editForm.title}
+                  onChange={e => setEditForm({ ...editForm, title: e.target.value })}
+                  className="bg-card/70 font-semibold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-foreground block mb-1">Thể loại tác phẩm</label>
+                  <select
+                    className="flex h-9 w-full rounded-lg border border-input bg-card/70 px-3 text-xs"
+                    value={editForm.genre}
+                    onChange={e => setEditForm({ ...editForm, genre: e.target.value })}
+                  >
+                    <option value="fantasy">Huyền Huyễn (Fantasy)</option>
+                    <option value="scifi">Khoa Huyễn (Sci-Fi)</option>
+                    <option value="romance">Lãng Mạn (Romance)</option>
+                    <option value="mystery">Trinh Thám (Mystery)</option>
+                    <option value="thriller">Giật Gân (Thriller)</option>
+                    <option value="horror">Kinh Dị (Horror)</option>
+                    <option value="literary">Văn Học (Literary)</option>
+                    <option value="historical">Lịch Sử (Historical)</option>
+                    <option value="blank">Chung / Tự do</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-foreground block mb-1">Trạng thái sáng tác</label>
+                  <select
+                    className="flex h-9 w-full rounded-lg border border-input bg-card/70 px-3 text-xs"
+                    value={editForm.status}
+                    onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+                  >
+                    <option value="planning">Đang lập dàn ý</option>
+                    <option value="drafting">Đang sáng tác</option>
+                    <option value="revising">Đang biên tập</option>
+                    <option value="completed">Đã hoàn thành</option>
+                    <option value="published">Đã xuất bản</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1">Link ảnh bìa online (URL)</label>
+                <Input
+                  placeholder="https://images.unsplash.com/... hoặc link ảnh"
+                  value={editForm.coverUrl.startsWith('data:') ? '(Ảnh đã tải lên từ máy tính)' : editForm.coverUrl}
+                  disabled={editForm.coverUrl.startsWith('data:')}
+                  onChange={e => setEditForm({ ...editForm, coverUrl: e.target.value })}
+                  className="bg-card/70 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1">Phụ đề / Bút danh tác giả</label>
+                <Input
+                  placeholder="Ví dụ: Cuốn 1 - Bút danh tác giả..."
+                  value={editForm.subtitle}
+                  onChange={e => setEditForm({ ...editForm, subtitle: e.target.value })}
+                  className="bg-card/70 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1">Tóm tắt tác phẩm (Synopsis)</label>
+                <Textarea
+                  placeholder="Giới thiệu bối cảnh, nhân vật chính, xung đột mở đầu cốt truyện..."
+                  value={editForm.description}
+                  onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                  className="bg-card/70 h-20 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-foreground block mb-1">Mục tiêu số từ dự kiến</label>
+                <Input
+                  type="number"
+                  placeholder="50000"
+                  value={editForm.wordCountGoal}
+                  onChange={e => setEditForm({ ...editForm, wordCountGoal: parseInt(e.target.value) || 0 })}
+                  className="bg-card/70 text-xs"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t mt-2">
+            <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>
+              Hủy
+            </Button>
+            <Button
+              size="sm"
+              onClick={saveProjectEdit}
+              disabled={savingEdit || !editForm.title.trim()}
+              className="bg-primary hover:bg-primary/90 font-semibold"
+            >
+              {savingEdit ? 'Đang lưu...' : 'Lưu thay đổi'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

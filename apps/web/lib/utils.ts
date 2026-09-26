@@ -453,9 +453,13 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     }
 
     const { password, passwordHash, ...safeUser } = user;
-    safeUser.aiProvider = safeUser.aiProvider || 'gemini';
-    safeUser.aiModel = safeUser.aiModel || 'gemini-3.8-flash';
-    safeUser.aiApiKey = safeUser.aiApiKey || '';
+    safeUser.aiProvider = safeUser.aiProvider || (typeof window !== 'undefined' ? (localStorage.getItem('ai_provider') || 'gemini') : 'gemini');
+    safeUser.aiModel = safeUser.aiModel || (typeof window !== 'undefined' ? (localStorage.getItem('ai_model') || 'gemini-3.8-flash') : 'gemini-3.8-flash');
+    
+    // Safely preserve existing API key across logins
+    const savedKey = (safeUser.aiApiKey || '').trim() 
+      || (typeof window !== 'undefined' ? (localStorage.getItem('ai_api_key') || localStorage.getItem(`novelist_api_key_${cleanEmail}`) || '') : '');
+    safeUser.aiApiKey = savedKey;
 
     // Apply this user's specific AI settings to current session
     try {
@@ -463,8 +467,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       localStorage.setItem('ai_model', safeUser.aiModel);
       if (safeUser.aiApiKey) {
         localStorage.setItem('ai_api_key', safeUser.aiApiKey);
-      } else {
-        localStorage.removeItem('ai_api_key');
+        localStorage.setItem(`novelist_api_key_${cleanEmail}`, safeUser.aiApiKey);
       }
     } catch {}
 
@@ -516,8 +519,10 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       try {
         if (cleanKey) {
           localStorage.setItem('ai_api_key', cleanKey);
+          if (user.email) localStorage.setItem(`novelist_api_key_${user.email.trim().toLowerCase()}`, cleanKey);
         } else {
           localStorage.removeItem('ai_api_key');
+          if (user.email) localStorage.removeItem(`novelist_api_key_${user.email.trim().toLowerCase()}`);
         }
       } catch {}
       user.aiApiKey = cleanKey;
@@ -525,12 +530,22 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
     setStorage('novelist_current_user', user);
 
-    // Keep user updated in novelist_users store
+    // Keep user updated in novelist_users store & sync to cloud
     const users = getStorage('novelist_users', []);
-    const idx = users.findIndex((u: any) => u.id === user.id || u.email === user.email);
+    const userEmailClean = (user.email || '').trim().toLowerCase();
+    const idx = users.findIndex((u: any) => u.id === user.id || (u.email && u.email.trim().toLowerCase() === userEmailClean));
     if (idx !== -1) {
       users[idx] = { ...users[idx], ...user };
       setStorage('novelist_users', users);
+
+      try {
+        const { userKey } = await getCloudAccountKeys(userEmailClean);
+        fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(users[idx])
+        }).catch(() => {});
+      } catch {}
     }
 
     return { success: true, user };
@@ -577,6 +592,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
     const sanitized = userProjects.map((p: any) => ({
       ...p,
+      coverUrl: p.coverUrl || '',
       wordCount: p.wordCount ?? 0,
       chapterCount: p.chapterCount ?? 0,
       status: p.status || 'planning',
@@ -596,6 +612,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       title: body.title || 'Tiểu thuyết mới',
       subtitle: body.subtitle || '',
       description: body.description || '',
+      coverUrl: body.coverUrl || '',
       genre: body.genre || 'fantasy',
       status: body.status || 'planning',
       wordCount: 0,
@@ -1420,7 +1437,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   // 2. In browser, try relative path on the same host (e.g. Next.js API routes on Vercel)
-  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/auth/settings') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
+  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
     try {
       const token = localStorage.getItem('token');
       const headers: Record<string, string> = {

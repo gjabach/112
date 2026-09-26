@@ -12,7 +12,18 @@ export function getAISettings(): AISettings {
     return { provider: 'gemini', model: 'gemini-3.8-flash', apiKey: '' };
   }
   const provider = (localStorage.getItem('ai_provider') as AIProviderName) || 'gemini';
-  const apiKey = (localStorage.getItem('ai_api_key') || '').trim();
+  let apiKey = (localStorage.getItem('ai_api_key') || '').trim();
+  if (!apiKey) {
+    try {
+      const userStr = localStorage.getItem('novelist_current_user');
+      if (userStr) {
+        const u = JSON.parse(userStr);
+        const emailClean = (u.email || '').trim().toLowerCase();
+        apiKey = (u.aiApiKey || (emailClean ? localStorage.getItem(`novelist_api_key_${emailClean}`) : '') || '').trim();
+        if (apiKey) localStorage.setItem('ai_api_key', apiKey);
+      }
+    } catch {}
+  }
   let model = (localStorage.getItem('ai_model') || '').trim();
 
   // Clean up any legacy or deprecated models and migrate to gemini-3.8-flash
@@ -40,6 +51,14 @@ export function saveAISettings(settings: Partial<AISettings>): void {
   if (settings.apiKey !== undefined) {
     const cleanedKey = settings.apiKey.trim();
     localStorage.setItem('ai_api_key', cleanedKey);
+    try {
+      const userStr = localStorage.getItem('novelist_current_user');
+      if (userStr) {
+        const u = JSON.parse(userStr);
+        const emailClean = (u.email || '').trim().toLowerCase();
+        if (emailClean) localStorage.setItem(`novelist_api_key_${emailClean}`, cleanedKey);
+      }
+    } catch {}
   }
 
   // Sync to novelist_current_user

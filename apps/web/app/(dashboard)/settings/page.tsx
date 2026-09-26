@@ -42,7 +42,10 @@ export default function SettingsPage() {
     // 1. Load from localStorage first
     const savedProvider = localStorage.getItem('ai_provider');
     const savedModel = localStorage.getItem('ai_model');
-    const savedKey = localStorage.getItem('ai_api_key');
+    const emailClean = (user?.email || '').trim().toLowerCase();
+    const savedKey = (localStorage.getItem('ai_api_key') || '').trim() 
+      || (emailClean ? (localStorage.getItem(`novelist_api_key_${emailClean}`) || '').trim() : '')
+      || (user?.aiApiKey || '').trim();
 
     let activeModel = savedModel;
     const deprecatedModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'];
@@ -72,10 +75,18 @@ export default function SettingsPage() {
     }
     setLoading(true);
     try {
-      // 1. Save directly to localStorage for instant reliability
+      const emailClean = (user?.email || '').trim().toLowerCase();
+
+      // 1. Save directly to localStorage for instant reliability & multi-tier resilience
       localStorage.setItem('ai_provider', aiProvider);
       localStorage.setItem('ai_model', aiModel);
-      if (cleanKey) localStorage.setItem('ai_api_key', cleanKey);
+      if (cleanKey) {
+        localStorage.setItem('ai_api_key', cleanKey);
+        if (emailClean) localStorage.setItem(`novelist_api_key_${emailClean}`, cleanKey);
+      } else {
+        localStorage.removeItem('ai_api_key');
+        if (emailClean) localStorage.removeItem(`novelist_api_key_${emailClean}`);
+      }
 
       // 2. Sync to auth store
       if (user) {
@@ -87,7 +98,34 @@ export default function SettingsPage() {
         });
       }
 
-      // 3. Call apiFetch to sync with backend / localApi
+      // 3. Keep updated in novelist_users store & sync to cloud KV
+      try {
+        const usersStr = localStorage.getItem('novelist_users');
+        if (usersStr) {
+          const users = JSON.parse(usersStr);
+          if (Array.isArray(users)) {
+            const idx = users.findIndex((u: any) => u.id === user?.id || (u.email && u.email.trim().toLowerCase() === emailClean));
+            if (idx !== -1) {
+              users[idx].aiProvider = aiProvider;
+              users[idx].aiModel = aiModel;
+              users[idx].aiApiKey = cleanKey;
+              localStorage.setItem('novelist_users', JSON.stringify(users));
+
+              if (emailClean) {
+                const { getCloudAccountKeys } = await import('@/lib/sync');
+                const { userKey } = await getCloudAccountKeys(emailClean);
+                fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(users[idx])
+                }).catch(() => {});
+              }
+            }
+          }
+        }
+      } catch {}
+
+      // 4. Call apiFetch to sync with backend / localApi
       await apiFetch('/api/auth/settings', {
         method: 'PATCH',
         body: JSON.stringify({
@@ -125,12 +163,26 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (data.success) {
+        const finalModel = (data.autoAdjusted && data.model) ? data.model : aiModel;
         if (data.autoAdjusted && data.model) {
           setAiModel(data.model);
           localStorage.setItem('ai_model', data.model);
         }
+
+        // Auto-save verified settings so they are never lost
+        const emailClean = (user?.email || '').trim().toLowerCase();
+        localStorage.setItem('ai_provider', aiProvider);
+        localStorage.setItem('ai_model', finalModel);
+        if (cleanKey) {
+          localStorage.setItem('ai_api_key', cleanKey);
+          if (emailClean) localStorage.setItem(`novelist_api_key_${emailClean}`, cleanKey);
+        }
+        if (user) {
+          setUser({ ...user, aiProvider, aiModel: finalModel, aiApiKey: cleanKey });
+        }
+
         setTestResult({ success: true, message: data.message });
-        toast.success(data.message);
+        toast.success(data.message + ' (Đã tự động lưu cấu hình)');
       } else {
         setTestResult({ success: false, message: data.error || 'Kiểm tra thất bại' });
         toast.error(data.error || 'Kiểm tra kết nối thất bại');
@@ -335,7 +387,20 @@ export default function SettingsPage() {
               <label className="text-sm font-medium mb-2 block">API Key {aiProvider !== 'ollama' && '*'}</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <Input type={showKey ? 'text' : 'password'} placeholder={aiProvider === 'ollama' ? 'http://localhost:11434 (optional)' : `sk-... hoặc API key của ${aiProvider}`} value={apiKey} onChange={e => setApiKey(e.target.value)} />
+                  <Input 
+                    type={showKey ? 'text' : 'password'} 
+                    placeholder={aiProvider === 'ollama' ? 'http://localhost:11434 (optional)' : `sk-... hoặc API key của ${aiProvider}`} 
+                    value={apiKey} 
+                    onChange={e => {
+                      const val = e.target.value;
+                      setApiKey(val);
+                      const clean = val.trim();
+                      if (clean) {
+                        localStorage.setItem('ai_api_key', clean);
+                        if (user?.email) localStorage.setItem(`novelist_api_key_${user.email.trim().toLowerCase()}`, clean);
+                      }
+                    }} 
+                  />
                   <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">{showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
                 </div>
               </div>

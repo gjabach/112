@@ -7,6 +7,7 @@ interface BookCoverProps {
   title: string;
   genre?: string;
   author?: string;
+  coverUrl?: string | null;
   wordCount?: number;
   className?: string;
   size?: 'sm' | 'md' | 'lg';
@@ -91,10 +92,14 @@ export function BookCoverArt({
   title,
   genre = 'fantasy',
   author = 'Tác giả',
+  coverUrl,
   wordCount,
   className = '',
   size = 'md',
 }: BookCoverProps) {
+  const [imgError, setImgError] = React.useState(false);
+  const hasCustomCover = Boolean(coverUrl && !imgError);
+
   const normalizedGenre = (genre || 'fantasy').toLowerCase();
   const style = GENRE_STYLES[normalizedGenre] || GENRE_STYLES.fantasy;
   const IconComponent = style.icon;
@@ -107,7 +112,7 @@ export function BookCoverArt({
 
   return (
     <div
-      className={`relative select-none rounded-xl overflow-hidden shadow-xl border bg-gradient-to-br ${style.bg} ${style.border} ${sizeClasses[size]} ${className} flex flex-col justify-between group-hover:shadow-2xl transition-all duration-300 shrink-0`}
+      className={`relative select-none rounded-xl overflow-hidden shadow-xl border ${hasCustomCover ? 'border-border/60 bg-black' : `bg-gradient-to-br ${style.bg} ${style.border}`} ${sizeClasses[size]} ${className} flex flex-col justify-between group-hover:shadow-2xl transition-all duration-300 shrink-0`}
       style={{
         boxShadow:
           size === 'sm'
@@ -115,38 +120,55 @@ export function BookCoverArt({
             : '0 10px 30px -5px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.15)',
       }}
     >
+      {/* If custom cover image is set */}
+      {hasCustomCover && (
+        <img
+          src={coverUrl!}
+          alt={title || 'Bìa sách'}
+          onError={() => setImgError(true)}
+          className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+        />
+      )}
+
       {/* Simulated 3D Book Spine Left highlight */}
-      <div className="absolute top-0 bottom-0 left-0 w-2.5 bg-gradient-to-r from-black/40 via-white/10 to-transparent pointer-events-none z-10" />
+      <div className="absolute top-0 bottom-0 left-0 w-2.5 bg-gradient-to-r from-black/50 via-white/15 to-transparent pointer-events-none z-20" />
+
+      {/* When custom cover is used, provide subtle gradient overlay for legibility */}
+      {hasCustomCover && (
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-black/60 pointer-events-none z-10" />
+      )}
 
       {/* Decorative celestial background watermark */}
-      <div className="absolute -right-4 -bottom-4 opacity-15 pointer-events-none">
-        <IconComponent className={size === 'sm' ? 'w-16 h-16' : 'w-28 h-28'} />
-      </div>
+      {!hasCustomCover && (
+        <div className="absolute -right-4 -bottom-4 opacity-15 pointer-events-none">
+          <IconComponent className={size === 'sm' ? 'w-16 h-16' : 'w-28 h-28'} />
+        </div>
+      )}
 
       {/* Header of book cover */}
-      <div className="z-10 flex items-center justify-between">
-        <div className="flex items-center gap-1">
+      <div className="z-20 flex items-center justify-between">
+        <div className="flex items-center gap-1 bg-black/30 backdrop-blur-xs px-1.5 py-0.5 rounded-full">
           <IconComponent className={`w-3.5 h-3.5 ${style.textAccent}`} />
-          <span className="text-[10px] uppercase tracking-wider font-semibold opacity-75 text-white">
+          <span className="text-[10px] uppercase tracking-wider font-semibold opacity-90 text-white">
             {style.motifName}
           </span>
         </div>
-        <div className="w-1.5 h-1.5 rounded-full bg-white/40" />
+        <div className="w-1.5 h-1.5 rounded-full bg-white/60" />
       </div>
 
       {/* Center Title */}
-      <div className="z-10 my-auto py-2">
-        <h4 className="font-serif font-bold text-white leading-tight line-clamp-3 tracking-tight drop-shadow-md">
+      <div className="z-20 my-auto py-2">
+        <h4 className="font-serif font-bold text-white leading-tight line-clamp-3 tracking-tight drop-shadow-lg">
           {title || 'Chưa đặt tên'}
         </h4>
-        <div className="w-8 h-0.5 bg-white/30 rounded-full mt-2" />
+        <div className="w-8 h-0.5 bg-white/40 rounded-full mt-2" />
       </div>
 
       {/* Footer: Author & Word Count */}
-      <div className="z-10 border-t border-white/10 pt-1.5 flex items-center justify-between text-[10px] text-white/70">
+      <div className="z-20 border-t border-white/20 pt-1.5 flex items-center justify-between text-[10px] text-white/90">
         <span className="truncate max-w-[70%] font-medium">{author}</span>
         {wordCount !== undefined && (
-          <span className="font-mono text-[9px] opacity-80 shrink-0">
+          <span className="font-mono text-[9px] opacity-90 shrink-0">
             {wordCount >= 1000 ? `${(wordCount / 1000).toFixed(1)}k` : wordCount} từ
           </span>
         )}

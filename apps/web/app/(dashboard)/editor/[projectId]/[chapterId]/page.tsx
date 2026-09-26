@@ -60,7 +60,24 @@ export default function ChapterEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
-  const [showInspector, setShowInspector] = useState(false);
+  const [showInspector, setShowInspector] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('novelist_editor_inspector');
+      if (saved !== null) return saved === 'true';
+      return window.innerWidth >= 1024;
+    }
+    return true;
+  });
+
+  const toggleInspector = () => {
+    setShowInspector(prev => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('novelist_editor_inspector', String(next));
+      }
+      return next;
+    });
+  };
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -379,9 +396,9 @@ export default function ChapterEditorPage() {
 
   return (
     <MechKeyboardProvider>
-    <div className={`min-h-screen bg-background flex flex-col ${focusMode ? 'focus-mode' : ''}`}>
+    <div className={`h-screen max-h-screen overflow-hidden bg-background flex flex-col ${focusMode ? 'focus-mode' : ''}`}>
       {/* Header */}
-      <header className="border-b bg-card sticky top-0 z-20 shadow-xs">
+      <header className="border-b bg-card/95 backdrop-blur-sm shrink-0 z-30 shadow-xs">
         <div className="flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 max-w-[1600px] mx-auto w-full">
           <Link href={`/editor/${projectId}`}>
             <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" title="Quay lại mục lục">
@@ -505,12 +522,13 @@ export default function ChapterEditorPage() {
             {/* Inspector Toggle */}
             <Button
               variant={showInspector ? "secondary" : "ghost"}
-              size="icon"
-              className="h-7 w-7 sm:h-8 sm:w-8"
-              onClick={() => setShowInspector(!showInspector)}
-              title="Thông tin chương"
+              size="sm"
+              className={`h-7 sm:h-8 px-2 sm:px-2.5 text-xs font-medium ${showInspector ? 'bg-primary/15 text-primary border border-primary/30' : ''}`}
+              onClick={toggleInspector}
+              title={showInspector ? "Ẩn thông số chương & Trợ lý AI" : "Hiện thông số chương & Trợ lý AI"}
             >
-              <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <FileText className="w-3.5 h-3.5 sm:mr-1 text-primary" />
+              <span className="hidden sm:inline">Thông số & AI</span>
             </Button>
 
             {/* Save Button */}
@@ -529,12 +547,12 @@ export default function ChapterEditorPage() {
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Editor Canvas with optional Zen Spotlight and silky smooth chapter transition */}
-        <main className={`flex-1 overflow-auto relative ${typewriterMode ? 'flex items-center' : ''} ${spotlightActive ? 'zen-spotlight' : ''}`}>
+      <div className="flex-1 flex overflow-hidden min-h-0 relative">
+        {/* Editor Canvas with independently scrolling text and docked top toolbar */}
+        <main className={`flex-1 flex flex-col h-full overflow-hidden min-h-0 relative ${typewriterMode ? 'flex items-center' : ''} ${spotlightActive ? 'zen-spotlight' : ''}`}>
           <div
             key={chapterId}
-            className={`w-full transition-all duration-300 ease-out will-change-transform will-change-opacity ${
+            className={`w-full h-full flex flex-col min-h-0 transition-all duration-300 ease-out will-change-transform will-change-opacity ${
               isSwitching
                 ? switchDirection === 'next'
                   ? 'opacity-0 -translate-x-8 blur-xs pointer-events-none'
@@ -542,7 +560,7 @@ export default function ChapterEditorPage() {
                     ? 'opacity-0 translate-x-8 blur-xs pointer-events-none'
                     : 'opacity-0 scale-98 blur-xs pointer-events-none'
                 : 'opacity-100 translate-x-0 blur-none animate-in fade-in-50 duration-300'
-            } ${typewriterMode ? 'py-[40vh]' : ''}`}
+            }`}
           >
             <EditorErrorBoundary content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này...">
               <TiptapEditor
@@ -581,9 +599,9 @@ export default function ChapterEditorPage() {
           )}
         </main>
 
-        {/* Desktop Inspector Sidebar */}
+        {/* Desktop Inspector Sidebar: Docked, full-height, independent scroll */}
         {showInspector && (
-          <aside className="hidden md:flex w-80 border-l bg-card flex-col inspector overflow-y-auto shrink-0">
+          <aside className="hidden md:flex w-80 h-full border-l bg-card flex-col inspector overflow-y-auto shrink-0 z-10">
             {renderInspectorContent()}
           </aside>
         )}

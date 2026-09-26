@@ -25,7 +25,6 @@ import { SparkleIcon } from '@/components/vfx/magic-sparkles';
 
 const navItems = [
   { href: '/projects', label: 'Dự án', icon: LayoutDashboard },
-  { href: '/ai-assistant', label: 'AI Assistant', icon: Sparkles },
   { href: '/settings', label: 'Cài đặt', icon: Settings },
 ];
 
@@ -116,15 +115,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         >
           <LayoutDashboard className="w-4 h-4" />
           <span>Dự án</span>
-        </Link>
-        <Link 
-          href="/ai-assistant" 
-          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 transition-all active:scale-95 ${
-            pathname.startsWith('/ai-assistant') ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Sparkles className="w-4 h-4" />
-          <span>AI</span>
         </Link>
         <Link 
           href="/settings" 
