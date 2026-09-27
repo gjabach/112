@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getCloudAccountKeys, mergeWorkspaces, unwrapWorkspace, normalizeEmail } from '@/lib/sync-core';
 
 export const runtime = 'edge';
 
@@ -15,10 +16,11 @@ function getUserSyncIdentifier(authHeader: string): string {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const queryKey = searchParams.get('key') || searchParams.get('dataKey');
+    const queryKey = searchParams.get('key') || searchParams.get('dataKey') || '';
+    const queryEmail = normalizeEmail(searchParams.get('email') || '');
     const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
 
-    if (!queryKey && (!authHeader || !authHeader.toLowerCase().startsWith('bearer '))) {
+    if (!queryKey && !queryEmail && (!authHeader || !authHeader.toLowerCase().startsWith('bearer '))) {
       return NextResponse.json({
         success: false,
         error: 'Yêu cầu đăng nhập hoặc cung cấp khóa đồng bộ'
@@ -37,57 +39,93 @@ export async function GET(req: NextRequest) {
             'Accept': 'application/json'
           }
         });
-        if (res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (res.ok && ct.includes('application/json')) {
           return NextResponse.json(await res.json());
         }
       } catch {}
     }
 
-    // 2. Persistent cloud store lookup
-    const rawKey = queryKey || getUserSyncIdentifier(authHeader || '');
+    // 2. Build exhaustive list of candidate keys across primary SHA-256, legacy, aliases, and token
+    const tokenIdentifier = getUserSyncIdentifier(authHeader || '');
+    const rawKey = queryKey || tokenIdentifier;
     const targetKey = rawKey.startsWith('d_') ? rawKey : `d_${rawKey}`;
 
-    try {
-      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${targetKey}`);
-      if (res.ok) {
-        const stored = await res.json();
-        if (stored) {
-          const unwrapped = (stored.data && typeof stored.data === 'object' && (stored.data.projects || stored.data.chapters))
-            ? stored.data
-            : stored;
+    const candidateKeys = new Set<string>();
+    if (targetKey) candidateKeys.add(targetKey);
+    if (queryKey) {
+      candidateKeys.add(queryKey.startsWith('d_') ? queryKey : `d_${queryKey}`);
+      candidateKeys.add(queryKey.replace(/^d_/, ''));
+    }
 
-          return NextResponse.json({
-            success: true,
-            key: targetKey,
-            lastModified: stored.lastModified || unwrapped.lastModified || 0,
-            data: unwrapped,
-            source: 'cloud'
-          });
-        }
+    // If email is provided or known
+    if (queryEmail) {
+      const keys = getCloudAccountKeys(queryEmail, tokenIdentifier);
+      keys.candidateKeys.forEach(k => candidateKeys.add(k));
+    }
+
+    if (tokenIdentifier && tokenIdentifier !== 'anonymous') {
+      candidateKeys.add(`d_token_${tokenIdentifier}`);
+      candidateKeys.add(`d_${tokenIdentifier}`);
+    }
+
+    // 3. Concurrently fetch all candidate keys from KVDB and Edge in-memory cache
+    const fetchedCandidates: any[] = [];
+
+    const keyList = Array.from(candidateKeys);
+    const fetchPromises = keyList.map(async (k) => {
+      // Check memory store first
+      const mem = secureSyncMemoryStore.get(k);
+      if (mem && mem.data) {
+        const unwrapped = unwrapWorkspace(mem.data);
+        if (unwrapped) fetchedCandidates.push(unwrapped);
       }
-    } catch {}
 
-    const stored = secureSyncMemoryStore.get(targetKey);
+      // Check persistent KVDB store
+      try {
+        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.trim().length > 2) {
+            try {
+              const parsed = JSON.parse(text);
+              const unwrapped = unwrapWorkspace(parsed);
+              if (unwrapped) {
+                fetchedCandidates.push(unwrapped);
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    });
 
-    if (stored) {
-      const unwrapped = (stored.data && typeof stored.data === 'object' && (stored.data.projects || stored.data.chapters))
-        ? stored.data
-        : stored;
+    await Promise.allSettled(fetchPromises);
+
+    if (fetchedCandidates.length === 0) {
       return NextResponse.json({
         success: true,
         key: targetKey,
-        lastModified: stored.lastModified,
-        data: unwrapped,
-        source: 'cloud'
+        lastModified: 0,
+        data: null,
+        message: 'Chưa có bản đồng bộ nào cho tài khoản này'
       });
+    }
+
+    // 4. Smart-merge all found candidates so NO chapters or edits are missed
+    let unifiedRemote = fetchedCandidates[0];
+    for (let i = 1; i < fetchedCandidates.length; i++) {
+      const { merged } = mergeWorkspaces(unifiedRemote, fetchedCandidates[i]);
+      unifiedRemote = merged;
     }
 
     return NextResponse.json({
       success: true,
       key: targetKey,
-      lastModified: 0,
-      data: null,
-      message: 'Chưa có bản đồng bộ nào cho tài khoản này'
+      lastModified: unifiedRemote.lastModified || Date.now(),
+      data: unifiedRemote,
+      source: 'cloud'
     });
   } catch (error: any) {
     return NextResponse.json({
@@ -129,61 +167,103 @@ export async function POST(req: NextRequest) {
           },
           body: JSON.stringify(body)
         });
-        if (res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (res.ok && ct.includes('application/json')) {
           return NextResponse.json(await res.json());
         }
       } catch {}
     }
 
-    // 2. Safe Edge in-memory & cloud store persistence
-    const rawKey = bodyKey || getUserSyncIdentifier(authHeader || '');
+    // 2. Extract account keys
+    const tokenIdentifier = getUserSyncIdentifier(authHeader || '');
+    const rawKey = bodyKey || tokenIdentifier;
     const targetKey = rawKey.startsWith('d_') ? rawKey : `d_${rawKey}`;
-    const lastModified = body.lastModified || Date.now();
+    const incomingLastModified = Number(body.lastModified || data.lastModified || Date.now());
     const now = Date.now();
 
+    const email = normalizeEmail(data?.user?.email || (typeof body?.email === 'string' ? body.email : ''));
+    const cloudKeys = email ? getCloudAccountKeys(email, tokenIdentifier) : null;
+
+    // 3. SERVER-SIDE SMART MERGE: Check existing cloud data so a device with fewer chapters
+    // NEVER erases chapters written on another device (e.g. PC wrote Chapter 2, phone only had Chapter 1)
+    let existingCloudData: any = null;
+    const keysToCheck = cloudKeys ? cloudKeys.candidateKeys : [targetKey];
+
+    for (const k of keysToCheck) {
+      const mem = secureSyncMemoryStore.get(k);
+      if (mem && mem.data) {
+        existingCloudData = unwrapWorkspace(mem.data);
+        if (existingCloudData) break;
+      }
+      try {
+        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`);
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.trim().length > 2) {
+            const parsed = JSON.parse(text);
+            existingCloudData = unwrapWorkspace(parsed);
+            if (existingCloudData) break;
+          }
+        }
+      } catch {}
+    }
+
+    let finalDataToStore = data;
+    if (existingCloudData) {
+      // Merge existing cloud data with incoming client data
+      const { merged } = mergeWorkspaces(existingCloudData, data);
+      finalDataToStore = merged;
+    }
+
+    const finalLastModified = Math.max(incomingLastModified, Number(existingCloudData?.lastModified || 0), now);
+    finalDataToStore.lastModified = finalLastModified;
+    finalDataToStore.syncedAt = now;
+
+    // Clean payload without double-wrapping
     const storePayload = {
-      ...data,
-      data,
-      lastModified,
+      ...finalDataToStore,
+      lastModified: finalLastModified,
       syncedAt: now
     };
 
+    // Update memory store
     secureSyncMemoryStore.set(targetKey, {
-      lastModified,
+      lastModified: finalLastModified,
       syncedAt: now,
       data: storePayload
     });
 
-    const email = data?.user?.email || (typeof body?.email === 'string' ? body.email : '');
-    const cleanEmail = email ? email.trim().toLowerCase() : '';
-    const legacyKey = cleanEmail ? `d_${cleanEmail.replace(/[^a-z0-9_-]/g, '_')}` : '';
+    // 4. Persist to KVDB cloud store across candidate keys (primary SHA-256 + legacy keys)
+    const targetKeysToPersist = new Set<string>();
+    targetKeysToPersist.add(targetKey);
+    if (cloudKeys) {
+      targetKeysToPersist.add(cloudKeys.dataKey);
+      targetKeysToPersist.add(cloudKeys.legacyKey);
+      targetKeysToPersist.add(cloudKeys.rawLegacyKey);
+    }
 
     try {
       const payloadStr = JSON.stringify(storePayload);
-      await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${targetKey}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: payloadStr
-      });
-
-      if (legacyKey && legacyKey !== targetKey) {
-        await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`, {
+      const putPromises = Array.from(targetKeysToPersist).map(k =>
+        fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: payloadStr
-        }).catch(() => {});
-      }
+        }).catch(() => {})
+      );
+      await Promise.allSettled(putPromises);
     } catch {}
 
-    const projectsCount = Array.isArray(data.projects) ? data.projects.length : 0;
-    const chaptersCount = Array.isArray(data.chapters) ? data.chapters.length : 0;
-    const charactersCount = Array.isArray(data.characters) ? data.characters.length : 0;
+    const projectsCount = Array.isArray(finalDataToStore.projects) ? finalDataToStore.projects.length : 0;
+    const chaptersCount = Array.isArray(finalDataToStore.chapters) ? finalDataToStore.chapters.length : 0;
+    const charactersCount = Array.isArray(finalDataToStore.characters) ? finalDataToStore.characters.length : 0;
 
     return NextResponse.json({
       success: true,
       key: targetKey,
-      lastModified,
+      lastModified: finalLastModified,
       syncedAt: now,
+      data: finalDataToStore,
       stats: {
         projects: projectsCount,
         chapters: chaptersCount,

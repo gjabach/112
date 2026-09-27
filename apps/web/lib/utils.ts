@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush } from './sync';
+import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail, getEmailAliases } from './sync';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -357,7 +357,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
   // Auth - Login
   if (path === '/api/auth/login') {
-    const cleanEmail = (body.email || '').trim().toLowerCase();
+    const cleanEmail = normalizeEmail(body.email || '');
     const cleanPassword = (body.password || '');
     if (!cleanEmail) {
       throw new Error('Vui lòng nhập địa chỉ email.');
@@ -366,24 +366,32 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       throw new Error('Vui lòng nhập mật khẩu.');
     }
 
-    const { userKey, dataKey, legacyKey } = getCloudAccountKeys(cleanEmail);
+    const { userKey, dataKey, legacyKey, candidateKeys } = getCloudAccountKeys(cleanEmail);
+    const emailAliases = getEmailAliases(cleanEmail);
 
     let users = getStorage('novelist_users', []);
-    let user = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
+    let user = users.find((u: any) => {
+      const uEmail = normalizeEmail(u.email);
+      return emailAliases.includes(uEmail);
+    });
 
     // If not found in this device's local storage (e.g. logging into phone for first time), look up from cloud
     if (!user) {
-      try {
-        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`);
-        if (res.ok) {
-          const remoteUser = await res.json();
-          if (remoteUser && remoteUser.email) {
-            user = remoteUser;
-            users.push(user);
-            setStorage('novelist_users', users);
+      const keysToTry = [userKey, ...emailAliases.map(a => `u_${sha256(a + ':novelist_auth_v2')}`)];
+      for (const k of Array.from(new Set(keysToTry))) {
+        try {
+          const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`);
+          if (res.ok) {
+            const remoteUser = await res.json();
+            if (remoteUser && remoteUser.email) {
+              user = remoteUser;
+              users.push(user);
+              setStorage('novelist_users', users);
+              break;
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
     }
 
     if (!user) {
@@ -430,69 +438,33 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     } catch {}
 
     setStorage('novelist_current_user', safeUser);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('token', 'token_' + safeUser.id);
+    }
     
     // CRITICAL: Synchronously pull and smart-merge full workspace (projects, chapters, drafts) from cloud to this device BEFORE returning
     try {
-      let cloudData: any = null;
-      
-      // 1. PRIMARY: Try same-origin /api/sync (never blocked by Brave Shields or CORS on mobile)
-      try {
-        const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data) cloudData = json.data;
-        }
-      } catch (e) {
-        console.warn('[Login Sync] /api/sync fetch failed, trying direct kvdb:', e);
-      }
-
-      // 2. BACKUP: Try direct KVDB primary SHA-256 key
-      if (!cloudData) {
-        try {
-          const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
-          if (res.ok) {
-            const text = await res.text();
-            if (text && text.trim().length > 2) {
-              try { cloudData = JSON.parse(text); } catch {}
-            }
-          }
-        } catch {}
-      }
-
-      // 3. BACKUP: Try legacy key if primary returned nothing
-      if (!cloudData && legacyKey) {
-        try {
-          const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`);
-          if (res.ok) {
-            const text = await res.text();
-            if (text && text.trim().length > 2) {
-              try { cloudData = JSON.parse(text); } catch {}
-            }
-          }
-        } catch {}
-      }
-
-      if (cloudData && typeof cloudData === 'object') {
-        // Unwrap if data is nested inside { data: ... } wrapper (from /api/sync POST format)
-        const unwrapped = (cloudData.data && typeof cloudData.data === 'object' && (cloudData.data.projects || cloudData.data.chapters))
-          ? cloudData.data
-          : cloudData;
-
-        const chCount = Array.isArray(unwrapped.chapters) ? unwrapped.chapters.length : 0;
-        const pCount = Array.isArray(unwrapped.projects) ? unwrapped.projects.length : 0;
-        console.log(`[Login Sync] Cloud data found via ${dataKey}: ${pCount} projects, ${chCount} chapters`);
-        if (unwrapped.chapters) {
-          unwrapped.chapters.forEach((c: any) => console.log(`  [Login] Cloud chapter: ${c.id} - ${c.title}`));
-        }
-
-        importFullWorkspace(unwrapped, true);
-      } else {
-        console.log('[Login Sync] No cloud data found, trying pullSync...');
-        await pullSync(true).catch(() => {});
-      }
+      console.log(`[Login Sync] Performing comprehensive cloud synchronization for ${cleanEmail}...`);
+      await pullSync(true);
     } catch (e) {
       console.warn('Login cloud sync error:', e);
     }
+
+    // Ensure all projects in storage are assigned to this logged-in user if orphaned
+    try {
+      const storedProjects = getStorage('novelist_projects', []);
+      let needsSave = false;
+      const updated = storedProjects.map((p: any) => {
+        if (!p.userId) {
+          needsSave = true;
+          return { ...p, userId: safeUser.id };
+        }
+        return p;
+      });
+      if (needsSave) {
+        setStorage('novelist_projects', updated);
+      }
+    } catch {}
 
     return { user: safeUser, token: 'token_' + safeUser.id };
   }
@@ -1445,20 +1417,22 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         ...options,
         headers
       });
-      if (res.ok) {
+      const ct = res.headers.get('content-type') || '';
+      if (res.ok && ct.includes('application/json')) {
         return await res.json();
       }
-      if (res.status === 404) {
-        // Fall back to local API handler if the route does not exist on this server
+      if (res.status === 404 || (res.ok && ct.includes('text/html'))) {
+        // Fall back to local API handler if the route does not exist or returned SPA index.html
         return await handleLocalApi(path, options);
       }
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
     } catch (e: any) {
-      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('NetworkError')) {
+      if (e instanceof SyntaxError || e.message?.includes('JSON') || !e.message || e.message.includes('fetch') || e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+        // proceed to local fallback
+      } else {
         throw e;
       }
-      // proceed to local fallback
     }
   }
 

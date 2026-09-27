@@ -998,8 +998,92 @@ test('Smart Merge: Merging PC cloud workspace (with Chapter 2) into Mobile (with
   assert.equal(ch1.content, 'Nội dung chương 1 trên PC');
 });
 
+import { mergeWorkspaces, getEmailAliases, getCloudAccountKeys, unwrapWorkspace } from './sync-core.ts';
 
+test('sync-core: getEmailAliases handles Vietnamese Telex autocorrect gjabach <-> giabach', () => {
+  const aliases1 = getEmailAliases('gjabach0508@gmail.com');
+  assert.ok(aliases1.includes('gjabach0508@gmail.com'));
+  assert.ok(aliases1.includes('giabach0508@gmail.com'), 'Must generate giabach alias when given gjabach');
 
+  const aliases2 = getEmailAliases('giabach0508@gmail.com');
+  assert.ok(aliases2.includes('giabach0508@gmail.com'));
+  assert.ok(aliases2.includes('gjabach0508@gmail.com'), 'Must generate gjabach alias when given giabach');
+});
 
+test('sync-core: getCloudAccountKeys generates deterministic multi-candidate keys including token & alias keys', () => {
+  const keys = getCloudAccountKeys('gjabach0508@gmail.com', 'usr_1790312548870_iqn42');
+  assert.equal(keys.dataKey, 'd_ebe074540b53a09b4596c29e6e655bef67e626f4a7ea712aef86866ba5ff10a2');
+  assert.ok(keys.candidateKeys.includes('d_ebe074540b53a09b4596c29e6e655bef67e626f4a7ea712aef86866ba5ff10a2'));
+  assert.ok(keys.candidateKeys.includes('d_gjabach0508_gmail_com'));
+  assert.ok(keys.candidateKeys.includes('d_token_usr_1790312548870_iqn42'));
+  assert.ok(keys.candidateKeys.includes('d_giabach0508_gmail_com'), 'Must include giabach alias candidate key');
+});
 
+test('sync-core: mergeWorkspaces guarantees PC chapters are never wiped when Mobile pushes fewer chapters', () => {
+  const pcState = {
+    version: 2,
+    lastModified: 1720002000,
+    projects: [{ id: 'p1', title: 'Tiểu thuyết lịch sử', chapterCount: 2, wordCount: 9500 }],
+    chapters: [
+      { id: 'ch_lore', projectId: 'p1', title: 'Lore & Bối cảnh', content: 'Lore chi tiết...', wordCount: 1884, orderIndex: 1, updatedAt: 1720001000 },
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: 'Nội dung đầy đủ 9069 chữ...', wordCount: 9069, orderIndex: 2, updatedAt: 1720002000 }
+    ],
+    characters: [{ id: 'c1', name: 'Nhân vật A' }]
+  };
 
+  const mobileStaleState = {
+    version: 2,
+    lastModified: 1720000500,
+    projects: [{ id: 'p1', title: 'Tiểu thuyết lịch sử', chapterCount: 1, wordCount: 100 }],
+    chapters: [
+      { id: 'ch_lore', projectId: 'p1', title: 'Lore & Bối cảnh', content: 'Lore ngắn', wordCount: 100, orderIndex: 1, updatedAt: 1720000500 }
+    ],
+    characters: []
+  };
+
+  // Mobile attempts to push or merge with cloud
+  const { merged, hasRemoteChanges, hasLocalChanges } = mergeWorkspaces(mobileStaleState, pcState);
+
+  assert.equal(merged.chapters.length, 2, 'Both Lore and Chapter 1 must be present');
+  const ch1 = merged.chapters.find(c => c.id === 'ch_1');
+  assert.ok(ch1, 'Chapter 1 from PC must be preserved');
+  assert.equal(ch1.wordCount, 9069);
+
+  const lore = merged.chapters.find(c => c.id === 'ch_lore');
+  assert.equal(lore.content, 'Lore chi tiết...', 'Must prefer richer/newer PC content for Lore');
+
+  // Verify project counters recomputed correctly
+  assert.equal(merged.projects[0].chapterCount, 2);
+  assert.equal(merged.projects[0].wordCount, 1884 + 9069);
+  assert.equal(hasRemoteChanges, true);
+});
+
+test('sync-core: mergeWorkspaces resolves orderIndex collision and recalculates wordCount/chapterCount', () => {
+  // Real edge case found in KVDB: both chapters had orderIndex: 1
+  const cloudWithCollision = {
+    version: 2,
+    projects: [{ id: 'p1', title: 'Trùng lặp Index' }],
+    chapters: [
+      { id: 'c_lore', projectId: 'p1', title: 'Lore', orderIndex: 1, createdAt: 1000, wordCount: 500 },
+      { id: 'c_one', projectId: 'p1', title: 'Chương 1', orderIndex: 1, createdAt: 2000, wordCount: 1500 }
+    ]
+  };
+
+  const { merged } = mergeWorkspaces({}, cloudWithCollision);
+  assert.equal(merged.chapters.length, 2);
+  const sorted = merged.chapters.sort((a, b) => a.orderIndex - b.orderIndex);
+  assert.equal(sorted[0].orderIndex, 1);
+  assert.equal(sorted[1].orderIndex, 2, 'Collision must be normalized to sequential orderIndex (1, 2)');
+  assert.equal(merged.projects[0].chapterCount, 2);
+  assert.equal(merged.projects[0].wordCount, 2000);
+});
+
+test('sync-core: unwrapWorkspace handles nested data wrapper gracefully', () => {
+  const wrappedOnce = { success: true, data: { projects: [{ id: 'p1' }], chapters: [] } };
+  const unwrapped1 = unwrapWorkspace(wrappedOnce);
+  assert.equal(unwrapped1.projects[0].id, 'p1');
+
+  const wrappedTwice = { data: { data: { projects: [{ id: 'p2' }], chapters: [] } } };
+  const unwrapped2 = unwrapWorkspace(wrappedTwice);
+  assert.equal(unwrapped2.projects[0].id, 'p2');
+});

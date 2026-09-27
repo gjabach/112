@@ -173,15 +173,28 @@ export default function ChapterEditorPage() {
     return () => window.removeEventListener('keydown', handleSaveShortcut);
   }, [saveChapter]);
 
-  // Save before unload / closing tab
+  // Save before unload / closing tab or switching apps on mobile
   useEffect(() => {
-    const handleBeforeUnload = () => {
+    const handleFlushSave = () => {
       if (content !== chapter?.content || title !== chapter?.title) {
         saveChapter();
       }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        handleFlushSave();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleFlushSave);
+    window.addEventListener('pagehide', handleFlushSave);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleFlushSave);
+      window.removeEventListener('pagehide', handleFlushSave);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [content, title, chapter, saveChapter]);
 
   // Chapter Navigation

@@ -60,18 +60,23 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setStatus('syncing');
     try {
       const pullRes = await pullSync(force);
-      await pushSync();
-      setStatus('synced');
-      setLastSynced(Date.now());
-
+      const pushRes = await pushSync();
       const current = exportFullWorkspace();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current } }));
-      }
-
       const totalChapters = Array.isArray(current?.chapters) ? current.chapters.length : 0;
-      toast.success(`Đồng bộ hoàn tất! Hiện có ${totalChapters} chương`);
-      return true;
+
+      if (pullRes.success || pushRes.success) {
+        setStatus('synced');
+        setLastSynced(Date.now());
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current } }));
+        }
+        toast.success(`Đồng bộ hoàn tất! Hiện có ${totalChapters} chương`);
+        return true;
+      } else {
+        setStatus('error');
+        toast.error('Chưa thể kết nối đám mây: ' + (pullRes.error || pushRes.error || 'Vui lòng thử lại'));
+        return false;
+      }
     } catch (e: any) {
       setStatus('error');
       toast.error('Lỗi khi đồng bộ: ' + (e?.message || 'Vui lòng thử lại'));
