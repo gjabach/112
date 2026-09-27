@@ -195,44 +195,104 @@ export default function OutlinePage() {
   const safeOutline = Array.isArray(outline) ? outline : [];
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="border-b bg-card sticky top-0 z-20">
-        <div className="flex items-center gap-4 p-3 max-w-[1600px] mx-auto w-full">
-          <Link href={`/editor/${projectId}`}><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
-          <div>
-            <h1 className="font-bold">Dàn ý - Outline</h1>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{safeFlat.length} nodes</span>
-              <span>•</span>
-              <span>{progress}% hoàn thành</span>
-              <div className="w-20 h-1 bg-muted rounded-full ml-2"><div className="h-1 bg-primary rounded-full" style={{ width: `${progress}%` }}></div></div>
+    <div className="min-h-screen bg-background flex flex-col w-full max-w-full overflow-x-clip">
+      <header className="border-b bg-card sticky top-0 z-20 shadow-xs">
+        <div className="p-3 max-w-[1600px] mx-auto w-full">
+          <div className="flex items-center justify-between gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <Link href={`/editor/${projectId}`} className="shrink-0">
+                <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9"><ArrowLeft className="w-4 h-4" /></Button>
+              </Link>
+              <div className="min-w-0">
+                <h1 className="font-bold text-sm sm:text-base flex items-center gap-1.5 truncate">Dàn ý - Outline</h1>
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
+                  <span>{safeFlat.length} nodes</span>
+                  <span>•</span>
+                  <span>{progress}%</span>
+                  <div className="w-16 sm:w-20 h-1 bg-muted rounded-full ml-1 shrink-0">
+                    <div className="h-1 bg-primary rounded-full" style={{ width: `${progress}%` }}></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Desktop View switcher */}
+              <div className="hidden lg:flex bg-muted rounded-lg p-0.5">
+                <Button variant={viewMode === 'tree' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('tree')}><LayoutList className="w-3 h-3 mr-1" /> Tree</Button>
+                <Button variant={viewMode === 'kanban' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('kanban')}><Kanban className="w-3 h-3 mr-1" /> Kanban</Button>
+                <Button variant={viewMode === 'corkboard' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('corkboard')}><Pin className="w-3 h-3 mr-1" /> Corkboard</Button>
+                <Button variant={viewMode === 'timeline' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('timeline')}><Clock className="w-3 h-3 mr-1" /> Timeline</Button>
+              </div>
+
+              <Button variant="outline" size="sm" className="h-8 px-2 sm:px-2.5 text-xs" onClick={() => setShowTemplateDialog(true)}>
+                <span className="hidden sm:inline">📚 Templates</span>
+                <span className="sm:hidden">📚 Mẫu</span>
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 px-2 sm:px-2.5 text-xs" onClick={() => setShowAIDialog(true)}>
+                <Sparkles className="w-3.5 h-3.5 sm:mr-1 text-primary" />
+                <span className="hidden sm:inline">AI Generate</span>
+                <span className="sm:hidden">AI</span>
+              </Button>
+              <Button size="sm" className="h-8 px-2.5 text-xs" onClick={() => setShowNewDialog(true)}>
+                <Plus className="w-3.5 h-3.5 sm:mr-1" />
+                <span className="hidden sm:inline">Thêm</span>
+              </Button>
             </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
-            {/* View switcher */}
-            <div className="flex bg-muted rounded-lg p-1">
-              <Button variant={viewMode === 'tree' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('tree')}><LayoutList className="w-3 h-3 mr-1" /> Tree</Button>
-              <Button variant={viewMode === 'kanban' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('kanban')}><Kanban className="w-3 h-3 mr-1" /> Kanban</Button>
-              <Button variant={viewMode === 'corkboard' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('corkboard')}><Pin className="w-3 h-3 mr-1" /> Corkboard</Button>
-              <Button variant={viewMode === 'timeline' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('timeline')}><Clock className="w-3 h-3 mr-1" /> Timeline</Button>
+          {/* Mobile Secondary Row: View Switcher */}
+          <div className="lg:hidden mt-2 pt-2 border-t">
+            <div className="grid grid-cols-4 gap-1 p-0.5 bg-muted rounded-lg w-full text-xs">
+              <Button
+                variant={viewMode === 'tree' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
+                onClick={() => setViewMode('tree')}
+              >
+                <LayoutList className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Cây</span>
+              </Button>
+              <Button
+                variant={viewMode === 'kanban' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
+                onClick={() => setViewMode('kanban')}
+              >
+                <Kanban className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Kanban</span>
+              </Button>
+              <Button
+                variant={viewMode === 'corkboard' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
+                onClick={() => setViewMode('corkboard')}
+              >
+                <Pin className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Bảng</span>
+              </Button>
+              <Button
+                variant={viewMode === 'timeline' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
+                onClick={() => setViewMode('timeline')}
+              >
+                <Clock className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Timeline</span>
+              </Button>
             </div>
-
-            <Button variant="outline" size="sm" onClick={() => setShowTemplateDialog(true)}>📚 Templates</Button>
-            <Button variant="outline" size="sm" onClick={() => setShowAIDialog(true)}><Sparkles className="w-3 h-3 mr-1" /> AI Generate</Button>
-            <Button size="sm" onClick={() => setShowNewDialog(true)}><Plus className="w-3 h-3 mr-1" /> Thêm</Button>
           </div>
         </div>
       </header>
 
-      <div className="flex-1 p-4 md:p-6 max-w-[1600px] mx-auto w-full">
+      <div className="flex-1 p-3 sm:p-4 md:p-6 max-w-[1600px] mx-auto w-full min-w-0">
         {safeFlat.length === 0 ? (
           <Card className="border-dashed">
-            <CardContent className="py-16 text-center">
-              <div className="text-6xl mb-4">🗺️</div>
-              <h3 className="font-semibold text-lg mb-2">Chưa có dàn ý</h3>
-              <p className="text-muted-foreground mb-6 max-w-md mx-auto">Bắt đầu với template có sẵn hoặc để AI tạo outline từ ý tưởng của bạn</p>
-              <div className="flex gap-2 justify-center flex-wrap">
+            <CardContent className="py-12 sm:py-16 text-center px-4">
+              <div className="text-5xl sm:text-6xl mb-4">🗺️</div>
+              <h3 className="font-semibold text-base sm:text-lg mb-2">Chưa có dàn ý</h3>
+              <p className="text-muted-foreground text-xs sm:text-sm mb-6 max-w-md mx-auto">Bắt đầu với template có sẵn hoặc để AI tạo outline từ ý tưởng của bạn</p>
+              <div className="flex flex-col sm:flex-row gap-2 justify-center max-w-xs sm:max-w-none mx-auto">
                 <Button onClick={() => setShowTemplateDialog(true)}>📚 Chọn Template</Button>
                 <Button variant="outline" onClick={() => setShowAIDialog(true)}><Sparkles className="w-4 h-4 mr-2" /> AI Generate</Button>
                 <Button variant="outline" onClick={() => setShowNewDialog(true)}><Plus className="w-4 h-4 mr-2" /> Tạo thủ công</Button>
@@ -277,12 +337,12 @@ export default function OutlinePage() {
             )}
 
             {viewMode === 'timeline' && (
-              <div className="space-y-4">
-                <div className="flex gap-2 overflow-x-auto pb-4">
+              <div className="space-y-4 max-w-full overflow-hidden">
+                <div className="flex gap-2.5 overflow-x-auto pb-4 no-scrollbar scroll-smooth">
                   {[...safeFlat]
                     .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0))
                     .map((node: any, idx: number) => (
-                      <Card key={node.id} className="min-w-[200px] border-l-4 flex-shrink-0" style={{ borderLeftColor: node.color || '#3b82f6' }}>
+                      <Card key={node.id} className="min-w-[180px] sm:min-w-[220px] max-w-[260px] border-l-4 flex-shrink-0" style={{ borderLeftColor: node.color || '#3b82f6' }}>
                         <CardContent className="p-3">
                           <div className="text-xs text-muted-foreground">#{idx + 1}</div>
                           <div className="font-medium text-sm truncate">{node.title}</div>
@@ -294,7 +354,7 @@ export default function OutlinePage() {
                 <div className="h-2 bg-muted rounded-full relative">
                   <div className="absolute inset-y-0 left-0 bg-primary rounded-full" style={{ width: `${progress}%` }}></div>
                 </div>
-                <p className="text-xs text-muted-foreground text-center">Timeline ngang - kéo để xem toàn bộ outline theo thứ tự</p>
+                <p className="text-xs text-muted-foreground text-center">Timeline ngang - vuốt ngang để xem toàn bộ outline theo thứ tự</p>
               </div>
             )}
           </>

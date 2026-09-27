@@ -155,46 +155,50 @@ export default function CharactersPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-10">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 max-w-7xl mx-auto">
-          <div className="flex items-center gap-3">
-            <Link href={`/editor/${projectId}`}>
-              <Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button>
+    <div className="min-h-screen bg-background w-full max-w-full overflow-x-clip">
+      <header className="border-b bg-card sticky top-0 z-20 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 max-w-7xl mx-auto">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Link href={`/editor/${projectId}`} className="shrink-0">
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9"><ArrowLeft className="w-4 h-4" /></Button>
             </Link>
-            <div>
-              <h1 className="font-bold text-lg flex items-center gap-2">
-                <span>Hồ sơ nhân vật</span>
-                <Badge variant="secondary" className="text-xs">{safeCharacters.length} nhân vật</Badge>
+            <div className="min-w-0">
+              <h1 className="font-bold text-sm sm:text-lg flex items-center gap-1.5 sm:gap-2 truncate">
+                <span className="truncate">Hồ sơ nhân vật</span>
+                <Badge variant="secondary" className="text-[11px] px-1.5 py-0 shrink-0">{safeCharacters.length} nhân vật</Badge>
               </h1>
-              <p className="text-xs text-muted-foreground">Quản lý tính cách, động cơ, ngoại hình và lai lịch</p>
+              <p className="text-[11px] sm:text-xs text-muted-foreground truncate">Quản lý tính cách, động cơ, ngoại hình và lai lịch</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:w-48 sm:flex-initial">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input
                 placeholder="Tìm nhân vật..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-8 h-8 text-xs w-48"
+                className="pl-8 h-8 text-xs w-full"
               />
             </div>
-            <Button size="sm" variant="outline" onClick={() => setShowAIDialog(true)}>
-              <Sparkles className="w-4 h-4 mr-1 text-primary" /> AI Gợi ý
+            <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs shrink-0" onClick={() => setShowAIDialog(true)}>
+              <Sparkles className="w-3.5 h-3.5 sm:mr-1 text-primary" />
+              <span className="hidden sm:inline">AI Gợi ý</span>
+              <span className="sm:hidden">AI</span>
             </Button>
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="w-4 h-4 mr-1" /> Thêm nhân vật
+            <Button size="sm" className="h-8 px-2.5 text-xs shrink-0" onClick={openCreate}>
+              <Plus className="w-3.5 h-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Thêm nhân vật</span>
+              <span className="sm:hidden">Thêm</span>
             </Button>
           </div>
         </div>
 
         {/* Role Filters */}
-        <div className="px-4 pb-3 max-w-7xl mx-auto flex gap-1.5 overflow-x-auto scrollbar-none">
+        <div className="px-3 sm:px-4 pb-2.5 max-w-7xl mx-auto flex gap-1.5 overflow-x-auto no-scrollbar scroll-smooth">
           <button
             onClick={() => setFilterRole('all')}
-            className={`px-3 py-1 text-xs rounded-full border transition-all ${
+            className={`px-2.5 sm:px-3 py-1 text-xs rounded-full border transition-all shrink-0 ${
               filterRole === 'all' ? 'bg-primary text-primary-foreground font-medium' : 'bg-card hover:bg-muted text-muted-foreground'
             }`}
           >
@@ -204,7 +208,7 @@ export default function CharactersPage() {
             <button
               key={roleKey}
               onClick={() => setFilterRole(roleKey)}
-              className={`px-3 py-1 text-xs rounded-full border transition-all whitespace-nowrap ${
+              className={`px-2.5 sm:px-3 py-1 text-xs rounded-full border transition-all whitespace-nowrap shrink-0 ${
                 filterRole === roleKey ? 'bg-primary text-primary-foreground font-medium' : 'bg-card hover:bg-muted text-muted-foreground'
               }`}
             >
@@ -214,9 +218,9 @@ export default function CharactersPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-3 sm:p-6 max-w-7xl mx-auto">
         {loading ? (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {[1, 2, 3].map(i => (
               <Card key={i} className="animate-pulse">
                 <CardHeader className="h-16 bg-muted/40" />
@@ -226,12 +230,12 @@ export default function CharactersPage() {
           </div>
         ) : filtered.length === 0 ? (
           <Card className="border-dashed">
-            <CardContent className="py-16 text-center">
-              <User className="w-16 h-16 mx-auto mb-4 text-muted-foreground/40" />
-              <h3 className="font-semibold text-lg mb-1">
+            <CardContent className="py-12 sm:py-16 text-center px-4">
+              <User className="w-12 sm:w-16 h-12 sm:h-16 mx-auto mb-4 text-muted-foreground/40" />
+              <h3 className="font-semibold text-base sm:text-lg mb-1">
                 {search || filterRole !== 'all' ? 'Không tìm thấy nhân vật phù hợp' : 'Chưa có nhân vật nào'}
               </h3>
-              <p className="text-muted-foreground text-sm mb-4 max-w-md mx-auto">
+              <p className="text-muted-foreground text-xs sm:text-sm mb-4 max-w-md mx-auto">
                 {search || filterRole !== 'all' ? 'Thử tìm từ khóa khác hoặc bỏ bộ lọc.' : 'Tạo các nhân vật chính diện, phản diện để dẫn dắt câu chuyện của bạn.'}
               </p>
               {!search && filterRole === 'all' && (
@@ -242,35 +246,35 @@ export default function CharactersPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
             {filtered.map(char => {
               const cfg = roleConfigs[char.role] || { label: char.role, color: 'bg-muted text-muted-foreground' };
               const initial = (char.name || '?')[0].toUpperCase();
               return (
-                <Card key={char.id} className="hover:shadow-lg transition-all group flex flex-col justify-between">
-                  <CardHeader className="pb-3">
-                    <div className="flex gap-3 items-start">
-                      <div className="w-12 h-12 bg-primary/10 text-primary border border-primary/20 rounded-full flex items-center justify-center font-bold text-lg shrink-0">
+                <Card key={char.id} className="hover:shadow-lg transition-all group flex flex-col justify-between min-w-0">
+                  <CardHeader className="p-3 sm:p-6 pb-3">
+                    <div className="flex gap-2.5 sm:gap-3 items-start">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-primary/10 text-primary border border-primary/20 rounded-full flex items-center justify-center font-bold text-base sm:text-lg shrink-0">
                         {initial}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <CardTitle className="text-base truncate">{char.name}</CardTitle>
-                        <Badge variant="outline" className={`mt-1 text-[11px] font-normal ${cfg.color}`}>
+                        <CardTitle className="text-sm sm:text-base truncate">{char.name}</CardTitle>
+                        <Badge variant="outline" className={`mt-1 text-[11px] font-normal truncate max-w-[140px] ${cfg.color}`}>
                           {cfg.label}
                         </Badge>
                       </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(char)}>
+                      <div className="flex gap-0.5 sm:gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(char)} title="Sửa nhân vật">
                           <Edit3 className="w-3.5 h-3.5 text-muted-foreground" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteChar(char.id)}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteChar(char.id)} title="Xóa nhân vật">
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </div>
                   </CardHeader>
 
-                  <CardContent className="space-y-2 text-xs text-foreground/80 flex-1">
+                  <CardContent className="p-3 sm:p-6 pt-0 space-y-2 text-xs text-foreground/80 flex-1">
                     {char.motivation && (
                       <div className="bg-muted/40 p-2 rounded-lg">
                         <span className="font-semibold text-foreground">🎯 Mục tiêu:</span>{' '}

@@ -50,21 +50,25 @@ export default function ExportPage() {
   const totalWords = chapters.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background w-full max-w-full overflow-x-clip">
       <header className="border-b bg-card sticky top-0 z-10 shadow-xs">
-        <div className="flex items-center gap-4 p-4 max-w-6xl mx-auto">
-          <Link href={`/editor/${projectId}`}>
-            <Button variant="ghost" size="icon" title="Quay lại tác phẩm">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="font-bold text-base sm:text-lg">Xuất bản - {project.title}</h1>
-            <p className="text-xs text-muted-foreground">{chapters.length} chương • {totalWords.toLocaleString()} từ</p>
+        <div className="flex items-center gap-2 sm:gap-4 p-3 sm:p-4 max-w-6xl mx-auto justify-between">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Link href={`/editor/${projectId}`} className="shrink-0">
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9" title="Quay lại tác phẩm">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            </Link>
+            <div className="min-w-0">
+              <h1 className="font-bold text-sm sm:text-lg truncate">Xuất bản - {project.title}</h1>
+              <p className="text-[11px] sm:text-xs text-muted-foreground truncate">{chapters.length} chương • {totalWords.toLocaleString()} từ</p>
+            </div>
           </div>
-          <div className="ml-auto">
-            <Button onClick={() => setShowExportDialog(true)}>
-              <Download className="w-4 h-4 mr-2" /> Xuất bản mới
+          <div className="ml-auto shrink-0">
+            <Button size="sm" className="h-8 px-2.5 text-xs" onClick={() => setShowExportDialog(true)}>
+              <Download className="w-3.5 h-3.5 sm:mr-1.5" />
+              <span className="hidden sm:inline">Xuất bản mới</span>
+              <span className="sm:hidden">Xuất bản</span>
             </Button>
           </div>
         </div>

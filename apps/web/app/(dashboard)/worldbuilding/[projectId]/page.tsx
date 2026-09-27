@@ -144,48 +144,53 @@ export default function WorldbuildingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-10">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 max-w-7xl mx-auto">
-          <div className="flex items-center gap-3">
-            <Link href={`/editor/${projectId}`}>
-              <Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button>
+    <div className="min-h-screen bg-background w-full max-w-full overflow-x-clip">
+      <header className="border-b bg-card sticky top-0 z-20 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 max-w-7xl mx-auto">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Link href={`/editor/${projectId}`} className="shrink-0">
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9"><ArrowLeft className="w-4 h-4" /></Button>
             </Link>
-            <div>
-              <h1 className="font-bold text-lg flex items-center gap-2">
-                <span>Xây dựng thế giới (Worldbuilding)</span>
-                <Badge variant="secondary" className="text-xs">{safeEntities.length} mục</Badge>
+            <div className="min-w-0">
+              <h1 className="font-bold text-sm sm:text-lg flex items-center gap-1.5 sm:gap-2 truncate">
+                <span className="truncate">Xây dựng thế giới</span>
+                <span className="hidden sm:inline text-xs text-muted-foreground font-normal">(Worldbuilding)</span>
+                <Badge variant="secondary" className="text-[11px] px-1.5 py-0 shrink-0">{safeEntities.length} mục</Badge>
               </h1>
-              <p className="text-xs text-muted-foreground">Địa điểm, tổ chức, ma thuật, chủng tộc và văn hóa</p>
+              <p className="text-[11px] sm:text-xs text-muted-foreground truncate">Địa điểm, tổ chức, ma thuật, chủng tộc và văn hóa</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:w-48 sm:flex-initial">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input
                 placeholder="Tìm thực thể..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-8 h-8 text-xs w-48"
+                className="pl-8 h-8 text-xs w-full"
               />
             </div>
-            <Button size="sm" variant="outline" onClick={() => { setAiType(filter !== 'all' ? filter : 'location'); setShowAIDialog(true); }}>
-              <Sparkles className="w-4 h-4 mr-1 text-primary" /> AI Gợi ý Lore
+            <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs shrink-0" onClick={() => { setAiType(filter !== 'all' ? filter : 'location'); setShowAIDialog(true); }}>
+              <Sparkles className="w-3.5 h-3.5 sm:mr-1 text-primary" />
+              <span className="hidden sm:inline">AI Gợi ý Lore</span>
+              <span className="sm:hidden">AI Lore</span>
             </Button>
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="w-4 h-4 mr-1" /> Thêm thực thể
+            <Button size="sm" className="h-8 px-2.5 text-xs shrink-0" onClick={openCreate}>
+              <Plus className="w-3.5 h-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Thêm thực thể</span>
+              <span className="sm:hidden">Thêm</span>
             </Button>
           </div>
         </div>
 
         {/* Filter categories */}
-        <div className="px-4 pb-3 max-w-7xl mx-auto overflow-x-auto flex gap-1.5 scrollbar-none">
+        <div className="px-3 sm:px-4 pb-2.5 max-w-7xl mx-auto overflow-x-auto flex gap-1.5 no-scrollbar scroll-smooth">
           {types.map(t => (
             <button
               key={t.id}
               onClick={() => setFilter(t.id)}
-              className={`px-3 py-1 text-xs rounded-full border transition-all whitespace-nowrap flex items-center gap-1.5 ${
+              className={`px-2.5 sm:px-3 py-1 text-xs rounded-full border transition-all whitespace-nowrap flex items-center gap-1.5 shrink-0 ${
                 filter === t.id
                   ? 'bg-primary text-primary-foreground border-primary font-medium'
                   : 'bg-card hover:bg-muted text-muted-foreground'
@@ -199,9 +204,9 @@ export default function WorldbuildingPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-3 sm:p-6 max-w-7xl mx-auto">
         {loading ? (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => (
               <Card key={i} className="animate-pulse">
                 <CardHeader className="h-16 bg-muted/40" />
@@ -211,12 +216,12 @@ export default function WorldbuildingPage() {
           </div>
         ) : filteredEntities.length === 0 ? (
           <Card className="border-dashed">
-            <CardContent className="py-16 text-center">
+            <CardContent className="py-12 sm:py-16 text-center px-4">
               <Map className="w-12 h-12 mx-auto mb-4 text-muted-foreground/40" />
-              <h3 className="font-semibold text-lg mb-1">
+              <h3 className="font-semibold text-base sm:text-lg mb-1">
                 {search ? 'Không tìm thấy thực thể phù hợp' : 'Chưa có thực thể thế giới'}
               </h3>
-              <p className="text-muted-foreground text-sm mb-4 max-w-md mx-auto">
+              <p className="text-muted-foreground text-xs sm:text-sm mb-4 max-w-md mx-auto">
                 {search ? 'Hãy thử đổi từ khóa tìm kiếm' : 'Thiết lập các vương quốc, bang hội, hệ thống ma thuật hoặc di tích cổ xưa để làm sống động thế giới truyện.'}
               </p>
               {!search && (
@@ -227,34 +232,34 @@ export default function WorldbuildingPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             {filteredEntities.map(e => {
               const currentType = types.find(t => t.id === e.type) || { icon: '📌', label: e.type };
               return (
-                <Card key={e.id} className="group hover:shadow-md transition-all flex flex-col justify-between">
-                  <CardHeader className="pb-2">
+                <Card key={e.id} className="group hover:shadow-md transition-all flex flex-col justify-between min-w-0">
+                  <CardHeader className="p-3 sm:p-4 pb-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <CardTitle className="text-base truncate flex items-center gap-1.5">
-                          <span>{currentType.icon}</span>
-                          <span>{e.name}</span>
+                        <CardTitle className="text-sm sm:text-base flex items-center gap-1.5 min-w-0">
+                          <span className="shrink-0">{currentType.icon}</span>
+                          <span className="truncate">{e.name}</span>
                         </CardTitle>
-                        <Badge variant="secondary" className="mt-1 text-[11px]">
+                        <Badge variant="secondary" className="mt-1 text-[11px] truncate max-w-[140px]">
                           {currentType.label}
                         </Badge>
                       </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(e)}>
+                      <div className="flex gap-0.5 sm:gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(e)} title="Sửa thực thể">
                           <Edit3 className="w-3.5 h-3.5 text-muted-foreground" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteEntity(e.id)}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteEntity(e.id)} title="Xóa thực thể">
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground line-clamp-4 whitespace-pre-wrap">
+                  <CardContent className="p-3 sm:p-4 pt-0">
+                    <p className="text-xs sm:text-sm text-muted-foreground line-clamp-4 whitespace-pre-wrap break-words">
                       {e.description || 'Chưa có mô tả chi tiết cho thực thể này.'}
                     </p>
                   </CardContent>
