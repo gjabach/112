@@ -21,8 +21,20 @@ import { Button } from '@/components/ui/button';
 
 export function MechKeyboardProvider({ children }: { children: React.ReactNode }) {
   const activeKeys = useRef<Set<string>>(new Set());
+  const lastCharKeyTime = useRef<number>(0);
+  const lastCharKeyCode = useRef<string>('');
+  const lastImeSuppressedTime = useRef<number>(0);
+  const lastCompositionEndTime = useRef<number>(0);
 
   useEffect(() => {
+    const handleCompositionStart = () => {
+      // Composition session active
+    };
+
+    const handleCompositionEnd = () => {
+      lastCompositionEndTime.current = performance.now();
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isMechKeyboardEnabled()) return;
       if (e.repeat) return;
@@ -38,6 +50,54 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
         !!target.closest('.ProseMirror, [contenteditable="true"]');
 
       if (!isEditable) return;
+
+      // 1. Guard against synthetic, empty, or unidentified keys
+      if (!e.code || e.code === '' || e.code === 'Unidentified') return;
+      if (e.key === 'Process' && (!e.code || e.code === 'Unidentified')) return;
+
+      const now = performance.now();
+
+      // 2. Filter out synthetic Vietnamese IME Backspace (Unikey / EVKey / OpenKey)
+      // When typing 'aa' -> 'â', 'aw' -> 'ă', 'dd' -> 'đ', 'ee' -> 'ê', 'toois' -> 'tối',
+      // Vietnamese IME hooks send synthetic Backspace within 0-60ms of a character key
+      // to erase the raw letter before replacing it with the accented vowel/consonant.
+      // A human CANNOT physically move from a letter key to the Backspace key in < 80ms.
+      if (e.code === 'Backspace') {
+        const timeSinceLastChar = now - lastCharKeyTime.current;
+        const timeSinceSuppression = now - lastImeSuppressedTime.current;
+        const timeSinceCompEnd = now - lastCompositionEndTime.current;
+
+        if (timeSinceLastChar < 85 || timeSinceSuppression < 85 || timeSinceCompEnd < 85) {
+          lastImeSuppressedTime.current = now;
+          return;
+        }
+      }
+
+      // 3. Filter out synthetic keydown for the resulting composed character (e.g. 'â', 'ê', 'đ', etc.)
+      // Physical keyboards never have an 'â' key; when IME outputs 'â', it must not produce an extra sound.
+      if (e.key && e.key.length === 1 && e.key.charCodeAt(0) > 127) {
+        const timeSinceLastChar = now - lastCharKeyTime.current;
+        const timeSinceCompEnd = now - lastCompositionEndTime.current;
+        const timeSinceSuppression = now - lastImeSuppressedTime.current;
+
+        if (timeSinceLastChar < 100 || timeSinceCompEnd < 100 || timeSinceSuppression < 100) {
+          return;
+        }
+      }
+
+      // 4. Track physical character keys (letters, numbers, symbols)
+      const isCharKey =
+        e.code.startsWith('Key') ||
+        e.code.startsWith('Digit') ||
+        [
+          'Minus', 'Equal', 'BracketLeft', 'BracketRight', 'Backslash',
+          'Semicolon', 'Quote', 'Backquote', 'Comma', 'Period', 'Slash'
+        ].includes(e.code);
+
+      if (isCharKey) {
+        lastCharKeyTime.current = now;
+        lastCharKeyCode.current = e.code;
+      }
 
       activeKeys.current.add(e.code);
       mechKeyboardManager.playKeyDown(e.code);
@@ -58,6 +118,13 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
 
       if (!isEditable) return;
 
+      if (!e.code || e.code === '' || e.code === 'Unidentified') return;
+
+      // Ignore synthetic IME Backspace keyup
+      if (e.code === 'Backspace' && performance.now() - lastImeSuppressedTime.current < 100) {
+        return;
+      }
+
       if (activeKeys.current.has(e.code)) {
         activeKeys.current.delete(e.code);
         mechKeyboardManager.playKeyUp(e.code);
@@ -66,10 +133,14 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
 
     document.addEventListener('keydown', handleKeyDown, { capture: true });
     document.addEventListener('keyup', handleKeyUp, { capture: true });
+    document.addEventListener('compositionstart', handleCompositionStart, { capture: true });
+    document.addEventListener('compositionend', handleCompositionEnd, { capture: true });
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown, { capture: true });
       document.removeEventListener('keyup', handleKeyUp, { capture: true });
+      document.removeEventListener('compositionstart', handleCompositionStart, { capture: true });
+      document.removeEventListener('compositionend', handleCompositionEnd, { capture: true });
     };
   }, []);
 

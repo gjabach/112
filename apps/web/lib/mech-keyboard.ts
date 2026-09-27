@@ -404,6 +404,7 @@ class MechKeyboardManager {
    */
   public playKeyDown(code: string = 'KeyA') {
     if (!this.enabled || this.volume <= 0) return;
+    if (!code || code === 'Unidentified') return;
 
     const ctx = this.initAudio();
     if (!ctx) return;
@@ -444,6 +445,7 @@ class MechKeyboardManager {
    */
   public playKeyUp(code: string = 'KeyA') {
     if (!this.enabled || !this.keyUpSound || this.volume <= 0) return;
+    if (!code || code === 'Unidentified') return;
 
     const ctx = this.initAudio();
     if (!ctx) return;
