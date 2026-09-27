@@ -5,6 +5,7 @@ import { ThemeProvider } from '@/components/layout/theme-provider';
 import { Toaster } from '@/components/ui/toaster';
 import { ConfettiCanvas } from '@/components/vfx/confetti';
 import { SoundProvider } from '@/components/layout/sound-provider';
+import { SyncProvider } from '@/components/layout/sync-provider';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const crimson = Crimson_Pro({ subsets: ['latin'], variable: '--font-crimson' });
@@ -27,9 +28,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${inter.variable} ${crimson.variable} font-sans antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           <SoundProvider>
-            {children}
-            <Toaster />
-            <ConfettiCanvas />
+            <SyncProvider>
+              {children}
+              <Toaster />
+              <ConfettiCanvas />
+            </SyncProvider>
           </SoundProvider>
         </ThemeProvider>
       </body>

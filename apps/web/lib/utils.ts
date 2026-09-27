@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush } from './sync';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -245,36 +246,8 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     } catch {}
   };
 
-  const hashLocalPassword = async (pwd: string): Promise<string> => {
-    try {
-      if (typeof crypto !== 'undefined' && crypto.subtle) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(pwd + ':novelist_salt_2026');
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-      }
-    } catch {}
-    return 'hashed_' + btoa(pwd);
-  };
-
-  const getCloudAccountKeys = async (email: string) => {
-    const clean = (email || '').trim().toLowerCase();
-    try {
-      if (typeof crypto !== 'undefined' && crypto.subtle) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(clean + ':novelist_auth_v2');
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-        return { userKey: `u_${hex}`, dataKey: `d_${hex}` };
-      }
-    } catch {}
-    let hash = 0;
-    for (let i = 0; i < clean.length; i++) {
-      hash = ((hash << 5) - hash) + clean.charCodeAt(i);
-      hash |= 0;
-    }
-    const hex = Math.abs(hash).toString(36);
-    return { userKey: `u_${hex}`, dataKey: `d_${hex}` };
+  const hashLocalPassword = (pwd: string): string => {
+    return sha256(pwd + ':novelist_salt_2026');
   };
 
   const getCurrentUser = () => {
@@ -301,7 +274,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       throw new Error('Mật khẩu tối thiểu 8 ký tự.');
     }
 
-    const { userKey, dataKey } = await getCloudAccountKeys(cleanEmail);
+    const { userKey, dataKey } = getCloudAccountKeys(cleanEmail);
 
     let existing = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
 
@@ -393,7 +366,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       throw new Error('Vui lòng nhập mật khẩu.');
     }
 
-    const { userKey, dataKey } = await getCloudAccountKeys(cleanEmail);
+    const { userKey, dataKey, legacyKey } = getCloudAccountKeys(cleanEmail);
 
     let users = getStorage('novelist_users', []);
     let user = users.find((u: any) => (u.email || '').trim().toLowerCase() === cleanEmail);
@@ -458,23 +431,28 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
     setStorage('novelist_current_user', safeUser);
     
-    // CRITICAL: Immediately pull full workspace (projects, chapters, drafts) from cloud to this device
+    // CRITICAL: Synchronously pull and smart-merge full workspace (projects, chapters, drafts) from cloud to this device BEFORE returning
     try {
-      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
-      if (res.ok) {
-        const cloudData = await res.json();
-        if (cloudData && typeof cloudData === 'object') {
-          const { importFullWorkspace } = await import('./sync');
-          importFullWorkspace(cloudData);
-        }
-      }
-    } catch {}
+      let cloudData: any = null;
+      try {
+        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
+        if (res.ok) cloudData = await res.json();
+      } catch {}
 
-    // Auto sync on login
-    if (typeof window !== 'undefined') {
-      setTimeout(() => {
-        import('./sync').then(m => m.pullSync(true)).catch(() => {});
-      }, 300);
+      if (!cloudData && legacyKey) {
+        try {
+          const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`);
+          if (res.ok) cloudData = await res.json();
+        } catch {}
+      }
+
+      if (cloudData && typeof cloudData === 'object') {
+        importFullWorkspace(cloudData, true);
+      } else {
+        await pullSync(true).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Login cloud sync error:', e);
     }
 
     return { user: safeUser, token: 'token_' + safeUser.id };
@@ -524,7 +502,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       setStorage('novelist_users', users);
 
       try {
-        const { userKey } = await getCloudAccountKeys(userEmailClean);
+        const { userKey } = getCloudAccountKeys(userEmailClean);
         fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -757,11 +735,15 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { chapters: list };
     }
     if (method === 'POST') {
+      const projChaps = chapters.filter((c: any) => c.projectId === projectId);
+      const maxIdx = projChaps.length > 0 ? Math.max(...projChaps.map((c: any) => c.orderIndex || 0)) : 0;
+      const orderIndex = (body.orderIndex !== undefined && body.orderIndex > maxIdx) ? body.orderIndex : maxIdx + 1;
+
       const newChap = {
         id: 'chap_' + now,
         projectId,
         title: body.title || 'Chương mới',
-        orderIndex: body.orderIndex ?? chapters.length + 1,
+        orderIndex,
         content: body.content || '',
         wordCount: 0,
         status: body.status || 'draft',
@@ -775,6 +757,11 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       const projects = getStorage('novelist_projects', []);
       const updatedProj = projects.map((p: any) => p.id === projectId ? { ...p, chapterCount: (p.chapterCount || 0) + 1, updatedAt: now } : p);
       setStorage('novelist_projects', updatedProj);
+
+      // Push immediately to cloud so other devices see new chapter instantly
+      if (typeof window !== 'undefined') {
+        pushSync().catch(() => {});
+      }
 
       return { chapter: newChap };
     }

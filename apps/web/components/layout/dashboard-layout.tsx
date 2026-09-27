@@ -23,6 +23,7 @@ import { useEffect, useState } from 'react';
 import { initAutoSync } from '@/lib/sync';
 import { AmbientBackground } from '@/components/vfx/ambient-background';
 import { SparkleIcon } from '@/components/vfx/magic-sparkles';
+import { SyncStatusButton } from './sync-provider';
 
 const navItems = [
   { href: '/projects', label: 'Dự án', icon: LayoutDashboard },
@@ -80,9 +81,12 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-sm shadow-sm">N</div>
           <span className="tracking-tight">Novelist Studio</span>
         </Link>
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="truncate max-w-[120px]">{user?.name || user?.email?.split('@')[0]}</span>
+        <div className="flex items-center gap-2">
+          <SyncStatusButton compact />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="truncate max-w-[120px]">{user?.name || user?.email?.split('@')[0]}</span>
+          </div>
         </div>
       </header>
 
@@ -110,8 +114,9 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className="p-4 border-t">
-          <div className="flex items-center gap-3 mb-3">
+        <div className="p-4 border-t space-y-3">
+          <SyncStatusButton className="w-full justify-center" />
+          <div className="flex items-center gap-3 mb-1">
             <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center text-sm font-medium">{user?.name?.[0] || user?.email?.[0]?.toUpperCase()}</div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{user?.name || 'Nhà văn'}</p>

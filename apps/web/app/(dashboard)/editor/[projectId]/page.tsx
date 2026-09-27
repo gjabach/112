@@ -14,6 +14,8 @@ import { fireConfetti } from '@/components/vfx/confetti';
 import { SparkleIcon } from '@/components/vfx/magic-sparkles';
 import { playSuccessSound, playDeleteSound, playPopSound } from '@/lib/sound';
 import { SoundToggleButton } from '@/components/layout/sound-provider';
+import { SyncStatusButton } from '@/components/layout/sync-provider';
+import { pushSync, pullSync } from '@/lib/sync';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -172,6 +174,7 @@ export default function ProjectEditorPage() {
       playSuccessSound();
       toast.success('Đã cập nhật tên chương thành công');
       fetchData();
+      pushSync().catch(() => {});
     } catch (e: any) {
       toast.error('Lỗi khi sửa tên chương: ' + (e.message || ''));
       setChapters(prevChapters);
@@ -194,6 +197,7 @@ export default function ProjectEditorPage() {
         body: JSON.stringify({ chapterIds: newChapters.map(c => c.id) })
       });
       toast.success(`Đã chuyển vị trí chương`);
+      pushSync().catch(() => {});
     } catch (e: any) {
       toast.error('Lỗi sắp xếp: ' + (e.message || ''));
       fetchData();
@@ -203,6 +207,9 @@ export default function ProjectEditorPage() {
   useEffect(() => {
     setCurrentProjectId(projectId);
     fetchData();
+    pullSync().then((res) => {
+      if (res?.updated) fetchData();
+    }).catch(() => {});
     const handleSync = () => fetchData();
     window.addEventListener('novelist-sync-updated', handleSync);
     return () => window.removeEventListener('novelist-sync-updated', handleSync);
@@ -226,11 +233,12 @@ export default function ProjectEditorPage() {
   const createChapter = async () => {
     if (!newChapterTitle.trim()) return;
     try {
+      const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
       await apiFetch(`/api/projects/${projectId}/chapters`, {
         method: 'POST',
         body: JSON.stringify({
-          title: newChapterTitle,
-          orderIndex: chapters.length,
+          title: newChapterTitle.trim(),
+          orderIndex: maxOrder + 1,
           status: 'outline'
         })
       });
@@ -239,6 +247,7 @@ export default function ProjectEditorPage() {
       toast.success('Tạo chương mới thành công');
       fireConfetti({ type: 'stardust', particleCount: 20 });
       fetchData();
+      pushSync().catch(() => {});
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -251,6 +260,7 @@ export default function ProjectEditorPage() {
       playDeleteSound();
       toast.success('Đã xóa chương');
       fetchData();
+      pushSync().catch(() => {});
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -285,6 +295,7 @@ export default function ProjectEditorPage() {
 
           {/* Mobile Action Buttons */}
           <div className="flex md:hidden items-center gap-1.5 shrink-0">
+            <SyncStatusButton compact />
             <SoundToggleButton />
             <Button
               size="sm"
@@ -292,17 +303,19 @@ export default function ProjectEditorPage() {
                 const title = prompt('Nhập tên chương mới:');
                 if (title?.trim()) {
                   setNewChapterTitle(title.trim());
+                  const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
                   apiFetch(`/api/projects/${projectId}/chapters`, {
                     method: 'POST',
                     body: JSON.stringify({
                       title: title.trim(),
-                      orderIndex: chapters.length,
+                      orderIndex: maxOrder + 1,
                       status: 'outline'
                     })
                   }).then(() => {
                     playSuccessSound();
                     toast.success('Đã tạo chương mới');
                     fetchData();
+                    pushSync().catch(() => {});
                   });
                 }
               }}
@@ -320,6 +333,7 @@ export default function ProjectEditorPage() {
 
           {/* Desktop Navigation Buttons */}
           <div className="hidden md:flex gap-2 items-center shrink-0">
+            <SyncStatusButton />
             <SoundToggleButton />
             <Link href={`/outline/${projectId}`}>
               <Button variant="outline" size="sm" className="bg-blue-50/50 dark:bg-blue-950/20 border-blue-200/50">

@@ -27,6 +27,8 @@ import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-s
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound } from '@/lib/sound';
 import { SoundToggleButton } from '@/components/layout/sound-provider';
+import { SyncStatusButton } from '@/components/layout/sync-provider';
+import { pushSync, pullSync } from '@/lib/sync';
 import { MechKeyboardProvider, MechKeyboardToggle } from '@/components/editor/mech-keyboard-provider';
 
 const TiptapEditor = dynamic(
@@ -111,6 +113,11 @@ export default function ChapterEditorPage() {
     if (chapterId && projectId) {
       fetchChapterData();
     }
+    const handleSync = () => {
+      fetchChapterData();
+    };
+    window.addEventListener('novelist-sync-updated', handleSync);
+    return () => window.removeEventListener('novelist-sync-updated', handleSync);
   }, [chapterId, projectId]);
 
   const saveChapter = useCallback(async (newContent?: string, newTitle?: string) => {
@@ -129,6 +136,7 @@ export default function ChapterEditorPage() {
       setLastSaved(Date.now());
       setChapter((prev: any) => ({ ...prev, title: titleToSave, content: contentToSave }));
       playSuccessSound();
+      pushSync().catch(() => {});
     } catch (e: any) {
       toast.error('Lỗi lưu: ' + e.message);
     } finally {
@@ -513,6 +521,9 @@ export default function ChapterEditorPage() {
               <FileText className="w-3.5 h-3.5 sm:mr-1 text-primary" />
               <span className="hidden sm:inline">Thông số & AI</span>
             </Button>
+
+            {/* Cloud Sync Button */}
+            <SyncStatusButton compact />
 
             {/* Save Button */}
             <Button

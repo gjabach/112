@@ -41,15 +41,19 @@ export async function GET(req: NextRequest) {
     }
 
     // 2. Persistent cloud store lookup
-    const userKey = getUserSyncIdentifier(authHeader);
+    const { searchParams } = new URL(req.url);
+    const queryKey = searchParams.get('key') || searchParams.get('dataKey');
+    const rawKey = queryKey || getUserSyncIdentifier(authHeader);
+    const targetKey = rawKey.startsWith('d_') ? rawKey : `d_${rawKey}`;
+
     try {
-      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/d_${userKey}`);
+      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${targetKey}`);
       if (res.ok) {
         const stored = await res.json();
         if (stored) {
           return NextResponse.json({
             success: true,
-            key: userKey,
+            key: targetKey,
             lastModified: stored.lastModified || 0,
             data: stored.data || stored,
             source: 'cloud'
@@ -58,12 +62,12 @@ export async function GET(req: NextRequest) {
       }
     } catch {}
 
-    const stored = secureSyncMemoryStore.get(userKey);
+    const stored = secureSyncMemoryStore.get(targetKey);
 
     if (stored) {
       return NextResponse.json({
         success: true,
-        key: userKey,
+        key: targetKey,
         lastModified: stored.lastModified,
         data: stored.data,
         source: 'cloud'
@@ -72,7 +76,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      key: userKey,
+      key: targetKey,
       lastModified: 0,
       data: null,
       message: 'Chưa có bản đồng bộ nào cho tài khoản này'
@@ -123,18 +127,20 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Safe Edge in-memory & cloud store persistence
-    const userKey = getUserSyncIdentifier(authHeader);
+    const bodyKey = body.dataKey || body.key;
+    const rawKey = bodyKey || getUserSyncIdentifier(authHeader);
+    const targetKey = rawKey.startsWith('d_') ? rawKey : `d_${rawKey}`;
     const lastModified = body.lastModified || Date.now();
     const now = Date.now();
 
-    secureSyncMemoryStore.set(userKey, {
+    secureSyncMemoryStore.set(targetKey, {
       lastModified,
       syncedAt: now,
       data
     });
 
     try {
-      await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/d_${userKey}`, {
+      await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${targetKey}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lastModified, syncedAt: now, data })
@@ -147,7 +153,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      key: userKey,
+      key: targetKey,
       lastModified,
       syncedAt: now,
       stats: {
