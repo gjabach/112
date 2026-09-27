@@ -14,18 +14,21 @@ function getUserSyncIdentifier(authHeader: string): string {
 // GET /api/sync
 export async function GET(req: NextRequest) {
   try {
+    const { searchParams } = new URL(req.url);
+    const queryKey = searchParams.get('key') || searchParams.get('dataKey');
     const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
-    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+
+    if (!queryKey && (!authHeader || !authHeader.toLowerCase().startsWith('bearer '))) {
       return NextResponse.json({
         success: false,
-        error: 'Yêu cầu đăng nhập để đồng bộ dữ liệu đám mây'
+        error: 'Yêu cầu đăng nhập hoặc cung cấp khóa đồng bộ'
       }, { status: 401 });
     }
 
     const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL;
 
     // 1. If backend API is configured, forward securely to Worker API
-    if (apiUrl && !apiUrl.includes('localhost')) {
+    if (authHeader && apiUrl && !apiUrl.includes('localhost')) {
       try {
         const res = await fetch(`${apiUrl.replace(/\/$/, '')}/api/sync`, {
           method: 'GET',
@@ -41,9 +44,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 2. Persistent cloud store lookup
-    const { searchParams } = new URL(req.url);
-    const queryKey = searchParams.get('key') || searchParams.get('dataKey');
-    const rawKey = queryKey || getUserSyncIdentifier(authHeader);
+    const rawKey = queryKey || getUserSyncIdentifier(authHeader || '');
     const targetKey = rawKey.startsWith('d_') ? rawKey : `d_${rawKey}`;
 
     try {
@@ -51,11 +52,15 @@ export async function GET(req: NextRequest) {
       if (res.ok) {
         const stored = await res.json();
         if (stored) {
+          const unwrapped = (stored.data && typeof stored.data === 'object' && (stored.data.projects || stored.data.chapters))
+            ? stored.data
+            : stored;
+
           return NextResponse.json({
             success: true,
             key: targetKey,
-            lastModified: stored.lastModified || 0,
-            data: stored.data || stored,
+            lastModified: stored.lastModified || unwrapped.lastModified || 0,
+            data: unwrapped,
             source: 'cloud'
           });
         }
@@ -65,11 +70,14 @@ export async function GET(req: NextRequest) {
     const stored = secureSyncMemoryStore.get(targetKey);
 
     if (stored) {
+      const unwrapped = (stored.data && typeof stored.data === 'object' && (stored.data.projects || stored.data.chapters))
+        ? stored.data
+        : stored;
       return NextResponse.json({
         success: true,
         key: targetKey,
         lastModified: stored.lastModified,
-        data: stored.data,
+        data: unwrapped,
         source: 'cloud'
       });
     }
@@ -92,16 +100,17 @@ export async function GET(req: NextRequest) {
 // POST /api/sync
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
-    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
-      return NextResponse.json({
-        success: false,
-        error: 'Yêu cầu đăng nhập để đồng bộ dữ liệu đám mây'
-      }, { status: 401 });
-    }
-
     const body = await req.json();
     const data = body.data;
+    const bodyKey = body.dataKey || body.key;
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
+
+    if (!bodyKey && (!authHeader || !authHeader.toLowerCase().startsWith('bearer '))) {
+      return NextResponse.json({
+        success: false,
+        error: 'Yêu cầu đăng nhập hoặc cung cấp khóa đồng bộ'
+      }, { status: 401 });
+    }
 
     if (!data || typeof data !== 'object') {
       return NextResponse.json({ success: false, error: 'Dữ liệu đồng bộ không hợp lệ' }, { status: 400 });
@@ -110,7 +119,7 @@ export async function POST(req: NextRequest) {
     const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL;
 
     // 1. If backend API is configured, forward securely to Worker API
-    if (apiUrl && !apiUrl.includes('localhost')) {
+    if (authHeader && apiUrl && !apiUrl.includes('localhost')) {
       try {
         const res = await fetch(`${apiUrl.replace(/\/$/, '')}/api/sync`, {
           method: 'POST',
@@ -127,8 +136,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Safe Edge in-memory & cloud store persistence
-    const bodyKey = body.dataKey || body.key;
-    const rawKey = bodyKey || getUserSyncIdentifier(authHeader);
+    const rawKey = bodyKey || getUserSyncIdentifier(authHeader || '');
     const targetKey = rawKey.startsWith('d_') ? rawKey : `d_${rawKey}`;
     const lastModified = body.lastModified || Date.now();
     const now = Date.now();

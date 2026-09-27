@@ -435,18 +435,31 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     try {
       let cloudData: any = null;
       
-      // Try primary SHA-256 key first
+      // 1. PRIMARY: Try same-origin /api/sync (never blocked by Brave Shields or CORS on mobile)
       try {
-        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
+        const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}`);
         if (res.ok) {
-          const text = await res.text();
-          if (text && text.trim().length > 2) {
-            try { cloudData = JSON.parse(text); } catch {}
-          }
+          const json = await res.json();
+          if (json.success && json.data) cloudData = json.data;
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[Login Sync] /api/sync fetch failed, trying direct kvdb:', e);
+      }
 
-      // Try legacy key if primary returned nothing
+      // 2. BACKUP: Try direct KVDB primary SHA-256 key
+      if (!cloudData) {
+        try {
+          const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
+          if (res.ok) {
+            const text = await res.text();
+            if (text && text.trim().length > 2) {
+              try { cloudData = JSON.parse(text); } catch {}
+            }
+          }
+        } catch {}
+      }
+
+      // 3. BACKUP: Try legacy key if primary returned nothing
       if (!cloudData && legacyKey) {
         try {
           const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`);

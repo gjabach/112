@@ -470,7 +470,16 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
 
 function getAuthToken(): string {
   if (typeof window === 'undefined') return '';
-  return localStorage.getItem('token') || '';
+  const directToken = localStorage.getItem('token');
+  if (directToken) return directToken;
+  try {
+    const authStr = localStorage.getItem('auth-storage');
+    if (authStr) {
+      const auth = JSON.parse(authStr);
+      if (auth.state?.token) return auth.state.token;
+    }
+  } catch {}
+  return '';
 }
 
 function broadcastSyncStatus(status: SyncStatus, message?: string) {
@@ -506,28 +515,29 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
 
     const workspaceJson = JSON.stringify(workspace);
 
-    // 1. Try local/configured API endpoint if token available
-    if (token) {
-      try {
-        await fetch('/api/sync', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            key: dataKey,
-            dataKey: dataKey,
-            lastModified: workspace.lastModified,
-            data: workspace
-          }),
-          keepalive: true
-        });
-      } catch {}
+    // 1. PRIMARY: Try same-origin server API endpoint /api/sync
+    // Same-origin calls to /api/sync are NEVER blocked by Brave Shields, AdBlock, or CORS on mobile!
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          key: dataKey,
+          dataKey: dataKey,
+          lastModified: workspace.lastModified,
+          data: workspace
+        }),
+        keepalive: true
+      });
+      console.log('[Sync Push] Successfully pushed via same-origin /api/sync');
+    } catch (e) {
+      console.warn('[Sync Push] Same-origin /api/sync failed:', e);
     }
 
-    // 2. Persist to account cloud store for seamless multi-device access (PC <-> Mobile)
-    // ALWAYS push to BOTH keys so any lookup method finds data
+    // 2. SECONDARY: Also persist directly to KVDB cloud store as dual backup
     if (email && email.includes('@')) {
       const pushPromises: Promise<any>[] = [];
 
@@ -538,7 +548,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
           headers: { 'Content-Type': 'application/json' },
           body: workspaceJson,
           keepalive: true
-        }).catch(err => console.warn('[Sync Push] dataKey PUT failed:', err))
+        }).catch(err => console.warn('[Sync Push] direct dataKey PUT failed (likely blocked by browser shields):', err))
       );
 
       // Also push to legacy key for backwards compatibility
@@ -548,7 +558,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
           headers: { 'Content-Type': 'application/json' },
           body: workspaceJson,
           keepalive: true
-        }).catch(err => console.warn('[Sync Push] legacyKey PUT failed:', err))
+        }).catch(err => console.warn('[Sync Push] direct legacyKey PUT failed:', err))
       );
 
       await Promise.allSettled(pushPromises);
@@ -588,44 +598,58 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
 
     let remoteData: any = null;
     const { dataKey, legacyKey } = getCloudAccountKeys(email);
+    const token = getAuthToken();
 
-    // 1. Try cloud store for latest multi-device workspace
+    // 1. PRIMARY: Try same-origin server API route /api/sync
+    // Same-origin calls to /api/sync are NEVER blocked by Brave Shields, AdBlock, or CORS on mobile!
     try {
-      const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
+      const headers: Record<string, string> = { 'Accept': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}`, { headers });
       if (res.ok) {
-        const text = await res.text();
-        if (text && text.trim().length > 2) {
-          try { remoteData = JSON.parse(text); } catch {}
+        const json = await res.json();
+        if (json.success && json.data) {
+          remoteData = json.data;
+          console.log(`[Sync Pull] Successfully pulled from /api/sync: ${Array.isArray(remoteData.chapters) ? remoteData.chapters.length : 0} chapters`);
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[Sync Pull] /api/sync primary fetch failed, trying direct:', e);
+    }
 
-    // Fallback to legacy key if primary returned nothing
+    // 2. BACKUP: Direct cloud store lookup (KVDB)
+    if (!remoteData) {
+      try {
+        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.trim().length > 2) {
+            try { 
+              remoteData = JSON.parse(text); 
+              console.log(`[Sync Pull] Successfully pulled from direct kvdb dataKey: ${Array.isArray(remoteData.chapters) ? remoteData.chapters.length : 0} chapters`);
+            } catch {}
+          }
+        }
+      } catch (e) {
+        console.warn('[Sync Pull] Direct kvdb dataKey fetch failed (likely blocked by Brave Shields):', e);
+      }
+    }
+
+    // 3. BACKUP: Direct cloud store lookup with legacy key
     if (!remoteData) {
       try {
         const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`);
         if (res.ok) {
           const text = await res.text();
           if (text && text.trim().length > 2) {
-            try { remoteData = JSON.parse(text); } catch {}
+            try { 
+              remoteData = JSON.parse(text); 
+              console.log(`[Sync Pull] Successfully pulled from direct kvdb legacyKey: ${Array.isArray(remoteData.chapters) ? remoteData.chapters.length : 0} chapters`);
+            } catch {}
           }
         }
-      } catch {}
-    }
-
-    // 2. Try server API if not found or in addition
-    if (!remoteData) {
-      const token = getAuthToken();
-      if (token) {
-        try {
-          const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (res.ok) {
-            const json = await res.json();
-            if (json.success && json.data) remoteData = json.data;
-          }
-        } catch {}
+      } catch (e) {
+        console.warn('[Sync Pull] Direct kvdb legacyKey fetch failed:', e);
       }
     }
 
@@ -644,7 +668,6 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     const { merged, hasRemoteChanges, hasLocalChanges } = mergeWorkspaces(local, unwrapped);
 
     // CRITICAL: Also check if merged data has MORE chapters/projects than local
-    // This catches the case where merge detected new items from cloud
     const localChapterCount = Array.isArray(local?.chapters) ? local.chapters.length : 0;
     const mergedChapterCount = Array.isArray(merged.chapters) ? merged.chapters.length : 0;
     const localProjectCount = Array.isArray(local?.projects) ? local.projects.length : 0;
@@ -668,7 +691,7 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     localStorage.setItem('novelist_last_synced', String(Date.now()));
     broadcastSyncStatus('synced', updated ? 'Đã cập nhật dữ liệu mới' : 'Dữ liệu mới nhất');
 
-    return { success: true, updated };
+    return { success: true, updated: true };
   } catch (err: any) {
     broadcastSyncStatus('error', err.message || 'Lỗi tải đồng bộ');
     return { success: false, updated: false, error: err.message };

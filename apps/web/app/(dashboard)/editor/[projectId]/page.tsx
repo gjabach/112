@@ -207,10 +207,15 @@ export default function ProjectEditorPage() {
   useEffect(() => {
     setCurrentProjectId(projectId);
     fetchData();
-    pullSync().then((res) => {
-      if (res?.updated) fetchData();
-    }).catch(() => {});
-    const handleSync = () => fetchData();
+    pullSync(true)
+      .then(() => {
+        fetchData();
+      })
+      .catch(() => {});
+
+    const handleSync = () => {
+      fetchData();
+    };
     window.addEventListener('novelist-sync-updated', handleSync);
     return () => window.removeEventListener('novelist-sync-updated', handleSync);
   }, [projectId]);

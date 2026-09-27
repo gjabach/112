@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { initAutoSync, pullSync, pushSync, type SyncStatus } from '@/lib/sync';
+import { initAutoSync, pullSync, pushSync, exportFullWorkspace, type SyncStatus } from '@/lib/sync';
 import { Button } from '@/components/ui/button';
 import { Cloud, Check, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -64,11 +64,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       setStatus('synced');
       setLastSynced(Date.now());
 
-      if (pullRes.updated) {
-        toast.success('Đồng bộ thành công! Đã cập nhật bản thảo mới nhất');
-      } else {
-        toast.success('Dữ liệu trên máy và đám mây đã đồng bộ hoàn toàn');
+      const current = exportFullWorkspace();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current } }));
       }
+
+      const totalChapters = Array.isArray(current?.chapters) ? current.chapters.length : 0;
+      toast.success(`Đồng bộ hoàn tất! Hiện có ${totalChapters} chương`);
       return true;
     } catch (e: any) {
       setStatus('error');
