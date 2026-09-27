@@ -24,6 +24,20 @@ export {
   type CloudAccountKeys
 };
 
+// Cross-tab broadcast channel for immediate multi-tab synchronization on the same device
+let crossTabChannel: BroadcastChannel | null = null;
+if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+  try {
+    crossTabChannel = new BroadcastChannel('novelist_sync_channel');
+    crossTabChannel.onmessage = (event) => {
+      if (event.data?.type === 'SYNC_REFRESH') {
+        const local = exportFullWorkspace();
+        window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: local, fromCrossTab: true } }));
+      }
+    };
+  } catch {}
+}
+
 export function getUserEmail(): string {
   if (typeof window === 'undefined') return '';
   try {
@@ -82,12 +96,24 @@ export function exportFullWorkspace() {
   const lastModifiedStr = localStorage.getItem('novelist_last_modified');
   const lastModified = lastModifiedStr ? parseInt(lastModifiedStr, 10) : Date.now();
 
+  const rawChapters = getStoredJson('novelist_chapters', []);
+  const sanitizedChapters = Array.isArray(rawChapters) ? rawChapters.map((c: any) => ({
+    ...c,
+    updatedAt: Number(c.updatedAt || c.createdAt || lastModified)
+  })) : [];
+
+  const rawProjects = getStoredJson('novelist_projects', []);
+  const sanitizedProjects = Array.isArray(rawProjects) ? rawProjects.map((p: any) => ({
+    ...p,
+    updatedAt: Number(p.updatedAt || p.createdAt || lastModified)
+  })) : [];
+
   return {
     version: 2,
     lastModified,
     exportedAt: Date.now(),
-    projects: getStoredJson('novelist_projects', []),
-    chapters: getStoredJson('novelist_chapters', []),
+    projects: sanitizedProjects,
+    chapters: sanitizedChapters,
     characters: getStoredJson('novelist_characters', []),
     entities: getStoredJson('novelist_worldbuilding', getStoredJson('novelist_entities', [])),
     timeline: getStoredJson('novelist_timeline', getStoredJson('novelist_timeline_events', [])),
@@ -121,7 +147,6 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
         byProject.get(pid)!.push(ch);
       }
       for (const [, projectChapters] of byProject) {
-        // Sort by existing orderIndex, then by createdAt, then by ID
         projectChapters.sort((a: any, b: any) => {
           const oa = a.orderIndex || 0;
           const ob = b.orderIndex || 0;
@@ -131,29 +156,23 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
           if (ca !== cb) return ca - cb;
           return String(a.id || '').localeCompare(String(b.id || ''));
         });
-        // Re-assign sequential orderIndex
         projectChapters.forEach((ch: any, idx: number) => {
           ch.orderIndex = idx + 1;
         });
       }
     }
 
-    // Always recalculate project chapterCount and wordCount
+    // Recalculate project chapterCount and wordCount accurately
     if (Array.isArray(finalData.projects) && Array.isArray(finalData.chapters)) {
       finalData.projects = finalData.projects.map((p: any) => {
         const pChapters = finalData.chapters.filter((c: any) => c.projectId === p.id);
         const totalWords = pChapters.reduce((acc: number, c: any) => acc + (c.wordCount || 0), 0);
         return {
           ...p,
-          chapterCount: pChapters.length > 0 ? pChapters.length : (p.chapterCount || 0),
-          wordCount: Math.max(p.wordCount || 0, totalWords)
+          chapterCount: pChapters.length,
+          wordCount: totalWords
         };
       });
-    }
-
-    console.log(`[Sync Import] Importing workspace: ${Array.isArray(finalData.projects) ? finalData.projects.length : 0} projects, ${Array.isArray(finalData.chapters) ? finalData.chapters.length : 0} chapters`);
-    if (Array.isArray(finalData.chapters)) {
-      finalData.chapters.forEach((c: any) => console.log(`  [Import] Chapter: ${c.id} - ${c.title} (orderIndex: ${c.orderIndex}, words: ${c.wordCount || 0})`));
     }
 
     if (Array.isArray(finalData.projects)) {
@@ -202,8 +221,10 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
     }
     localStorage.setItem('novelist_last_synced', String(Date.now()));
 
-    // Notify active UI components across the application
+    // Broadcast update across active React components and other browser tabs
     window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: finalData } }));
+    crossTabChannel?.postMessage({ type: 'SYNC_REFRESH', timestamp: Date.now() });
+
     return true;
   } catch (err) {
     console.error('Failed to import workspace:', err);
@@ -232,17 +253,19 @@ function broadcastSyncStatus(status: SyncStatus, message?: string) {
   }));
 }
 
+let isPushing = false;
+
 /**
  * Push workspace to cloud.
- * CRITICAL ARCHITECTURAL SAFETY:
- * 1. Pre-merge: Fetches current remote snapshot first and performs a local merge so that
- *    an outdated client snapshot NEVER erases chapters written on another device (e.g. PC wrote Chapter 2).
- * 2. Multi-tier transport: Pushes to same-origin /api/sync (primary, bypasses mobile adblockers)
- *    AND direct KVDB keys (backup).
- * 3. Verifies that at least one transport succeeds before reporting 'synced'.
+ * CRITICAL ARCHITECTURAL SAFETY (Strict LWW):
+ * 1. Exports current workspace where every item has its true updatedAt.
+ * 2. Multi-tier transport: Same-origin /api/sync (primary) + direct KVDB (backup).
+ * 3. Absorbs any server-side canonical merged changes safely.
  */
 export async function pushSync(): Promise<{ success: boolean; stats?: any; error?: string }> {
   if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
+  if (isPushing) return { success: true };
+  isPushing = true;
 
   try {
     const local = exportFullWorkspace();
@@ -260,21 +283,13 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     broadcastSyncStatus('syncing', 'Đang lưu lên đám mây...');
 
     const workspace = exportFullWorkspace() || local;
-    workspace.lastModified = Date.now();
-    workspace.exportedAt = Date.now();
-
     const chapterCount = Array.isArray(workspace.chapters) ? workspace.chapters.length : 0;
     const projectCount = Array.isArray(workspace.projects) ? workspace.projects.length : 0;
-    console.log(`[Sync Push] email=${email}, key=${dataKey}, projects=${projectCount}, chapters=${chapterCount}`);
-    if (workspace.chapters) {
-      workspace.chapters.forEach((c: any) => console.log(`  [Push] Chapter: ${c.id} - ${c.title}`));
-    }
 
     const workspaceJson = JSON.stringify(workspace);
     let anySuccess = false;
 
     // 1. PRIMARY: Push to same-origin /api/sync
-    // Same-origin calls to /api/sync are NEVER blocked by Brave Shields, AdBlock, or CORS on mobile!
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -301,10 +316,8 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
         const json = await res.json().catch(() => null);
         if (json && json.success) {
           anySuccess = true;
-          console.log('[Sync Push] Successfully pushed via same-origin /api/sync');
-          // If server performed a smart merge with other devices, absorb the merged result
-          if (json.data && Array.isArray(json.data.chapters) && json.data.chapters.length > chapterCount) {
-            console.log('[Sync Push] Server merged additional chapters, updating local cache');
+          if (json.data && Array.isArray(json.data.chapters)) {
+            // Absorb any canonical updates that server unified
             importFullWorkspace(json.data, false);
           }
         }
@@ -313,7 +326,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
       console.warn('[Sync Push] Same-origin /api/sync failed:', e);
     }
 
-    // 2. SECONDARY: Also persist directly to KVDB cloud store across candidate keys
+    // 2. SECONDARY: Direct KVDB backup
     if (email && email.includes('@')) {
       const keysToPersist = Array.from(new Set([dataKey, legacyKey].filter(Boolean)));
       const pushPromises = keysToPersist.map(k => {
@@ -326,14 +339,10 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
           signal: controller.signal
         }).then(r => {
           clearTimeout(timeoutId);
-          if (r.ok) {
-            anySuccess = true;
-            console.log(`[Sync Push] Direct PUT succeeded for ${k}`);
-          }
+          if (r.ok) anySuccess = true;
           return r.ok;
         }).catch(err => {
           clearTimeout(timeoutId);
-          console.warn(`[Sync Push] Direct PUT failed for ${k}:`, err);
           return false;
         });
       });
@@ -342,9 +351,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
 
     if (anySuccess) {
       localStorage.setItem('novelist_last_synced', String(Date.now()));
-      localStorage.setItem('novelist_last_modified', String(workspace.lastModified));
       broadcastSyncStatus('synced', `Đã lưu ${chapterCount} chương lên đám mây`);
-      console.log(`[Sync Push] Success! Pushed ${chapterCount} chapters to cloud.`);
       return {
         success: true,
         stats: {
@@ -354,25 +361,30 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
         }
       };
     } else {
-      console.warn('[Sync Push] All sync targets failed to persist data');
       broadcastSyncStatus('error', 'Không thể kết nối đến đám mây để lưu');
       return { success: false, error: 'Không thể kết nối đến đám mây để lưu' };
     }
   } catch (err: any) {
-    console.error('[Sync Push] Error:', err);
     broadcastSyncStatus('error', err.message || 'Lỗi lưu đám mây');
     return { success: false, error: err.message || 'Lỗi mạng khi lưu đám mây' };
+  } finally {
+    isPushing = false;
   }
 }
 
+let isPulling = false;
+
 /**
  * Pull workspace from cloud.
- * MULTI-CANDIDATE DISCOVERY & BIDIRECTIONAL SMART MERGE:
- * Concurrently queries same-origin /api/sync and all candidate keys in KVDB.
- * Compares and unifies all remote versions, merges with local state, and updates UI.
+ * STRICT LWW MERGE:
+ * Concurrently queries same-origin /api/sync and KVDB.
+ * Merges with local workspace via pure Last-Write-Wins.
+ * If local has newer edits, automatically pushes them up so other devices receive them.
  */
 export async function pullSync(force: boolean = false): Promise<{ success: boolean; updated: boolean; error?: string }> {
   if (typeof window === 'undefined') return { success: false, updated: false, error: 'Not in browser' };
+  if (isPulling) return { success: true, updated: false };
+  isPulling = true;
 
   try {
     const email = getUserEmail();
@@ -386,7 +398,6 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     const tokenIdentifier = token ? token.replace(/^Bearer\s+/i, '').replace(/^token_/, '').slice(-32) : undefined;
     const { dataKey, legacyKey, rawLegacyKey, candidateKeys } = getCloudAccountKeys(email, tokenIdentifier);
 
-    // Query candidates across all possible keys
     const candidates: Array<{ data: any; source: string; chaptersCount: number; lastModified: number }> = [];
 
     const addCandidate = (rawData: any, source: string) => {
@@ -399,7 +410,6 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     };
 
     // 1. PRIMARY: Query same-origin server API route /api/sync
-    // Same-origin calls to /api/sync are NEVER blocked by Brave Shields or mobile privacy blockers!
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -411,12 +421,10 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       });
       clearTimeout(timeoutId);
       const ct = res.headers.get('content-type') || '';
-      // Ensure response is JSON (not SPA index.html or error page)
       if (res.ok && ct.includes('application/json')) {
         const json = await res.json().catch(() => null);
         if (json && json.success && json.data) {
           addCandidate(json.data, 'same-origin-/api/sync');
-          console.log(`[Sync Pull] Successfully pulled from /api/sync: ${Array.isArray(json.data.chapters) ? json.data.chapters.length : 0} chapters`);
         }
       }
     } catch (e) {
@@ -439,25 +447,21 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
               try {
                 const parsed = JSON.parse(text);
                 addCandidate(parsed, `direct-kvdb-${k}`);
-                console.log(`[Sync Pull] Pulled candidate from direct kvdb ${k}: ${Array.isArray(parsed.chapters || parsed.data?.chapters) ? (parsed.chapters || parsed.data?.chapters).length : 0} chapters`);
               } catch {}
             }
           }
         })
         .catch(err => {
           clearTimeout(timeoutId);
-          console.warn(`[Sync Pull] Direct kvdb ${k} fetch failed:`, err);
         });
     });
 
     await Promise.allSettled(kvdbFetches);
 
     if (candidates.length === 0) {
-      // Cloud has no snapshot yet for this user: check if local has data to seed to cloud
       const local = exportFullWorkspace();
       const hasLocalData = local && ((Array.isArray(local.projects) && local.projects.length > 0) || (Array.isArray(local.chapters) && local.chapters.length > 0));
       if (hasLocalData) {
-        console.log('[Sync Pull] Cloud has no data for this account yet. Seeding cloud with local workspace...');
         pushSync().catch(() => {});
         broadcastSyncStatus('synced', 'Đã khởi tạo bản lưu đám mây');
         return { success: true, updated: false };
@@ -466,8 +470,7 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       return { success: true, updated: false };
     }
 
-    // 3. Smart-merge ALL candidates together into unifiedRemote
-    // Candidates are sorted: highest lastModified first; if equal, candidate with more chapters wins
+    // 3. Unify candidates with strict LWW
     candidates.sort((a, b) => {
       if (b.lastModified !== a.lastModified) return b.lastModified - a.lastModified;
       return b.chaptersCount - a.chaptersCount;
@@ -479,45 +482,62 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       unifiedRemote = merged;
     }
 
-    console.log(`[Sync Pull] Unified remote snapshot: ${Array.isArray(unifiedRemote.chapters) ? unifiedRemote.chapters.length : 0} chapters, modified=${unifiedRemote.lastModified}`);
-
-    // 4. Smart two-way merge between local workspace and unified remote
+    // 4. Strict LWW merge between local and unified remote
     const local = exportFullWorkspace();
     const { merged, hasRemoteChanges, hasLocalChanges } = mergeWorkspaces(local, unifiedRemote);
 
-    const localChapterCount = Array.isArray(local?.chapters) ? local.chapters.length : 0;
-    const mergedChapterCount = Array.isArray(merged.chapters) ? merged.chapters.length : 0;
-    const localProjectCount = Array.isArray(local?.projects) ? local.projects.length : 0;
-    const mergedProjectCount = Array.isArray(merged.projects) ? merged.projects.length : 0;
-
-    const dataDiffers = mergedChapterCount !== localChapterCount
-      || mergedProjectCount !== localProjectCount
-      || hasRemoteChanges;
-
     let updated = false;
-    if (dataDiffers || force) {
-      // Pass false for merge param since we already merged above
+    if (hasRemoteChanges || force) {
       updated = importFullWorkspace(merged, false);
     }
 
-    // If local had changes that cloud didn't have, push the unified merged state up
+    // If local had changes that cloud didn't have, push the canonical merged state up
     if (hasLocalChanges) {
       pushSync().catch(() => {});
     }
 
     localStorage.setItem('novelist_last_synced', String(Date.now()));
-    broadcastSyncStatus('synced', `Đã cập nhật ${mergedChapterCount} chương`);
+    broadcastSyncStatus('synced', `Đã cập nhật ${Array.isArray(merged.chapters) ? merged.chapters.length : 0} chương`);
 
     return { success: true, updated: true };
   } catch (err: any) {
-    console.error('[Sync Pull] Error:', err);
     broadcastSyncStatus('error', err.message || 'Lỗi tải đồng bộ');
     return { success: false, updated: false, error: err.message };
+  } finally {
+    isPulling = false;
   }
 }
 
+/**
+ * Universal Bidirectional Sync:
+ * 1. Flushes active editor draft so pending keystrokes are saved to localStorage with Date.now().
+ * 2. Performs strict LWW pull & merge.
+ * 3. Pushes canonical result up to cloud.
+ */
+export async function syncBidirectional(): Promise<{ success: boolean; error?: string }> {
+  if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
+
+  broadcastSyncStatus('syncing', 'Đang đồng bộ dữ liệu hai chiều...');
+
+  // Flush active editor if currently editing
+  window.dispatchEvent(new CustomEvent('novelist-flush-save'));
+  await new Promise(r => setTimeout(r, 60));
+
+  const pullRes = await pullSync(true);
+  const pushRes = await pushSync();
+
+  const success = pullRes.success || pushRes.success;
+  if (success) {
+    broadcastSyncStatus('synced', 'Đồng bộ hai chiều hoàn tất');
+  } else {
+    broadcastSyncStatus('error', pullRes.error || pushRes.error || 'Lỗi đồng bộ');
+  }
+
+  return { success, error: pullRes.error || pushRes.error };
+}
+
 let debouncePushTimer: any = null;
-export function triggerAutoPush(delayMs: number = 1500) {
+export function triggerAutoPush(delayMs: number = 1000) {
   if (typeof window === 'undefined' || !isAutoSyncEnabled()) return;
 
   if (debouncePushTimer) clearTimeout(debouncePushTimer);
@@ -540,22 +560,24 @@ export function initAutoSync() {
   if (typeof window === 'undefined' || autoSyncInitialized) return;
   autoSyncInitialized = true;
 
-  // 1. Initial pull on load to catch up with changes made on other devices (e.g. PC or Phone)
+  // 1. Initial pull on load to catch up with changes made on other devices (PC or Phone)
   pullSync().catch(() => {});
 
-  // 2. Pull when window gains focus or tab becomes visible (user switches back to tab on phone/PC)
+  // 2. Pull when window gains focus or tab becomes visible
   window.addEventListener('focus', () => {
     pullSync().catch(() => {});
   });
 
   const handleMobileHide = () => {
     if (isAutoSyncEnabled()) {
+      window.dispatchEvent(new CustomEvent('novelist-flush-save'));
       pushSync().catch(() => {});
     }
   };
 
   // Push on pagehide or visibilitychange to hidden (crucial for mobile iOS/Android lifecycle)
   window.addEventListener('pagehide', handleMobileHide);
+  window.addEventListener('beforeunload', handleMobileHide);
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -565,13 +587,19 @@ export function initAutoSync() {
     }
   });
 
-  // 3. Periodic check every 15 seconds for responsive cross-device updates
+  // 3. Multi-Tab synchronization listener
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'novelist_chapters' || e.key === 'novelist_projects' || e.key === 'novelist_last_modified') {
+      const current = exportFullWorkspace();
+      window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current, fromStorage: true } }));
+    }
+  });
+
+  // 4. Real-time active polling interval: every 3.5 seconds when active
+  // Solves the problem where BOTH PC and Phone have web open at the same time!
   setInterval(() => {
     if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
       pullSync().catch(() => {});
     }
-  }, 15000);
-
-  // 4. Save any pending changes before unload
-  window.addEventListener('beforeunload', handleMobileHide);
+  }, 3500);
 }

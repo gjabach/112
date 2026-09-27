@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { initAutoSync, pullSync, pushSync, exportFullWorkspace, type SyncStatus } from '@/lib/sync';
+import { initAutoSync, syncBidirectional, exportFullWorkspace, type SyncStatus } from '@/lib/sync';
 import { Button } from '@/components/ui/button';
 import { Cloud, Check, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -59,12 +59,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const syncNow = useCallback(async (force: boolean = true) => {
     setStatus('syncing');
     try {
-      const pullRes = await pullSync(force);
-      const pushRes = await pushSync();
+      const res = await syncBidirectional();
       const current = exportFullWorkspace();
       const totalChapters = Array.isArray(current?.chapters) ? current.chapters.length : 0;
 
-      if (pullRes.success || pushRes.success) {
+      if (res.success) {
         setStatus('synced');
         setLastSynced(Date.now());
         if (typeof window !== 'undefined') {
@@ -74,7 +73,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         return true;
       } else {
         setStatus('error');
-        toast.error('Chưa thể kết nối đám mây: ' + (pullRes.error || pushRes.error || 'Vui lòng thử lại'));
+        toast.error('Chưa thể kết nối đám mây: ' + (res.error || 'Vui lòng thử lại'));
         return false;
       }
     } catch (e: any) {

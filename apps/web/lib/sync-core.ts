@@ -166,10 +166,12 @@ export function unwrapWorkspace(data: any): any {
 }
 
 /**
- * Intelligent bidirectional merge for workspaces.
+ * Intelligent bidirectional merge for workspaces based on strict Last-Write-Wins (LWW).
  * Guarantees that:
- * 1. If Device A (PC) wrote Chapter 2 and Device B (Mobile) only has Chapter 1, Chapter 2 is NEVER lost.
- * 2. If both have the same chapter, the richer / newer content is chosen.
+ * 1. "Cái nào là cuối cùng tại thời điểm viết thì ngay lập tức là bản chính"
+ *    The version written/saved latest in time (higher updatedAt) is strictly the canonical source of truth.
+ *    Any edits (additions, rewrites, trimming, typo fixes) are preserved faithfully without word count bias.
+ * 2. If Device A (PC) wrote Chapter 2 and Device B (Mobile) only has Chapter 1, Chapter 2 is NEVER lost (union of chapters).
  * 3. orderIndex collisions are resolved sequentially per project (1, 2, 3...).
  * 4. Project chapterCount and wordCount are strictly recomputed from the merged chapter list.
  */
@@ -210,7 +212,7 @@ export function mergeWorkspaces(
   const remoteOutline: any[] = Array.isArray(unwrappedRemote.outline || unwrappedRemote.outlines) 
     ? (unwrappedRemote.outline || unwrappedRemote.outlines) : [];
 
-  // --- Merge Chapters by id ---
+  // --- Merge Chapters by id with Strict Last-Write-Wins (LWW) ---
   const chapterMap = new Map<string, any>();
   for (const c of localChapters) {
     if (c?.id) chapterMap.set(c.id, { ...c });
@@ -224,50 +226,42 @@ export function mergeWorkspaces(
       chapterMap.set(rc.id, { ...rc });
       hasRemoteChanges = true;
     } else {
-      // Both have this chapter: compare content, title, words, and timestamps
-      const remoteUpdated = Number(rc.updatedAt || unwrappedRemote.lastModified || 0);
-      const localUpdated = Number(existing.updatedAt || unwrappedLocal.lastModified || 0);
-      
+      // Both have this chapter: compare granular write timestamps (updatedAt)
+      // Note: We use rc.updatedAt || rc.createdAt. We do NOT fall back to container lastModified
+      // because container lastModified is bumped on heartbeat/hide and would falsely make stale chapters appear newer.
+      const remoteUpdated = Number(rc.updatedAt || rc.createdAt || 0);
+      const localUpdated = Number(existing.updatedAt || existing.createdAt || 0);
+
       const remoteContentStr = typeof rc.content === 'string' ? rc.content : JSON.stringify(rc.content || '');
       const localContentStr = typeof existing.content === 'string' ? existing.content : JSON.stringify(existing.content || '');
-      const remoteWords = Number(rc.wordCount || 0) || remoteContentStr.length;
-      const localWords = Number(existing.wordCount || 0) || localContentStr.length;
-      const remoteHasContent = !!remoteContentStr.trim();
-      const localHasContent = !!localContentStr.trim();
       const isDifferent = remoteContentStr !== localContentStr || rc.title !== existing.title;
 
-      // CRITICAL DATA LOSS PREVENTION:
-      // A stale device with fewer words (e.g. 7,719 words on mobile) must NEVER overwrite
-      // a richer draft with more written words (e.g. 9,069 words on PC) simply because
-      // the mobile device was opened or autosaved later.
-      if (!localHasContent && remoteHasContent) {
+      if (!isDifferent) {
+        // Content and title are identical: unify with the latest timestamp
+        const maxUpdated = Math.max(remoteUpdated, localUpdated);
+        chapterMap.set(rc.id, { ...existing, ...rc, updatedAt: maxUpdated });
+      } else if (remoteUpdated > localUpdated) {
+        // REMOTE IS STRICTLY NEWER -> Remote is canonical (bản chính)
         chapterMap.set(rc.id, { ...existing, ...rc });
         hasRemoteChanges = true;
-      } else if (localHasContent && !remoteHasContent) {
+      } else if (localUpdated > remoteUpdated) {
+        // LOCAL IS STRICTLY NEWER -> Local is canonical (bản chính)
+        chapterMap.set(rc.id, { ...rc, ...existing });
         hasLocalChanges = true;
       } else {
-        // Both have content
-        if (remoteWords > localWords) {
+        // Timestamps are exactly equal but content differs (rare tie-break):
+        // Prefer non-empty content; if both non-empty, prefer remote for deterministic consensus across nodes
+        const remoteHasContent = !!remoteContentStr.trim();
+        const localHasContent = !!localContentStr.trim();
+        if (!localHasContent && remoteHasContent) {
           chapterMap.set(rc.id, { ...existing, ...rc });
           hasRemoteChanges = true;
-        } else if (localWords > remoteWords) {
+        } else if (localHasContent && !remoteHasContent) {
+          chapterMap.set(rc.id, { ...rc, ...existing });
           hasLocalChanges = true;
         } else {
-          // Equal word counts: compare timestamps, title, and content string
-          if (remoteUpdated > localUpdated || (isDifferent && remoteUpdated >= localUpdated)) {
-            chapterMap.set(rc.id, { ...existing, ...rc });
-            if (isDifferent) {
-              hasRemoteChanges = true;
-            }
-          } else if (localUpdated > remoteUpdated) {
-            if (isDifferent) {
-              hasLocalChanges = true;
-            }
-          } else if (isDifferent) {
-            // Identical word count & timestamp but differing text: prefer remote to break tie deterministically
-            chapterMap.set(rc.id, { ...existing, ...rc });
-            hasRemoteChanges = true;
-          }
+          chapterMap.set(rc.id, { ...existing, ...rc });
+          hasRemoteChanges = true;
         }
       }
     }
@@ -307,7 +301,7 @@ export function mergeWorkspaces(
     });
   }
 
-  // --- Merge Projects by id ---
+  // --- Merge Projects by id with Strict LWW ---
   const projectMap = new Map<string, any>();
   for (const p of localProjects) {
     if (p?.id) projectMap.set(p.id, { ...p });
@@ -320,13 +314,16 @@ export function mergeWorkspaces(
       projectMap.set(rp.id, { ...rp });
       hasRemoteChanges = true;
     } else {
-      const remoteUpdated = Number(rp.updatedAt || unwrappedRemote.lastModified || 0);
-      const localUpdated = Number(existing.updatedAt || unwrappedLocal.lastModified || 0);
-      if (remoteUpdated >= localUpdated) {
+      const remoteUpdated = Number(rp.updatedAt || rp.createdAt || 0);
+      const localUpdated = Number(existing.updatedAt || existing.createdAt || 0);
+      if (remoteUpdated > localUpdated) {
         projectMap.set(rp.id, { ...existing, ...rp });
-        if (remoteUpdated > localUpdated) hasRemoteChanges = true;
-      } else {
+        hasRemoteChanges = true;
+      } else if (localUpdated > remoteUpdated) {
+        projectMap.set(rp.id, { ...rp, ...existing });
         hasLocalChanges = true;
+      } else {
+        projectMap.set(rp.id, { ...existing, ...rp });
       }
     }
   }
@@ -340,14 +337,15 @@ export function mergeWorkspaces(
   const activeUser = unwrappedRemote.user || unwrappedLocal.user || null;
   const currentUserId = activeUser?.id;
 
+  const hasAnyChapters = localChapters.length > 0 || remoteChapters.length > 0;
   const mergedProjects = Array.from(projectMap.values()).map(p => {
     const pChapters = mergedChapters.filter(c => c.projectId === p.id);
     const calculatedWords = pChapters.reduce((acc, c) => acc + (c.wordCount || 0), 0);
     return {
       ...p,
       userId: p.userId || currentUserId || 'usr_default',
-      chapterCount: (localChapters.length > 0 || remoteChapters.length > 0) ? pChapters.length : (p.chapterCount || pChapters.length),
-      wordCount: Math.max(p.wordCount || 0, calculatedWords)
+      chapterCount: hasAnyChapters ? pChapters.length : (p.chapterCount || 0),
+      wordCount: hasAnyChapters ? calculatedWords : (p.wordCount || 0)
     };
   });
 
@@ -362,13 +360,16 @@ export function mergeWorkspaces(
         map.set(item.id, { ...item });
         hasRemoteChanges = true;
       } else {
-        const rUp = Number(item.updatedAt || 0);
-        const lUp = Number(existing.updatedAt || 0);
-        if (rUp >= lUp) {
+        const rUp = Number(item.updatedAt || item.createdAt || 0);
+        const lUp = Number(existing.updatedAt || existing.createdAt || 0);
+        if (rUp > lUp) {
           map.set(item.id, { ...existing, ...item });
-          if (rUp > lUp) hasRemoteChanges = true;
-        } else {
+          hasRemoteChanges = true;
+        } else if (lUp > rUp) {
+          map.set(item.id, { ...item, ...existing });
           hasLocalChanges = true;
+        } else {
+          map.set(item.id, { ...existing, ...item });
         }
       }
     }
@@ -389,6 +390,7 @@ export function mergeWorkspaces(
   const mergedLastModified = Math.max(
     Number(unwrappedLocal.lastModified || 0),
     Number(unwrappedRemote.lastModified || 0),
+    ...mergedChapters.map(c => Number(c.updatedAt || 0)),
     Date.now()
   );
 

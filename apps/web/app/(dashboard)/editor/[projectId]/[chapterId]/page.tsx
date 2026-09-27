@@ -68,6 +68,7 @@ export default function ChapterEditorPage() {
   titleRef.current = title;
   const chapterRef = useRef(chapter);
   chapterRef.current = chapter;
+  const lastKeystrokeTimeRef = useRef<number>(0);
 
   const [showInspector, setShowInspector] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -112,19 +113,26 @@ export default function ChapterEditorPage() {
           isDirtyRef.current = false;
         } else {
           // Background sync refresh:
-          // CRITICAL: NEVER overwrite user's in-progress typing or unsaved edits!
-          if (isDirtyRef.current || savingRef.current) {
-            return;
-          }
-          if (contentRef.current === chapterRef.current?.content) {
+          if (savingRef.current) return;
+          const incomingUpdated = Number(res.chapter.updatedAt || res.chapter.createdAt || 0);
+          const currentLocalUpdated = Number(chapterRef.current?.updatedAt || chapterRef.current?.createdAt || 0);
+          const isActivelyTypingNow = Date.now() - lastKeystrokeTimeRef.current < 1500;
+
+          if (incomingUpdated > currentLocalUpdated && !isActivelyTypingNow) {
+            const rawContent = res.chapter.content;
+            const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
+            setChapter(res.chapter);
+            setTitle(res.chapter.title || 'Chương');
+            setContent(safeContent);
+            isDirtyRef.current = false;
+            toast.info('Đã tự động cập nhật văn bản mới nhất từ đám mây', { id: 'sync-updated-notice', duration: 2500 });
+          } else if (!isDirtyRef.current && !isActivelyTypingNow && contentRef.current === chapterRef.current?.content) {
             const rawContent = res.chapter.content;
             const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
             if (safeContent !== contentRef.current) {
               setChapter(res.chapter);
               setTitle(res.chapter.title || 'Chương');
               setContent(safeContent);
-            } else {
-              setChapter(res.chapter);
             }
           }
         }
@@ -146,8 +154,7 @@ export default function ChapterEditorPage() {
       fetchChapterData(true);
       pullSync(true)
         .then(() => {
-          // Only refresh from cloud if user hasn't started typing yet
-          if (!isDirtyRef.current && !savingRef.current) {
+          if (!isDirtyRef.current && !savingRef.current && Date.now() - lastKeystrokeTimeRef.current > 1500) {
             fetchChapterData(true);
           }
         })
@@ -155,67 +162,68 @@ export default function ChapterEditorPage() {
     }
 
     const handleSync = async () => {
-      // 1. If currently saving, dirty, or current text differs from saved chapter: DO NOT RELOAD!
-      const isDirty = isDirtyRef.current || 
-                      savingRef.current || 
-                      (chapterRef.current && (contentRef.current !== chapterRef.current.content || titleRef.current !== chapterRef.current.title));
-      
-      if (isDirty) {
-        // Just refresh the chapter list in the sidebar (e.g. if new chapters were added on another device)
-        try {
-          const listRes = await apiFetch(`/api/projects/${projectId}/chapters`);
-          if (Array.isArray(listRes?.chapters)) {
-            setAllChapters(listRes.chapters);
-          }
-        } catch {}
-        return;
-      }
-
-      // 2. Safe to refresh chapter data
+      try {
+        const listRes = await apiFetch(`/api/projects/${projectId}/chapters`);
+        if (Array.isArray(listRes?.chapters)) {
+          setAllChapters(listRes.chapters);
+        }
+      } catch {}
       fetchChapterData(false);
     };
 
+    const handleFlushSync = () => {
+      if (contentRef.current !== chapterRef.current?.content || titleRef.current !== chapterRef.current?.title) {
+        saveChapter(contentRef.current, titleRef.current, true);
+      }
+    };
+
     window.addEventListener('novelist-sync-updated', handleSync);
-    return () => window.removeEventListener('novelist-sync-updated', handleSync);
+    window.addEventListener('novelist-flush-save', handleFlushSync);
+    return () => {
+      window.removeEventListener('novelist-sync-updated', handleSync);
+      window.removeEventListener('novelist-flush-save', handleFlushSync);
+    };
   }, [chapterId, projectId]);
 
   const saveChapter = useCallback(async (newContent?: string, newTitle?: string, isManual = false) => {
-    const contentToSave = newContent !== undefined ? newContent : content;
-    const titleToSave = newTitle !== undefined ? newTitle : title;
+    const contentToSave = newContent !== undefined ? newContent : contentRef.current;
+    const titleToSave = newTitle !== undefined ? newTitle : titleRef.current;
     setSaving(true);
     try {
+      const now = Date.now();
       await apiFetch(`/api/chapters/${chapterId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           title: titleToSave,
           content: contentToSave,
-          contentFormat: 'tiptap-json'
+          contentFormat: 'tiptap-json',
+          updatedAt: now
         })
       });
-      setLastSaved(Date.now());
-      setChapter((prev: any) => ({ ...prev, title: titleToSave, content: contentToSave }));
+      setLastSaved(now);
+      setChapter((prev: any) => ({ ...prev, title: titleToSave, content: contentToSave, updatedAt: now }));
       isDirtyRef.current = false;
       playSuccessSound();
       if (isManual) {
         pushSync().catch(() => {});
       } else {
-        triggerAutoPush(3000);
+        triggerAutoPush(1000);
       }
     } catch (e: any) {
       toast.error('Lỗi lưu: ' + e.message);
     } finally {
       setSaving(false);
     }
-  }, [content, title, chapterId]);
+  }, [chapterId]);
 
-  // Responsive auto-save: debounced 1.2s after user stops typing
+  // Responsive auto-save: debounced 700ms after user stops typing
   useEffect(() => {
     if (!chapter) return;
     if (content === chapter.content && title === chapter.title) return;
 
     const timer = setTimeout(() => {
       saveChapter(undefined, undefined, false);
-    }, 1200);
+    }, 700);
 
     return () => clearTimeout(timer);
   }, [content, title, chapter, saveChapter]);
@@ -674,6 +682,7 @@ export default function ChapterEditorPage() {
               content={content}
               onChange={(newContent) => {
                 isDirtyRef.current = true;
+                lastKeystrokeTimeRef.current = Date.now();
                 setContent(newContent);
               }}
               placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..."
@@ -683,6 +692,7 @@ export default function ChapterEditorPage() {
                 content={content}
                 onChange={(newContent) => {
                   isDirtyRef.current = true;
+                  lastKeystrokeTimeRef.current = Date.now();
                   setContent(newContent);
                 }}
                 placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..."

@@ -1022,29 +1022,111 @@ test('sync-core: getCloudAccountKeys generates deterministic isolated candidate 
   assert.ok(!keys.candidateKeys.includes('giabach0508_gmail_com'), 'Must NOT include raw giabach key');
 });
 
-test('sync-core: mergeWorkspaces guarantees longer draft with 9069 words is preserved over stale 7719 words regardless of timestamp', () => {
-  const mobileStaleWithNewerTimestamp = {
+test('sync-core: mergeWorkspaces guarantees latest write at timestamp T is immediately canonical (Last-Write-Wins)', () => {
+  // Scenario 1: Phone had 9069 words written at 10:00. PC edits text at 10:30, editing/refactoring text to 7719 words.
+  // The latest write (PC at 10:30) MUST BE the canonical version (bản chính).
+  const phoneOlderLongerDraft = {
     version: 2,
-    lastModified: 1790516828406,
+    lastModified: 1790514000000,
     projects: [{ id: 'p1', title: 'Thần Tự' }],
     chapters: [
-      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: '7719 words truncated text', wordCount: 7719, orderIndex: 2, updatedAt: 1790516828406 }
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: '9069 words old unedited text', wordCount: 9069, orderIndex: 1, updatedAt: 1790514000000 }
     ]
   };
 
-  const pcFullWithOlderTimestamp = {
+  const pcNewerRefactoredDraft = {
     version: 2,
-    lastModified: 1790514583048,
+    lastModified: 1790516000000,
     projects: [{ id: 'p1', title: 'Thần Tự' }],
     chapters: [
-      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: '9069 words complete text', wordCount: 9069, orderIndex: 2, updatedAt: 1790514583041 }
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: '7719 words edited refined text on PC', wordCount: 7719, orderIndex: 1, updatedAt: 1790516000000 }
     ]
   };
 
-  // Merge mobile and PC: 9069 words must win!
-  const { merged } = mergeWorkspaces(mobileStaleWithNewerTimestamp, pcFullWithOlderTimestamp);
-  assert.equal(merged.chapters[0].wordCount, 9069, 'Full 9069 words must be preserved');
-  assert.equal(merged.chapters[0].content, '9069 words complete text');
+  // When merging phone's older draft with PC's newer draft, PC must win!
+  const { merged: mergedPCWins, hasLocalChanges, hasRemoteChanges } = mergeWorkspaces(phoneOlderLongerDraft, pcNewerRefactoredDraft);
+  assert.equal(mergedPCWins.chapters[0].content, '7719 words edited refined text on PC', 'PC edit made later in time must be canonical');
+  assert.equal(mergedPCWins.chapters[0].wordCount, 7719);
+  assert.equal(hasRemoteChanges, true);
+
+  // Scenario 2: Reverse merge order - PC as local, Phone as remote
+  const { merged: mergedPCWins2 } = mergeWorkspaces(pcNewerRefactoredDraft, phoneOlderLongerDraft);
+  assert.equal(mergedPCWins2.chapters[0].content, '7719 words edited refined text on PC');
+  assert.equal(mergedPCWins2.chapters[0].wordCount, 7719);
+
+  // Scenario 3: Later, Phone edits Chapter 1 with new text at 11:00. Phone now becomes canonical!
+  const phoneBrandNewEdit = {
+    version: 2,
+    lastModified: 1790520000000,
+    projects: [{ id: 'p1', title: 'Thần Tự' }],
+    chapters: [
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: 'Nội dung mới nhất vừa sửa trên điện thoại', wordCount: 8, orderIndex: 1, updatedAt: 1790520000000 }
+    ]
+  };
+
+  const { merged: mergedPhoneWins } = mergeWorkspaces(mergedPCWins, phoneBrandNewEdit);
+  assert.equal(mergedPhoneWins.chapters[0].content, 'Nội dung mới nhất vừa sửa trên điện thoại', 'Latest write on phone must immediately become canonical');
+  assert.equal(mergedPhoneWins.chapters[0].wordCount, 8);
+});
+
+test('sync-core: Clicking sync on PC never reverts edited text with stale phone data', () => {
+  // PC edited Chapter 1 at 12:00
+  const pcWorkspace = {
+    version: 2,
+    lastModified: 1790600000000,
+    projects: [{ id: 'p1', title: 'Dự án' }],
+    chapters: [
+      { id: 'c1', projectId: 'p1', title: 'Chương 1', content: 'Bản thảo PC mới sửa rất tâm huyết', wordCount: 8, updatedAt: 1790600000000 }
+    ]
+  };
+
+  // Cloud store has stale phone data from 11:00
+  const cloudStaleSnapshot = {
+    version: 2,
+    lastModified: 1790590000000,
+    projects: [{ id: 'p1', title: 'Dự án' }],
+    chapters: [
+      { id: 'c1', projectId: 'p1', title: 'Chương 1', content: 'Bản thảo điện thoại cũ chưa sửa', wordCount: 6, updatedAt: 1790590000000 }
+    ]
+  };
+
+  // PC initiates sync (pull + merge)
+  const { merged, hasLocalChanges, hasRemoteChanges } = mergeWorkspaces(pcWorkspace, cloudStaleSnapshot);
+  assert.equal(merged.chapters[0].content, 'Bản thảo PC mới sửa rất tâm huyết', 'PC edited text must NEVER be overwritten');
+  assert.equal(hasLocalChanges, true, 'Must flag that PC has newer local changes to push up');
+  assert.equal(hasRemoteChanges, false);
+});
+
+test('sync-core: Concurrent active web on both PC & Phone preserves independent edits across chapters', () => {
+  // PC edited Chapter 2 while Phone edited Chapter 1
+  const pcState = {
+    version: 2,
+    projects: [{ id: 'p1', title: 'Tiểu thuyết' }],
+    chapters: [
+      { id: 'c1', projectId: 'p1', title: 'Chương 1 (cũ)', content: 'Nội dung 1 cũ', updatedAt: 1000 },
+      { id: 'c2', projectId: 'p1', title: 'Chương 2 (PC vừa viết)', content: 'Nội dung 2 mới tinh', wordCount: 500, updatedAt: 3000 }
+    ]
+  };
+
+  const phoneState = {
+    version: 2,
+    projects: [{ id: 'p1', title: 'Tiểu thuyết' }],
+    chapters: [
+      { id: 'c1', projectId: 'p1', title: 'Chương 1 (Phone vừa sửa)', content: 'Nội dung 1 mới tinh từ phone', wordCount: 400, updatedAt: 2500 }
+    ]
+  };
+
+  // Merging both active states
+  const { merged } = mergeWorkspaces(pcState, phoneState);
+  assert.equal(merged.chapters.length, 2, 'Both chapters must exist');
+
+  const c1 = merged.chapters.find(c => c.id === 'c1');
+  const c2 = merged.chapters.find(c => c.id === 'c2');
+
+  assert.equal(c1.content, 'Nội dung 1 mới tinh từ phone', 'Chapter 1 must take phone newer version');
+  assert.equal(c2.content, 'Nội dung 2 mới tinh', 'Chapter 2 must take PC newer version');
+  assert.equal(merged.projects[0].chapterCount, 2);
+  assert.equal(merged.projects[0].wordCount, 900);
 });
 
 test('sync-core: mergeWorkspaces guarantees PC chapters are never wiped when Mobile pushes fewer chapters', () => {

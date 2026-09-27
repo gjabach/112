@@ -36,6 +36,7 @@ interface TiptapEditorProps {
 
 export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true }: TiptapEditorProps) {
   const lastEmittedContentRef = useRef<string | null>(null);
+  const lastUserTypingTimeRef = useRef<number>(0);
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [initialSearchQuery, setInitialSearchQuery] = useState('');
 
@@ -71,6 +72,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
         const json = editor.getJSON();
         const jsonStr = JSON.stringify(json);
         lastEmittedContentRef.current = jsonStr;
+        lastUserTypingTimeRef.current = Date.now();
         onChange(jsonStr);
       } catch {}
     },
@@ -110,8 +112,8 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     // Skip if content matches what this editor instance just emitted to avoid circular re-renders
     if (content === lastEmittedContentRef.current) return;
 
-    // Guard: If editor is focused and already has content, do not clobber active typing session
-    if (editor.isFocused && !editor.isEmpty) {
+    // Guard: If user was actively typing on this device within the last 1500ms, do not clobber active keystrokes
+    if (Date.now() - lastUserTypingTimeRef.current < 1500) {
       return;
     }
 
