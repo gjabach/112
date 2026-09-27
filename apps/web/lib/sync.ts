@@ -234,18 +234,25 @@ export function mergeWorkspaces(local: any, remote: any): { merged: any; hasRemo
       chapterMap.set(rc.id, { ...rc });
       hasRemoteChanges = true;
     } else {
-      // Both have this chapter: take newer updatedAt or non-empty content
+      // Both have this chapter: compare content, title, and timestamps
       const remoteUpdated = rc.updatedAt || unwrappedRemote.lastModified || 0;
       const localUpdated = existing.updatedAt || localObj.lastModified || 0;
       
-      const remoteHasContent = !!(rc.content && (typeof rc.content === 'string' ? rc.content.trim() : Object.keys(rc.content).length > 0));
-      const localHasContent = !!(existing.content && (typeof existing.content === 'string' ? existing.content.trim() : Object.keys(existing.content).length > 0));
+      const remoteContentStr = typeof rc.content === 'string' ? rc.content : JSON.stringify(rc.content || '');
+      const localContentStr = typeof existing.content === 'string' ? existing.content : JSON.stringify(existing.content || '');
+      const remoteHasContent = !!remoteContentStr.trim();
+      const localHasContent = !!localContentStr.trim();
+      const isDifferent = remoteContentStr !== localContentStr || rc.title !== existing.title;
 
-      if ((remoteHasContent && !localHasContent) || remoteUpdated > localUpdated) {
+      if ((remoteHasContent && !localHasContent) || remoteUpdated > localUpdated || (isDifferent && remoteUpdated >= localUpdated)) {
         chapterMap.set(rc.id, { ...existing, ...rc });
-        hasRemoteChanges = true;
+        if (isDifferent || remoteUpdated > localUpdated) {
+          hasRemoteChanges = true;
+        }
       } else if (localUpdated > remoteUpdated || (localHasContent && !remoteHasContent)) {
-        hasLocalChanges = true;
+        if (isDifferent) {
+          hasLocalChanges = true;
+        }
       }
     }
   }
@@ -735,12 +742,12 @@ export function initAutoSync() {
     }
   });
 
-  // 3. Periodic check every 25 seconds
+  // 3. Periodic check every 8 seconds for responsive cross-device updates
   setInterval(() => {
     if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
       pullSync().catch(() => {});
     }
-  }, 25000);
+  }, 8000);
 
   // 4. Save any pending changes before unload
   window.addEventListener('beforeunload', () => {

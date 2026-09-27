@@ -141,18 +141,38 @@ export async function POST(req: NextRequest) {
     const lastModified = body.lastModified || Date.now();
     const now = Date.now();
 
+    const storePayload = {
+      ...data,
+      data,
+      lastModified,
+      syncedAt: now
+    };
+
     secureSyncMemoryStore.set(targetKey, {
       lastModified,
       syncedAt: now,
-      data
+      data: storePayload
     });
 
+    const email = data?.user?.email || (typeof body?.email === 'string' ? body.email : '');
+    const cleanEmail = email ? email.trim().toLowerCase() : '';
+    const legacyKey = cleanEmail ? `d_${cleanEmail.replace(/[^a-z0-9_-]/g, '_')}` : '';
+
     try {
+      const payloadStr = JSON.stringify(storePayload);
       await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${targetKey}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lastModified, syncedAt: now, data })
+        body: payloadStr
       });
+
+      if (legacyKey && legacyKey !== targetKey) {
+        await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: payloadStr
+        }).catch(() => {});
+      }
     } catch {}
 
     const projectsCount = Array.isArray(data.projects) ? data.projects.length : 0;

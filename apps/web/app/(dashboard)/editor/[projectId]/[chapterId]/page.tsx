@@ -112,6 +112,11 @@ export default function ChapterEditorPage() {
   useEffect(() => {
     if (chapterId && projectId) {
       fetchChapterData();
+      pullSync(true)
+        .then(() => {
+          fetchChapterData();
+        })
+        .catch(() => {});
     }
     const handleSync = () => {
       fetchChapterData();
@@ -144,15 +149,39 @@ export default function ChapterEditorPage() {
     }
   }, [content, title, chapterId]);
 
-  // Auto-save every 5 seconds if changed
+  // Responsive auto-save: debounced 1.2s after user stops typing
   useEffect(() => {
     if (!chapter) return;
-    const interval = setInterval(() => {
-      if (content !== chapter.content || title !== chapter.title) {
+    if (content === chapter.content && title === chapter.title) return;
+
+    const timer = setTimeout(() => {
+      saveChapter();
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [content, title, chapter, saveChapter]);
+
+  // Global Ctrl+S / Cmd+S save shortcut
+  useEffect(() => {
+    const handleSaveShortcut = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
         saveChapter();
       }
-    }, 5000);
-    return () => clearInterval(interval);
+    };
+    window.addEventListener('keydown', handleSaveShortcut);
+    return () => window.removeEventListener('keydown', handleSaveShortcut);
+  }, [saveChapter]);
+
+  // Save before unload / closing tab
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (content !== chapter?.content || title !== chapter?.title) {
+        saveChapter();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [content, title, chapter, saveChapter]);
 
   // Chapter Navigation
@@ -400,11 +429,20 @@ export default function ChapterEditorPage() {
       {/* Header */}
       <header className="border-b bg-card/95 backdrop-blur-sm shrink-0 z-30 shadow-xs">
         <div className="flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 max-w-[1600px] mx-auto w-full">
-          <Link href={`/editor/${projectId}`}>
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" title="Quay lại mục lục">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="h-8 w-8 shrink-0" 
+            title="Quay lại mục lục"
+            onClick={async () => {
+              if (content !== chapter?.content || title !== chapter?.title) {
+                await saveChapter().catch(() => {});
+              }
+              router.push(`/editor/${projectId}`);
+            }}
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
 
           {/* Chapter Quick Switcher */}
           <div className="flex items-center gap-0.5 border-r pr-1.5 mr-0.5 shrink-0">
