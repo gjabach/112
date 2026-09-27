@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { apiFetch, formatRelativeTime } from '@/lib/utils';
+import { pullSync } from '@/lib/sync';
 import { toast } from 'sonner';
 import { Plus, BookOpen, Search, Trash2, Copy, FileText, Sparkles, Layers, Edit3, Upload, Image as ImageIcon, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -64,6 +65,12 @@ export default function ProjectsPage() {
 
   useEffect(() => { 
     fetchProjects(); 
+    pullSync(true)
+      .then(() => {
+        fetchProjects();
+      })
+      .catch(() => {});
+
     const handleSyncUpdated = () => fetchProjects();
     window.addEventListener('novelist-sync-updated', handleSyncUpdated);
     return () => window.removeEventListener('novelist-sync-updated', handleSyncUpdated);
