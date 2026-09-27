@@ -150,7 +150,7 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
 export function MechKeyboardToggle() {
   const [enabled, setEnabled] = useState(false);
   const [switchType, setSwitchType] = useState('cream');
-  const [volume, setVolume] = useState(60);
+  const [volume, setVolume] = useState(80);
   const [spatialAudio, setSpatialAudio] = useState(true);
   const [keyUpSound, setKeyUpSound] = useState(true);
   const [open, setOpen] = useState(false);

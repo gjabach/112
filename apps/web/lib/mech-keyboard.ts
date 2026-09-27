@@ -173,11 +173,12 @@ interface SpriteConfig {
 class MechKeyboardManager {
   public enabled: boolean = false;
   public switchType: string = 'cream';
-  public volume: number = 0.6;
+  public volume: number = 0.8;
   public spatialAudio: boolean = true;
   public keyUpSound: boolean = true;
 
   private audioCtx: AudioContext | null = null;
+  private masterCompressor: DynamicsCompressorNode | null = null;
   private bufferCache: Map<string, AudioBuffer> = new Map();
   private spriteConfigCache: Map<string, SpriteConfig> = new Map();
   private loadingPacks: Set<string> = new Set();
@@ -209,6 +210,8 @@ class MechKeyboardManager {
       if (savedVolume !== null) {
         const v = parseFloat(savedVolume);
         if (!isNaN(v)) this.volume = Math.max(0, Math.min(1, v));
+      } else {
+        this.volume = 0.8;
       }
 
       const savedSpatial = localStorage.getItem('novelist_mech_keyboard_spatial');
@@ -235,12 +238,29 @@ class MechKeyboardManager {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioContextClass) {
         this.audioCtx = new AudioContextClass();
+        try {
+          this.masterCompressor = this.audioCtx.createDynamicsCompressor();
+          this.masterCompressor.threshold.setValueAtTime(-1.0, this.audioCtx.currentTime);
+          this.masterCompressor.knee.setValueAtTime(3.0, this.audioCtx.currentTime);
+          this.masterCompressor.ratio.setValueAtTime(10.0, this.audioCtx.currentTime);
+          this.masterCompressor.attack.setValueAtTime(0.002, this.audioCtx.currentTime);
+          this.masterCompressor.release.setValueAtTime(0.04, this.audioCtx.currentTime);
+          this.masterCompressor.connect(this.audioCtx.destination);
+        } catch {
+          this.masterCompressor = null;
+        }
       }
     }
     if (this.audioCtx?.state === 'suspended') {
       this.audioCtx.resume().catch(() => {});
     }
     return this.audioCtx;
+  }
+
+  private getDestinationNode(): AudioNode {
+    if (this.masterCompressor) return this.masterCompressor;
+    if (this.audioCtx) return this.audioCtx.destination;
+    throw new Error('AudioContext not initialized');
   }
 
   public setEnabled(val: boolean) {
@@ -593,11 +613,14 @@ class MechKeyboardManager {
     const pitchJitter = 1.0 + (Math.random() - 0.5) * 0.03;
     source.playbackRate.setValueAtTime(pitchJitter, t);
 
-    // Master volume with subtle velocity jitter
+    // Master volume with subtle velocity jitter and 2.0x boost
+    const VOLUME_BOOST = 2.0;
     const gainNode = this.audioCtx.createGain();
     const velocityJitter = 0.96 + Math.random() * 0.08;
-    const baseVol = isDown ? this.volume : this.volume * 0.75;
+    const baseVol = (isDown ? this.volume : this.volume * 0.75) * VOLUME_BOOST;
     gainNode.gain.setValueAtTime(baseVol * velocityJitter * volMultiplier, t);
+
+    const dest = this.getDestinationNode();
 
     // Stereo Panning Node
     if (this.spatialAudio && typeof this.audioCtx.createStereoPanner === 'function') {
@@ -605,10 +628,10 @@ class MechKeyboardManager {
       panner.pan.setValueAtTime(Math.max(-0.8, Math.min(0.8, pan)), t);
       source.connect(gainNode);
       gainNode.connect(panner);
-      panner.connect(this.audioCtx.destination);
+      panner.connect(dest);
     } else {
       source.connect(gainNode);
-      gainNode.connect(this.audioCtx.destination);
+      gainNode.connect(dest);
     }
 
     source.start(t);
@@ -633,20 +656,24 @@ class MechKeyboardManager {
     const pitchJitter = 1.0 + (Math.random() - 0.5) * 0.03;
     source.playbackRate.setValueAtTime(pitchJitter, t);
 
+    // 2.0x volume boost
+    const VOLUME_BOOST = 2.0;
     const gainNode = this.audioCtx.createGain();
     const velocityJitter = 0.95 + Math.random() * 0.1;
-    const baseVol = isDown ? this.volume : this.volume * 0.7;
+    const baseVol = (isDown ? this.volume : this.volume * 0.7) * VOLUME_BOOST;
     gainNode.gain.setValueAtTime(baseVol * velocityJitter, t);
+
+    const dest = this.getDestinationNode();
 
     if (this.spatialAudio && typeof this.audioCtx.createStereoPanner === 'function') {
       const panner = this.audioCtx.createStereoPanner();
       panner.pan.setValueAtTime(Math.max(-0.8, Math.min(0.8, pan)), t);
       source.connect(gainNode);
       gainNode.connect(panner);
-      panner.connect(this.audioCtx.destination);
+      panner.connect(dest);
     } else {
       source.connect(gainNode);
-      gainNode.connect(this.audioCtx.destination);
+      gainNode.connect(dest);
     }
 
     source.start(t, offsetSec, durationSec);
@@ -664,17 +691,18 @@ class MechKeyboardManager {
     if (!this.audioCtx || this.volume <= 0) return;
     const t = this.audioCtx.currentTime;
 
+    const VOLUME_BOOST = 2.0;
     const masterGain = this.audioCtx.createGain();
-    masterGain.gain.setValueAtTime(this.volume * (isDown ? 0.45 : 0.25), t);
+    masterGain.gain.setValueAtTime(this.volume * (isDown ? 0.9 : 0.5) * VOLUME_BOOST, t);
 
-    let destNode: AudioNode = this.audioCtx.destination;
+    const dest = this.getDestinationNode();
     if (this.spatialAudio && typeof this.audioCtx.createStereoPanner === 'function') {
       const panner = this.audioCtx.createStereoPanner();
       panner.pan.setValueAtTime(pan, t);
       masterGain.connect(panner);
-      panner.connect(this.audioCtx.destination);
+      panner.connect(dest);
     } else {
-      masterGain.connect(destNode);
+      masterGain.connect(dest);
     }
 
     // 1. Key impact noise transient (3ms)
