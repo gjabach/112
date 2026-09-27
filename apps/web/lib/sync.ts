@@ -37,14 +37,6 @@ export function getUserEmail(): string {
       const auth = JSON.parse(authStr);
       if (auth.state?.user?.email) return normalizeEmail(auth.state.user.email);
     }
-    const remEmail = localStorage.getItem('novelist_remember_email');
-    if (remEmail && remEmail.includes('@')) {
-      return normalizeEmail(remEmail);
-    }
-    const savedKey = localStorage.getItem('novelist_sync_key');
-    if (savedKey && savedKey.includes('@')) {
-      return normalizeEmail(savedKey);
-    }
   } catch {}
   return '';
 }
@@ -153,7 +145,7 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
         const totalWords = pChapters.reduce((acc: number, c: any) => acc + (c.wordCount || 0), 0);
         return {
           ...p,
-          chapterCount: pChapters.length,
+          chapterCount: pChapters.length > 0 ? pChapters.length : (p.chapterCount || 0),
           wordCount: Math.max(p.wordCount || 0, totalWords)
         };
       });
@@ -257,11 +249,13 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     if (!local) return { success: false, error: 'No data to sync' };
 
     const email = getUserEmail();
+    if (!email || !email.includes('@')) {
+      return { success: true };
+    }
+
     const token = getAuthToken();
     const tokenIdentifier = token ? token.replace(/^Bearer\s+/i, '').replace(/^token_/, '').slice(-32) : undefined;
-    const { dataKey, legacyKey, rawLegacyKey, candidateKeys } = email 
-      ? getCloudAccountKeys(email, tokenIdentifier) 
-      : { dataKey: 'd_default_user', legacyKey: 'd_default_user', rawLegacyKey: 'default_user', candidateKeys: ['d_default_user'] };
+    const { dataKey, legacyKey, rawLegacyKey, candidateKeys } = getCloudAccountKeys(email, tokenIdentifier);
 
     broadcastSyncStatus('syncing', 'Đang lưu lên đám mây...');
 

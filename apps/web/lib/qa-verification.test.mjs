@@ -1000,23 +1000,51 @@ test('Smart Merge: Merging PC cloud workspace (with Chapter 2) into Mobile (with
 
 import { mergeWorkspaces, getEmailAliases, getCloudAccountKeys, unwrapWorkspace } from './sync-core.ts';
 
-test('sync-core: getEmailAliases handles Vietnamese Telex autocorrect gjabach <-> giabach', () => {
+test('sync-core: strict account isolation ensures gjabach0508@gmail.com and giabach0508@gmail.com are never aliased or cross-merged', () => {
   const aliases1 = getEmailAliases('gjabach0508@gmail.com');
-  assert.ok(aliases1.includes('gjabach0508@gmail.com'));
-  assert.ok(aliases1.includes('giabach0508@gmail.com'), 'Must generate giabach alias when given gjabach');
+  assert.equal(aliases1.length, 1);
+  assert.equal(aliases1[0], 'gjabach0508@gmail.com');
+  assert.ok(!aliases1.includes('giabach0508@gmail.com'), 'Must NEVER include giabach alias when given gjabach');
 
   const aliases2 = getEmailAliases('giabach0508@gmail.com');
-  assert.ok(aliases2.includes('giabach0508@gmail.com'));
-  assert.ok(aliases2.includes('gjabach0508@gmail.com'), 'Must generate gjabach alias when given giabach');
+  assert.equal(aliases2.length, 1);
+  assert.equal(aliases2[0], 'giabach0508@gmail.com');
+  assert.ok(!aliases2.includes('gjabach0508@gmail.com'), 'Must NEVER include gjabach alias when given giabach');
 });
 
-test('sync-core: getCloudAccountKeys generates deterministic multi-candidate keys including token & alias keys', () => {
+test('sync-core: getCloudAccountKeys generates deterministic isolated candidate keys without cross-account leakage', () => {
   const keys = getCloudAccountKeys('gjabach0508@gmail.com', 'usr_1790312548870_iqn42');
   assert.equal(keys.dataKey, 'd_ebe074540b53a09b4596c29e6e655bef67e626f4a7ea712aef86866ba5ff10a2');
   assert.ok(keys.candidateKeys.includes('d_ebe074540b53a09b4596c29e6e655bef67e626f4a7ea712aef86866ba5ff10a2'));
   assert.ok(keys.candidateKeys.includes('d_gjabach0508_gmail_com'));
   assert.ok(keys.candidateKeys.includes('d_token_usr_1790312548870_iqn42'));
-  assert.ok(keys.candidateKeys.includes('d_giabach0508_gmail_com'), 'Must include giabach alias candidate key');
+  assert.ok(!keys.candidateKeys.includes('d_giabach0508_gmail_com'), 'Must NOT include giabach alias candidate key');
+  assert.ok(!keys.candidateKeys.includes('giabach0508_gmail_com'), 'Must NOT include raw giabach key');
+});
+
+test('sync-core: mergeWorkspaces guarantees longer draft with 9069 words is preserved over stale 7719 words regardless of timestamp', () => {
+  const mobileStaleWithNewerTimestamp = {
+    version: 2,
+    lastModified: 1790516828406,
+    projects: [{ id: 'p1', title: 'Thần Tự' }],
+    chapters: [
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: '7719 words truncated text', wordCount: 7719, orderIndex: 2, updatedAt: 1790516828406 }
+    ]
+  };
+
+  const pcFullWithOlderTimestamp = {
+    version: 2,
+    lastModified: 1790514583048,
+    projects: [{ id: 'p1', title: 'Thần Tự' }],
+    chapters: [
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: '9069 words complete text', wordCount: 9069, orderIndex: 2, updatedAt: 1790514583041 }
+    ]
+  };
+
+  // Merge mobile and PC: 9069 words must win!
+  const { merged } = mergeWorkspaces(mobileStaleWithNewerTimestamp, pcFullWithOlderTimestamp);
+  assert.equal(merged.chapters[0].wordCount, 9069, 'Full 9069 words must be preserved');
+  assert.equal(merged.chapters[0].content, '9069 words complete text');
 });
 
 test('sync-core: mergeWorkspaces guarantees PC chapters are never wiped when Mobile pushes fewer chapters', () => {
@@ -1086,4 +1114,45 @@ test('sync-core: unwrapWorkspace handles nested data wrapper gracefully', () => 
   const wrappedTwice = { data: { data: { projects: [{ id: 'p2' }], chapters: [] } } };
   const unwrapped2 = unwrapWorkspace(wrappedTwice);
   assert.equal(unwrapped2.projects[0].id, 'p2');
+});
+
+test('Account isolation: logging in as gjabach0508@gmail.com on mobile strictly separates from giabach0508@gmail.com', () => {
+  // Mobile storage currently has giabach0508@gmail.com data cached
+  const mobileStorage = new Map();
+  mobileStorage.set('novelist_users', JSON.stringify([
+    { id: 'usr_giabach', email: 'giabach0508@gmail.com', passwordHash: 'hash1' },
+    { id: 'usr_gjabach', email: 'gjabach0508@gmail.com', passwordHash: 'hash2' }
+  ]));
+  mobileStorage.set('novelist_current_user', JSON.stringify({ id: 'usr_giabach', email: 'giabach0508@gmail.com' }));
+  mobileStorage.set('novelist_projects', JSON.stringify([{ id: 'proj_2', title: '2', userId: 'usr_giabach' }]));
+
+  // User logs in with gjabach0508@gmail.com
+  const users = JSON.parse(mobileStorage.get('novelist_users'));
+  const cleanEmail = 'gjabach0508@gmail.com';
+  const targetUser = users.find(u => u.email === cleanEmail);
+
+  // Assert targetUser is NOT giabach
+  assert.equal(targetUser.id, 'usr_gjabach');
+  assert.equal(targetUser.email, 'gjabach0508@gmail.com');
+
+  // Verify candidate keys are strictly isolated
+  const keys = getCloudAccountKeys(cleanEmail, targetUser.id);
+  assert.ok(!keys.candidateKeys.some(k => k.includes('giabach')));
+
+  // Switch account: verify cache purge ensures project '2' is cleared
+  const prevUser = JSON.parse(mobileStorage.get('novelist_current_user'));
+  if (prevUser && prevUser.email !== cleanEmail) {
+    mobileStorage.set('novelist_projects', JSON.stringify([]));
+  }
+
+  const cloudGjabachProjects = [{ id: 'proj_than_tu', title: 'Thần Tự', userId: 'usr_gjabach', chapterCount: 2, wordCount: 10953 }];
+  const { merged } = mergeWorkspaces(
+    { projects: JSON.parse(mobileStorage.get('novelist_projects')) },
+    { projects: cloudGjabachProjects }
+  );
+
+  assert.equal(merged.projects.length, 1);
+  assert.equal(merged.projects[0].title, 'Thần Tự');
+  assert.equal(merged.projects[0].chapterCount, 2);
+  assert.equal(merged.projects[0].wordCount, 10953);
 });

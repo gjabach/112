@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail, getEmailAliases } from './sync';
+import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail } from './sync';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -367,31 +367,23 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     }
 
     const { userKey, dataKey, legacyKey, candidateKeys } = getCloudAccountKeys(cleanEmail);
-    const emailAliases = getEmailAliases(cleanEmail);
 
     let users = getStorage('novelist_users', []);
-    let user = users.find((u: any) => {
-      const uEmail = normalizeEmail(u.email);
-      return emailAliases.includes(uEmail);
-    });
+    let user = users.find((u: any) => normalizeEmail(u.email) === cleanEmail);
 
     // If not found in this device's local storage (e.g. logging into phone for first time), look up from cloud
     if (!user) {
-      const keysToTry = [userKey, ...emailAliases.map(a => `u_${sha256(a + ':novelist_auth_v2')}`)];
-      for (const k of Array.from(new Set(keysToTry))) {
-        try {
-          const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`);
-          if (res.ok) {
-            const remoteUser = await res.json();
-            if (remoteUser && remoteUser.email) {
-              user = remoteUser;
-              users.push(user);
-              setStorage('novelist_users', users);
-              break;
-            }
+      try {
+        const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`);
+        if (res.ok) {
+          const remoteUser = await res.json();
+          if (remoteUser && normalizeEmail(remoteUser.email) === cleanEmail) {
+            user = remoteUser;
+            users.push(user);
+            setStorage('novelist_users', users);
           }
-        } catch {}
-      }
+        }
+      } catch {}
     }
 
     if (!user) {
@@ -436,6 +428,27 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
         localStorage.setItem(`novelist_api_key_${cleanEmail}`, safeUser.aiApiKey);
       }
     } catch {}
+
+    // CRITICAL: If switching accounts (or logging in afresh on a shared device), purge previous user local cache
+    const prevUser = getStorage('novelist_current_user', null);
+    const isDifferentUser = prevUser && normalizeEmail(prevUser.email) !== cleanEmail;
+    if (isDifferentUser) {
+      console.log(`[Login] Switching account from ${prevUser.email} to ${cleanEmail}, clearing previous user local cache`);
+      setStorage('novelist_projects', []);
+      setStorage('novelist_chapters', []);
+      setStorage('novelist_characters', []);
+      setStorage('novelist_worldbuilding', []);
+      setStorage('novelist_entities', []);
+      setStorage('novelist_timeline', []);
+      setStorage('novelist_timeline_events', []);
+      setStorage('novelist_timeline_eras', []);
+      setStorage('novelist_outline', []);
+      setStorage('novelist_outlines', []);
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('novelist_last_modified');
+        localStorage.removeItem('novelist_last_synced');
+      }
+    }
 
     setStorage('novelist_current_user', safeUser);
     if (typeof window !== 'undefined') {

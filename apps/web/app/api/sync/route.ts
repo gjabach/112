@@ -241,6 +241,10 @@ export async function POST(req: NextRequest) {
       targetKeysToPersist.add(cloudKeys.legacyKey);
       targetKeysToPersist.add(cloudKeys.rawLegacyKey);
     }
+    if (tokenIdentifier && tokenIdentifier !== 'anonymous') {
+      targetKeysToPersist.add(`d_token_${tokenIdentifier}`);
+      targetKeysToPersist.add(`d_${tokenIdentifier}`);
+    }
 
     try {
       const payloadStr = JSON.stringify(storePayload);

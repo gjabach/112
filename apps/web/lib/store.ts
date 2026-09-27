@@ -80,10 +80,27 @@ export const useAuthStore = create<AuthState>()(
           } catch {}
           localStorage.removeItem('token');
           localStorage.removeItem('novelist_current_user');
+          localStorage.removeItem('novelist_sync_key');
+
+          // Clear active workspace so subsequent logins or guests on this device never see this user's novels
+          localStorage.removeItem('novelist_projects');
+          localStorage.removeItem('novelist_chapters');
+          localStorage.removeItem('novelist_characters');
+          localStorage.removeItem('novelist_worldbuilding');
+          localStorage.removeItem('novelist_entities');
+          localStorage.removeItem('novelist_timeline');
+          localStorage.removeItem('novelist_timeline_events');
+          localStorage.removeItem('novelist_timeline_eras');
+          localStorage.removeItem('novelist_outline');
+          localStorage.removeItem('novelist_outlines');
+          localStorage.removeItem('novelist_last_modified');
+          localStorage.removeItem('novelist_last_synced');
+
           try {
             import('./sync').then(m => m.resetAutoSyncState()).catch(() => {});
           } catch {}
           // Preserve ai_api_key in localStorage so logging out and back in never loses the user's key
+          window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: { projects: [], chapters: [] } } }));
         }
         set({ user: null, token: null, isAuthenticated: false });
       },
