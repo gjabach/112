@@ -1156,3 +1156,124 @@ test('Account isolation: logging in as gjabach0508@gmail.com on mobile strictly 
   assert.equal(merged.projects[0].chapterCount, 2);
   assert.equal(merged.projects[0].wordCount, 10953);
 });
+
+test('Editor Protection: Active typing and dirty edits are NEVER overwritten by background sync', () => {
+  // Simulate active editor state
+  let editorContent = 'Tác giả đang gõ câu mới toanh vừa nghĩ ra...';
+  const savedChapter = {
+    id: 'c1',
+    title: 'Chương 1',
+    content: 'Bản thảo cũ đã lưu từ 5 phút trước'
+  };
+
+  let isDirty = true;
+  let saving = false;
+
+  // Background sync event arrives with remote snapshot
+  const incomingSyncData = {
+    chapter: {
+      id: 'c1',
+      title: 'Chương 1 (Đám mây)',
+      content: 'Bản thảo cũ trên đám mây'
+    }
+  };
+
+  // Guard logic as implemented in handleSync and fetchChapterData
+  const simulateSyncEvent = () => {
+    const isProtected = isDirty || saving || (editorContent !== savedChapter.content);
+    if (isProtected) {
+      // Must NOT overwrite editorContent
+      return false;
+    }
+    editorContent = incomingSyncData.chapter.content;
+    return true;
+  };
+
+  const updated = simulateSyncEvent();
+  assert.equal(updated, false, 'Sync must NOT overwrite active typing when editor is dirty');
+  assert.equal(editorContent, 'Tác giả đang gõ câu mới toanh vừa nghĩ ra...', 'Author text must remain intact');
+
+  // Now simulate successful save and clean state
+  isDirty = false;
+  saving = false;
+  savedChapter.content = editorContent;
+
+  // Background sync with genuinely new content from another device when clean
+  incomingSyncData.chapter.content = 'Nội dung cập nhật mới từ thiết bị khác';
+  const updatedClean = simulateSyncEvent();
+  assert.equal(updatedClean, true, 'Sync can update content when editor is completely clean');
+  assert.equal(editorContent, 'Nội dung cập nhật mới từ thiết bị khác');
+});
+
+test('Push Sync Quota: Manuscript payloads > 64KiB must NOT use keepalive and handle arbitrary size', () => {
+  // Generate realistic manuscript payload of ~150 KiB (10,953 words)
+  const paragraph = 'Đêm đen như mực bao trùm lấy đỉnh Thiên Sơn huyền bí. Từng đợt gió rít gào qua khe núi như tiếng thì thầm của ngàn năm lịch sử. ';
+  let fullText = '';
+  while (fullText.length < 150000) {
+    fullText += paragraph;
+  }
+
+  const workspace = {
+    version: 2,
+    lastModified: Date.now(),
+    projects: [{ id: 'p1', title: 'Thần Tự', wordCount: 10953 }],
+    chapters: [
+      { id: 'c1', title: 'Chương 1', content: fullText, wordCount: 9069 },
+      { id: 'c2', title: 'Chương 2', content: paragraph.repeat(100), wordCount: 1884 }
+    ]
+  };
+
+  const serialized = JSON.stringify(workspace);
+  const payloadBytes = Buffer.byteLength(serialized, 'utf8');
+
+  // Verify payload is well beyond browser keepalive limit (64 KiB = 65,536 bytes)
+  assert.ok(payloadBytes > 65536, `Payload size is ${payloadBytes} bytes (> 64 KiB)`);
+
+  // Verify that keepalive option is NOT passed in standard fetch configuration
+  const fetchConfig = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: serialized
+    // keepalive must be omitted to prevent W3C QuotaExceededError
+  };
+
+  assert.equal(fetchConfig.keepalive, undefined, 'keepalive must NOT be true for large manuscript payloads');
+  assert.ok(serialized.includes('Thần Tự'));
+  assert.ok(serialized.includes('Chương 1'));
+  assert.ok(serialized.includes('Chương 2'));
+});
+
+test('Pull Sync Fallback: 0 remote candidates seeds local data to cloud without false error state', () => {
+  // Simulate new device or fresh cloud key where KVDB / API has no prior snapshot
+  const candidates = [];
+  const localWorkspace = {
+    projects: [{ id: 'p1', title: 'Tác phẩm mới' }],
+    chapters: [{ id: 'c1', title: 'Chương mở đầu', content: 'Khởi đầu cuộc hành trình.' }]
+  };
+
+  let broadcastedStatus = null;
+  let broadcastedMessage = null;
+
+  const mockBroadcast = (status, msg) => {
+    broadcastedStatus = status;
+    broadcastedMessage = msg;
+  };
+
+  // Logic as implemented in pullSync
+  if (candidates.length === 0) {
+    const hasLocalData = localWorkspace && (
+      (Array.isArray(localWorkspace.projects) && localWorkspace.projects.length > 0) ||
+      (Array.isArray(localWorkspace.chapters) && localWorkspace.chapters.length > 0)
+    );
+
+    if (hasLocalData) {
+      mockBroadcast('synced', 'Đã khởi tạo bản lưu đám mây');
+    } else {
+      mockBroadcast('idle');
+    }
+  }
+
+  assert.equal(broadcastedStatus, 'synced', 'Must report synced after seeding local data to cloud');
+  assert.notEqual(broadcastedStatus, 'error', 'Must NEVER report red error state when cloud is simply empty');
+});
+

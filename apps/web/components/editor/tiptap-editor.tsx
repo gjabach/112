@@ -110,6 +110,11 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     // Skip if content matches what this editor instance just emitted to avoid circular re-renders
     if (content === lastEmittedContentRef.current) return;
 
+    // Guard: If editor is focused and already has content, do not clobber active typing session
+    if (editor.isFocused && !editor.isEmpty) {
+      return;
+    }
+
     try {
       const parsed = typeof content === 'object' ? content : JSON.parse(content);
       editor.commands.setContent(parsed);

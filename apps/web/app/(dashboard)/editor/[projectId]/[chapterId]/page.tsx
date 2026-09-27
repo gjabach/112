@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback, startTransition } from 'react';
+import { useEffect, useState, useCallback, useRef, startTransition } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -28,7 +28,7 @@ import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound } from '@/lib/sound';
 import { SoundToggleButton } from '@/components/layout/sound-provider';
 import { SyncStatusButton } from '@/components/layout/sync-provider';
-import { pushSync, pullSync } from '@/lib/sync';
+import { pushSync, pullSync, triggerAutoPush } from '@/lib/sync';
 import { MechKeyboardProvider, MechKeyboardToggle } from '@/components/editor/mech-keyboard-provider';
 
 const TiptapEditor = dynamic(
@@ -57,6 +57,18 @@ export default function ChapterEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
+
+  // Protection refs against sync race conditions and text reversions
+  const isDirtyRef = useRef(false);
+  const savingRef = useRef(false);
+  savingRef.current = saving;
+  const contentRef = useRef(content);
+  contentRef.current = content;
+  const titleRef = useRef(title);
+  titleRef.current = title;
+  const chapterRef = useRef(chapter);
+  chapterRef.current = chapter;
+
   const [showInspector, setShowInspector] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('novelist_editor_inspector');
@@ -83,7 +95,7 @@ export default function ChapterEditorPage() {
   const [switchDirection, setSwitchDirection] = useState<'next' | 'prev' | 'fade'>('fade');
   const [targetChapterInfo, setTargetChapterInfo] = useState<{ title: string; orderIndex?: number } | null>(null);
 
-  const fetchChapterData = async () => {
+  const fetchChapterData = async (isInitial = true) => {
     if (!chapterId || !projectId) return;
     try {
       const [res, listRes] = await Promise.all([
@@ -91,11 +103,31 @@ export default function ChapterEditorPage() {
         apiFetch(`/api/projects/${projectId}/chapters`)
       ]);
       if (res?.chapter) {
-        setChapter(res.chapter);
-        setTitle(res.chapter.title || 'Chương');
-        const rawContent = res.chapter.content;
-        const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
-        setContent(safeContent);
+        if (isInitial || !chapterRef.current || chapterRef.current.id !== chapterId) {
+          setChapter(res.chapter);
+          setTitle(res.chapter.title || 'Chương');
+          const rawContent = res.chapter.content;
+          const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
+          setContent(safeContent);
+          isDirtyRef.current = false;
+        } else {
+          // Background sync refresh:
+          // CRITICAL: NEVER overwrite user's in-progress typing or unsaved edits!
+          if (isDirtyRef.current || savingRef.current) {
+            return;
+          }
+          if (contentRef.current === chapterRef.current?.content) {
+            const rawContent = res.chapter.content;
+            const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
+            if (safeContent !== contentRef.current) {
+              setChapter(res.chapter);
+              setTitle(res.chapter.title || 'Chương');
+              setContent(safeContent);
+            } else {
+              setChapter(res.chapter);
+            }
+          }
+        }
       }
       setAllChapters(Array.isArray(listRes?.chapters) ? listRes.chapters : []);
     } catch (e: any) {
@@ -111,21 +143,43 @@ export default function ChapterEditorPage() {
 
   useEffect(() => {
     if (chapterId && projectId) {
-      fetchChapterData();
+      fetchChapterData(true);
       pullSync(true)
         .then(() => {
-          fetchChapterData();
+          // Only refresh from cloud if user hasn't started typing yet
+          if (!isDirtyRef.current && !savingRef.current) {
+            fetchChapterData(true);
+          }
         })
         .catch(() => {});
     }
-    const handleSync = () => {
-      fetchChapterData();
+
+    const handleSync = async () => {
+      // 1. If currently saving, dirty, or current text differs from saved chapter: DO NOT RELOAD!
+      const isDirty = isDirtyRef.current || 
+                      savingRef.current || 
+                      (chapterRef.current && (contentRef.current !== chapterRef.current.content || titleRef.current !== chapterRef.current.title));
+      
+      if (isDirty) {
+        // Just refresh the chapter list in the sidebar (e.g. if new chapters were added on another device)
+        try {
+          const listRes = await apiFetch(`/api/projects/${projectId}/chapters`);
+          if (Array.isArray(listRes?.chapters)) {
+            setAllChapters(listRes.chapters);
+          }
+        } catch {}
+        return;
+      }
+
+      // 2. Safe to refresh chapter data
+      fetchChapterData(false);
     };
+
     window.addEventListener('novelist-sync-updated', handleSync);
     return () => window.removeEventListener('novelist-sync-updated', handleSync);
   }, [chapterId, projectId]);
 
-  const saveChapter = useCallback(async (newContent?: string, newTitle?: string) => {
+  const saveChapter = useCallback(async (newContent?: string, newTitle?: string, isManual = false) => {
     const contentToSave = newContent !== undefined ? newContent : content;
     const titleToSave = newTitle !== undefined ? newTitle : title;
     setSaving(true);
@@ -140,8 +194,13 @@ export default function ChapterEditorPage() {
       });
       setLastSaved(Date.now());
       setChapter((prev: any) => ({ ...prev, title: titleToSave, content: contentToSave }));
+      isDirtyRef.current = false;
       playSuccessSound();
-      pushSync().catch(() => {});
+      if (isManual) {
+        pushSync().catch(() => {});
+      } else {
+        triggerAutoPush(3000);
+      }
     } catch (e: any) {
       toast.error('Lỗi lưu: ' + e.message);
     } finally {
@@ -155,7 +214,7 @@ export default function ChapterEditorPage() {
     if (content === chapter.content && title === chapter.title) return;
 
     const timer = setTimeout(() => {
-      saveChapter();
+      saveChapter(undefined, undefined, false);
     }, 1200);
 
     return () => clearTimeout(timer);
@@ -166,7 +225,7 @@ export default function ChapterEditorPage() {
     const handleSaveShortcut = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
-        saveChapter();
+        saveChapter(undefined, undefined, true);
       }
     };
     window.addEventListener('keydown', handleSaveShortcut);
@@ -177,7 +236,7 @@ export default function ChapterEditorPage() {
   useEffect(() => {
     const handleFlushSave = () => {
       if (content !== chapter?.content || title !== chapter?.title) {
-        saveChapter();
+        saveChapter(undefined, undefined, true);
       }
     };
     const handleVisibilityChange = () => {
@@ -217,7 +276,7 @@ export default function ChapterEditorPage() {
     }
 
     if (content !== chapter?.content || title !== chapter?.title) {
-      saveChapter().catch(() => {});
+      saveChapter(undefined, undefined, true).catch(() => {});
     }
 
     setTimeout(() => {
@@ -270,8 +329,9 @@ export default function ChapterEditorPage() {
         ]
       };
       const newContentStr = JSON.stringify(newContent);
+      isDirtyRef.current = true;
       setContent(newContentStr);
-      saveChapter(newContentStr);
+      saveChapter(newContentStr, undefined, true);
       setAiSuggestion('');
       toast.success('Đã chèn nội dung AI vào văn bản');
     } catch {
@@ -449,7 +509,7 @@ export default function ChapterEditorPage() {
             title="Quay lại mục lục"
             onClick={async () => {
               if (content !== chapter?.content || title !== chapter?.title) {
-                await saveChapter().catch(() => {});
+                await saveChapter(undefined, undefined, true).catch(() => {});
               }
               router.push(`/editor/${projectId}`);
             }}
@@ -507,8 +567,11 @@ export default function ChapterEditorPage() {
 
           <Input
             value={title}
-            onChange={e => setTitle(e.target.value)}
-            onBlur={() => saveChapter(undefined, title)}
+            onChange={e => {
+              isDirtyRef.current = true;
+              setTitle(e.target.value);
+            }}
+            onBlur={() => saveChapter(undefined, title, true)}
             className="flex-1 min-w-0 font-semibold border-0 bg-transparent focus-visible:ring-1 text-xs sm:text-sm h-7 sm:h-8 truncate px-1"
             placeholder="Tên chương..."
           />
@@ -581,7 +644,7 @@ export default function ChapterEditorPage() {
               size="sm"
               className="h-7 sm:h-8 px-2 sm:px-2.5 text-xs font-semibold btn-interactive shadow-xs"
               onClick={() => {
-                saveChapter();
+                saveChapter(undefined, undefined, true);
               }}
               disabled={saving}
             >
@@ -607,11 +670,21 @@ export default function ChapterEditorPage() {
                 : 'opacity-100 translate-x-0 blur-none animate-in fade-in-50 duration-300'
             }`}
           >
-            <EditorErrorBoundary content={content} onChange={setContent} placeholder="Bắt đầu viết những dòng đầu tiên cho chương này...">
+            <EditorErrorBoundary
+              content={content}
+              onChange={(newContent) => {
+                isDirtyRef.current = true;
+                setContent(newContent);
+              }}
+              placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..."
+            >
               <TiptapEditor
                 key={chapterId}
                 content={content}
-                onChange={setContent}
+                onChange={(newContent) => {
+                  isDirtyRef.current = true;
+                  setContent(newContent);
+                }}
                 placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..."
               />
             </EditorErrorBoundary>

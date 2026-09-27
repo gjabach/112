@@ -259,36 +259,6 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
 
     broadcastSyncStatus('syncing', 'Đang lưu lên đám mây...');
 
-    // 1. PRE-MERGE: Check if cloud already has chapters we don't have yet
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-      const headers: Record<string, string> = { 'Accept': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}&email=${encodeURIComponent(email)}`, {
-        headers,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      const ct = res.headers.get('content-type') || '';
-      if (res.ok && ct.includes('application/json')) {
-        const json = await res.json().catch(() => null);
-        if (json && json.success && json.data) {
-          const { merged, hasRemoteChanges } = mergeWorkspaces(local, json.data);
-          if (hasRemoteChanges) {
-            console.log('[Sync Push Pre-Merge] Absorbed newer remote chapters before pushing');
-            importFullWorkspace(merged, false);
-          }
-        }
-      }
-    } catch {
-      // If pre-merge check fails (e.g. offline), proceed with current workspace
-    }
-
-    // Refresh workspace snapshot after pre-merge
     const workspace = exportFullWorkspace() || local;
     workspace.lastModified = Date.now();
     workspace.exportedAt = Date.now();
@@ -303,11 +273,14 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     const workspaceJson = JSON.stringify(workspace);
     let anySuccess = false;
 
-    // 2. PRIMARY: Push to same-origin /api/sync
+    // 1. PRIMARY: Push to same-origin /api/sync
     // Same-origin calls to /api/sync are NEVER blocked by Brave Shields, AdBlock, or CORS on mobile!
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       const res = await fetch('/api/sync', {
         method: 'POST',
@@ -319,8 +292,9 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
           lastModified: workspace.lastModified,
           data: workspace
         }),
-        keepalive: true
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       const ct = res.headers.get('content-type') || '';
       if (res.ok && ct.includes('application/json')) {
@@ -339,26 +313,30 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
       console.warn('[Sync Push] Same-origin /api/sync failed:', e);
     }
 
-    // 3. SECONDARY: Also persist directly to KVDB cloud store across candidate keys
+    // 2. SECONDARY: Also persist directly to KVDB cloud store across candidate keys
     if (email && email.includes('@')) {
-      const keysToPersist = Array.from(new Set([dataKey, legacyKey, rawLegacyKey, ...candidateKeys].filter(Boolean)));
-      const pushPromises = keysToPersist.map(k =>
-        fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
+      const keysToPersist = Array.from(new Set([dataKey, legacyKey].filter(Boolean)));
+      const pushPromises = keysToPersist.map(k => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        return fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: workspaceJson,
-          keepalive: true
+          signal: controller.signal
         }).then(r => {
+          clearTimeout(timeoutId);
           if (r.ok) {
             anySuccess = true;
             console.log(`[Sync Push] Direct PUT succeeded for ${k}`);
           }
           return r.ok;
         }).catch(err => {
+          clearTimeout(timeoutId);
           console.warn(`[Sync Push] Direct PUT failed for ${k}:`, err);
           return false;
-        })
-      );
+        });
+      });
       await Promise.allSettled(pushPromises);
     }
 
@@ -423,9 +401,15 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     // 1. PRIMARY: Query same-origin server API route /api/sync
     // Same-origin calls to /api/sync are NEVER blocked by Brave Shields or mobile privacy blockers!
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       const headers: Record<string, string> = { 'Accept': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}&email=${encodeURIComponent(email)}`, { headers });
+      const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}&email=${encodeURIComponent(email)}`, {
+        headers,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
       const ct = res.headers.get('content-type') || '';
       // Ensure response is JSON (not SPA index.html or error page)
       if (res.ok && ct.includes('application/json')) {
@@ -441,9 +425,14 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
 
     // 2. BACKUP: Direct cloud store lookup (KVDB) across candidate keys
     const keysToCheck = Array.from(new Set([dataKey, legacyKey, rawLegacyKey, ...candidateKeys].filter(Boolean)));
-    const kvdbFetches = keysToCheck.map(k =>
-      fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`)
+    const kvdbFetches = keysToCheck.map(k => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      return fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
+        signal: controller.signal
+      })
         .then(async res => {
+          clearTimeout(timeoutId);
           if (res.ok) {
             const text = await res.text();
             if (text && text.trim().length > 2) {
@@ -456,16 +445,25 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
           }
         })
         .catch(err => {
+          clearTimeout(timeoutId);
           console.warn(`[Sync Pull] Direct kvdb ${k} fetch failed:`, err);
-        })
-    );
+        });
+    });
 
     await Promise.allSettled(kvdbFetches);
 
     if (candidates.length === 0) {
-      console.warn('[Sync Pull] No remote data candidate could be reached');
-      broadcastSyncStatus('error', 'Chưa thể kết nối tới đám mây');
-      return { success: false, updated: false, error: 'Không thể kết nối đến đám mây' };
+      // Cloud has no snapshot yet for this user: check if local has data to seed to cloud
+      const local = exportFullWorkspace();
+      const hasLocalData = local && ((Array.isArray(local.projects) && local.projects.length > 0) || (Array.isArray(local.chapters) && local.chapters.length > 0));
+      if (hasLocalData) {
+        console.log('[Sync Pull] Cloud has no data for this account yet. Seeding cloud with local workspace...');
+        pushSync().catch(() => {});
+        broadcastSyncStatus('synced', 'Đã khởi tạo bản lưu đám mây');
+        return { success: true, updated: false };
+      }
+      broadcastSyncStatus('idle');
+      return { success: true, updated: false };
     }
 
     // 3. Smart-merge ALL candidates together into unifiedRemote
@@ -567,12 +565,12 @@ export function initAutoSync() {
     }
   });
 
-  // 3. Periodic check every 8 seconds for responsive cross-device updates
+  // 3. Periodic check every 15 seconds for responsive cross-device updates
   setInterval(() => {
     if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
       pullSync().catch(() => {});
     }
-  }, 8000);
+  }, 15000);
 
   // 4. Save any pending changes before unload
   window.addEventListener('beforeunload', handleMobileHide);
