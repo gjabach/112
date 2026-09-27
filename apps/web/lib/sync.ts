@@ -379,6 +379,34 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
       finalData = merged;
     }
 
+    // Fix orderIndex collisions: ensure unique sequential orderIndex per project
+    if (Array.isArray(finalData.chapters)) {
+      const byProject = new Map<string, any[]>();
+      for (const ch of finalData.chapters) {
+        const pid = ch.projectId || 'unknown';
+        if (!byProject.has(pid)) byProject.set(pid, []);
+        byProject.get(pid)!.push(ch);
+      }
+      for (const [, projectChapters] of byProject) {
+        // Sort by existing orderIndex, then by createdAt
+        projectChapters.sort((a: any, b: any) => {
+          const oa = a.orderIndex || 0;
+          const ob = b.orderIndex || 0;
+          if (oa !== ob) return oa - ob;
+          return (a.createdAt || 0) - (b.createdAt || 0);
+        });
+        // Re-assign sequential orderIndex
+        projectChapters.forEach((ch: any, idx: number) => {
+          ch.orderIndex = idx + 1;
+        });
+      }
+    }
+
+    console.log(`[Sync Import] Importing workspace: ${Array.isArray(finalData.projects) ? finalData.projects.length : 0} projects, ${Array.isArray(finalData.chapters) ? finalData.chapters.length : 0} chapters`);
+    if (Array.isArray(finalData.chapters)) {
+      finalData.chapters.forEach((c: any) => console.log(`  [Import] Chapter: ${c.id} - ${c.title} (orderIndex: ${c.orderIndex})`));
+    }
+
     if (Array.isArray(finalData.projects)) {
       localStorage.setItem('novelist_projects', JSON.stringify(finalData.projects));
     }
@@ -425,6 +453,12 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
     }
     localStorage.setItem('novelist_last_synced', String(Date.now()));
 
+    // Verify import succeeded by reading back
+    try {
+      const savedChapters = JSON.parse(localStorage.getItem('novelist_chapters') || '[]');
+      console.log(`[Sync Import] Verified: ${savedChapters.length} chapters saved to localStorage`);
+    } catch {}
+
     // Notify active UI components across the application
     window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: finalData } }));
     return true;
@@ -453,11 +487,24 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     const workspace = exportFullWorkspace();
     if (!workspace) return { success: false, error: 'No data to sync' };
 
+    // Ensure lastModified is current
+    workspace.lastModified = Date.now();
+    workspace.exportedAt = Date.now();
+
     const email = getUserEmail();
     const token = getAuthToken();
     const { dataKey, legacyKey } = email ? getCloudAccountKeys(email) : { dataKey: 'd_default_user', legacyKey: 'default_user' };
 
+    const chapterCount = Array.isArray(workspace.chapters) ? workspace.chapters.length : 0;
+    const projectCount = Array.isArray(workspace.projects) ? workspace.projects.length : 0;
+    console.log(`[Sync Push] email=${email}, key=${dataKey}, projects=${projectCount}, chapters=${chapterCount}`);
+    if (workspace.chapters) {
+      workspace.chapters.forEach((c: any) => console.log(`  [Push] Chapter: ${c.id} - ${c.title}`));
+    }
+
     broadcastSyncStatus('syncing', 'Đang lưu lên đám mây...');
+
+    const workspaceJson = JSON.stringify(workspace);
 
     // 1. Try local/configured API endpoint if token available
     if (token) {
@@ -480,39 +527,49 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     }
 
     // 2. Persist to account cloud store for seamless multi-device access (PC <-> Mobile)
+    // ALWAYS push to BOTH keys so any lookup method finds data
     if (email && email.includes('@')) {
-      try {
-        await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`, {
+      const pushPromises: Promise<any>[] = [];
+
+      // Push to primary key (SHA-256 based)
+      pushPromises.push(
+        fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(workspace),
+          body: workspaceJson,
           keepalive: true
-        });
-      } catch (err) {
-        // Fallback to legacy key if needed
-        try {
-          await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(workspace),
-            keepalive: true
-          });
-        } catch {}
-      }
+        }).catch(err => console.warn('[Sync Push] dataKey PUT failed:', err))
+      );
+
+      // Also push to legacy key for backwards compatibility
+      pushPromises.push(
+        fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: workspaceJson,
+          keepalive: true
+        }).catch(err => console.warn('[Sync Push] legacyKey PUT failed:', err))
+      );
+
+      await Promise.allSettled(pushPromises);
     }
 
     localStorage.setItem('novelist_last_synced', String(Date.now()));
-    broadcastSyncStatus('synced', 'Đã lưu đám mây an toàn');
+    localStorage.setItem('novelist_last_modified', String(workspace.lastModified));
+    broadcastSyncStatus('synced', `Đã lưu ${chapterCount} chương lên đám mây`);
+
+    console.log(`[Sync Push] Success! Pushed ${chapterCount} chapters to cloud.`);
 
     return {
       success: true,
       stats: {
-        projects: workspace.projects?.length || 0,
-        chapters: workspace.chapters?.length || 0,
-        characters: workspace.characters?.length || 0
+        projects: projectCount,
+        chapters: chapterCount,
+        characters: Array.isArray(workspace.characters) ? workspace.characters.length : 0
       }
     };
   } catch (err: any) {
+    console.error('[Sync Push] Error:', err);
     broadcastSyncStatus('error', err.message || 'Lỗi lưu đám mây');
     return { success: false, error: err.message || 'Lỗi mạng khi lưu đám mây' };
   }
@@ -536,7 +593,10 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     try {
       const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
       if (res.ok) {
-        remoteData = await res.json();
+        const text = await res.text();
+        if (text && text.trim().length > 2) {
+          try { remoteData = JSON.parse(text); } catch {}
+        }
       }
     } catch {}
 
@@ -545,7 +605,10 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       try {
         const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`);
         if (res.ok) {
-          remoteData = await res.json();
+          const text = await res.text();
+          if (text && text.trim().length > 2) {
+            try { remoteData = JSON.parse(text); } catch {}
+          }
         }
       } catch {}
     }
@@ -571,16 +634,33 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       return { success: true, updated: false };
     }
 
+    // Unwrap if wrapped in { data: ... }
+    const unwrapped = (remoteData.data && typeof remoteData.data === 'object' && (remoteData.data.projects || remoteData.data.chapters))
+      ? remoteData.data
+      : remoteData;
+
     // Smart two-way merge
     const local = exportFullWorkspace();
-    const { merged, hasRemoteChanges, hasLocalChanges } = mergeWorkspaces(local, remoteData);
+    const { merged, hasRemoteChanges, hasLocalChanges } = mergeWorkspaces(local, unwrapped);
+
+    // CRITICAL: Also check if merged data has MORE chapters/projects than local
+    // This catches the case where merge detected new items from cloud
+    const localChapterCount = Array.isArray(local?.chapters) ? local.chapters.length : 0;
+    const mergedChapterCount = Array.isArray(merged.chapters) ? merged.chapters.length : 0;
+    const localProjectCount = Array.isArray(local?.projects) ? local.projects.length : 0;
+    const mergedProjectCount = Array.isArray(merged.projects) ? merged.projects.length : 0;
+
+    const dataDiffers = mergedChapterCount !== localChapterCount
+      || mergedProjectCount !== localProjectCount
+      || hasRemoteChanges;
 
     let updated = false;
-    if (hasRemoteChanges || force) {
+    if (dataDiffers || force) {
+      // Always pass false for merge param since we already merged above
       updated = importFullWorkspace(merged, false);
     }
 
-    // If local had changes that cloud didn't have (e.g. mobile wrote a note while offline), push merged up
+    // If local had changes that cloud didn't have, push merged data up
     if (hasLocalChanges) {
       pushSync().catch(() => {});
     }

@@ -434,21 +434,47 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     // CRITICAL: Synchronously pull and smart-merge full workspace (projects, chapters, drafts) from cloud to this device BEFORE returning
     try {
       let cloudData: any = null;
+      
+      // Try primary SHA-256 key first
       try {
         const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${dataKey}`);
-        if (res.ok) cloudData = await res.json();
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.trim().length > 2) {
+            try { cloudData = JSON.parse(text); } catch {}
+          }
+        }
       } catch {}
 
+      // Try legacy key if primary returned nothing
       if (!cloudData && legacyKey) {
         try {
           const res = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${legacyKey}`);
-          if (res.ok) cloudData = await res.json();
+          if (res.ok) {
+            const text = await res.text();
+            if (text && text.trim().length > 2) {
+              try { cloudData = JSON.parse(text); } catch {}
+            }
+          }
         } catch {}
       }
 
       if (cloudData && typeof cloudData === 'object') {
-        importFullWorkspace(cloudData, true);
+        // Unwrap if data is nested inside { data: ... } wrapper (from /api/sync POST format)
+        const unwrapped = (cloudData.data && typeof cloudData.data === 'object' && (cloudData.data.projects || cloudData.data.chapters))
+          ? cloudData.data
+          : cloudData;
+
+        const chCount = Array.isArray(unwrapped.chapters) ? unwrapped.chapters.length : 0;
+        const pCount = Array.isArray(unwrapped.projects) ? unwrapped.projects.length : 0;
+        console.log(`[Login Sync] Cloud data found via ${dataKey}: ${pCount} projects, ${chCount} chapters`);
+        if (unwrapped.chapters) {
+          unwrapped.chapters.forEach((c: any) => console.log(`  [Login] Cloud chapter: ${c.id} - ${c.title}`));
+        }
+
+        importFullWorkspace(unwrapped, true);
       } else {
+        console.log('[Login Sync] No cloud data found, trying pullSync...');
         await pullSync(true).catch(() => {});
       }
     } catch (e) {
