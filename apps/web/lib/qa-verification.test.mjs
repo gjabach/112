@@ -1359,3 +1359,172 @@ test('Pull Sync Fallback: 0 remote candidates seeds local data to cloud without 
   assert.notEqual(broadcastedStatus, 'error', 'Must NEVER report red error state when cloud is simply empty');
 });
 
+test('sync-core: Deleting a chapter on PC creates a tombstone and prevents Cloud/Mobile from resurrecting it', () => {
+  const now = Date.now();
+  const pcStateAfterDelete = {
+    version: 2,
+    lastModified: now,
+    projects: [{ id: 'p1', title: 'Tác phẩm sử thi', chapterCount: 1, wordCount: 3000 }],
+    chapters: [
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: 'Nội dung chương 1...', wordCount: 3000, orderIndex: 1, updatedAt: now - 5000 }
+    ],
+    tombstones: {
+      ch_2: now - 1000 // Chapter 2 was deleted on PC 1 second ago
+    }
+  };
+
+  const cloudOrMobileStaleState = {
+    version: 2,
+    lastModified: now - 2000,
+    projects: [{ id: 'p1', title: 'Tác phẩm sử thi', chapterCount: 2, wordCount: 8000 }],
+    chapters: [
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', content: 'Nội dung chương 1...', wordCount: 3000, orderIndex: 1, updatedAt: now - 5000 },
+      { id: 'ch_2', projectId: 'p1', title: 'Chương 2 (Bản cũ trên đám mây)', content: 'Nội dung chương 2...', wordCount: 5000, orderIndex: 2, updatedAt: now - 3000 }
+    ],
+    tombstones: {}
+  };
+
+  // Test merge: PC initiates merge with Cloud
+  const { merged: mergedPCWithCloud } = mergeWorkspaces(pcStateAfterDelete, cloudOrMobileStaleState);
+  assert.equal(mergedPCWithCloud.chapters.length, 1, 'Deleted chapter 2 must NOT be resurrected');
+  assert.equal(mergedPCWithCloud.chapters[0].id, 'ch_1', 'Only chapter 1 should remain');
+  assert.equal(mergedPCWithCloud.tombstones['ch_2'], now - 1000, 'Tombstone for chapter 2 must be preserved');
+  assert.equal(mergedPCWithCloud.projects[0].chapterCount, 1, 'Project chapter count must be updated to 1');
+  assert.equal(mergedPCWithCloud.projects[0].wordCount, 3000, 'Project word count must be recomputed accurately');
+
+  // Test commutativity: Cloud merges with PC incoming payload
+  const { merged: mergedCloudWithPC } = mergeWorkspaces(cloudOrMobileStaleState, pcStateAfterDelete);
+  assert.equal(mergedCloudWithPC.chapters.length, 1, 'Commutative merge must also NOT resurrect chapter 2');
+  assert.equal(mergedCloudWithPC.chapters[0].id, 'ch_1');
+  assert.equal(mergedCloudWithPC.tombstones['ch_2'], now - 1000);
+});
+
+test('sync-core: Recreating or editing a chapter after deletion timestamp permits the newer version', () => {
+  const now = Date.now();
+  const pcStateAfterDelete = {
+    chapters: [{ id: 'ch_1', projectId: 'p1', title: 'Chương 1', updatedAt: now - 5000 }],
+    tombstones: {
+      ch_2: now - 2000 // Deleted at now - 2000
+    }
+  };
+
+  const mobileBrandNewChapter2 = {
+    chapters: [
+      { id: 'ch_1', projectId: 'p1', title: 'Chương 1', updatedAt: now - 5000 },
+      // Mobile user wrote a new version at now - 500 (after now - 2000)
+      { id: 'ch_2', projectId: 'p1', title: 'Chương 2 (Viết mới toanh)', content: 'Nội dung mới...', updatedAt: now - 500 }
+    ],
+    tombstones: {}
+  };
+
+  const { merged } = mergeWorkspaces(pcStateAfterDelete, mobileBrandNewChapter2);
+  assert.equal(merged.chapters.length, 2, 'Chapter recreated/edited strictly after deletion must be kept');
+  assert.ok(merged.chapters.some(c => c.id === 'ch_2' && c.title.includes('Viết mới toanh')));
+});
+
+test('sync-core: Deleting a project cascades tombstones to all child chapters and characters', () => {
+  const now = Date.now();
+  const localWithDeletedProject = {
+    projects: [],
+    chapters: [],
+    characters: [],
+    tombstones: {
+      proj_epic: now - 500 // Project deleted at now - 500
+    }
+  };
+
+  const remoteWithProjectAndChapters = {
+    projects: [{ id: 'proj_epic', title: 'Dự án sử thi', updatedAt: now - 3000 }],
+    chapters: [
+      { id: 'ch_10', projectId: 'proj_epic', title: 'Chương 10', updatedAt: now - 2000 },
+      { id: 'ch_11', projectId: 'proj_epic', title: 'Chương 11', updatedAt: now - 1500 }
+    ],
+    characters: [
+      { id: 'char_warrior', projectId: 'proj_epic', name: 'Chiến binh', updatedAt: now - 2000 }
+    ],
+    tombstones: {}
+  };
+
+  const { merged } = mergeWorkspaces(localWithDeletedProject, remoteWithProjectAndChapters);
+  assert.equal(merged.projects.length, 0, 'Deleted project must not be resurrected');
+  assert.equal(merged.chapters.length, 0, 'Child chapters of deleted project must be cascaded and purged');
+  assert.equal(merged.characters.length, 0, 'Child characters of deleted project must be cascaded and purged');
+});
+
+test('sync-core: Pruning tombstones older than 30 days keeps payload clean', () => {
+  const now = Date.now();
+  const FORTY_DAYS_MS = 40 * 24 * 60 * 60 * 1000;
+  const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+
+  const localState = {
+    chapters: [],
+    tombstones: {
+      ancient_tombstone: now - FORTY_DAYS_MS, // 40 days old -> should be pruned
+      recent_tombstone: now - FIVE_DAYS_MS     // 5 days old -> should be kept
+    }
+  };
+
+  const { merged } = mergeWorkspaces(localState, {});
+  assert.equal(merged.tombstones['ancient_tombstone'], undefined, 'Tombstones older than 30 days must be pruned');
+  assert.equal(merged.tombstones['recent_tombstone'], now - FIVE_DAYS_MS, 'Recent tombstones must be preserved');
+});
+
+test('sync-core: Character, worldbuilding, timeline, and outline deletions are respected via tombstones', () => {
+  const now = Date.now();
+  const localWithTombstones = {
+    characters: [{ id: 'char_survivor', name: 'Nhân vật còn lại', updatedAt: now - 1000 }],
+    entities: [],
+    timeline: [],
+    outline: [],
+    tombstones: {
+      char_dead: now - 500,
+      item_lost: now - 500,
+      event_passed: now - 500,
+      node_scrapped: now - 500
+    }
+  };
+
+  const remoteWithStaleEntities = {
+    characters: [
+      { id: 'char_survivor', name: 'Nhân vật còn lại', updatedAt: now - 1000 },
+      { id: 'char_dead', name: 'Nhân vật đã xóa', updatedAt: now - 2000 }
+    ],
+    entities: [{ id: 'item_lost', name: 'Bảo vật đã xóa', updatedAt: now - 2000 }],
+    timeline: [{ id: 'event_passed', title: 'Sự kiện đã xóa', updatedAt: now - 2000 }],
+    outline: [{ id: 'node_scrapped', title: 'Hồi đã xóa', updatedAt: now - 2000 }],
+    tombstones: {}
+  };
+
+  const { merged } = mergeWorkspaces(localWithTombstones, remoteWithStaleEntities);
+  assert.equal(merged.characters.length, 1, 'Only survivor character should remain');
+  assert.equal(merged.characters[0].id, 'char_survivor');
+  assert.equal(merged.entities.length, 0, 'Deleted entity must be purged');
+  assert.equal(merged.timeline.length, 0, 'Deleted timeline event must be purged');
+  assert.equal(merged.outline.length, 0, 'Deleted outline node must be purged');
+});
+
+test('sync-core: Genuinely new chapters created on Device B are still safely added (no false deletion)', () => {
+  const now = Date.now();
+  const pcState = {
+    chapters: [{ id: 'ch_1', title: 'Chương 1', updatedAt: now - 3000 }],
+    tombstones: {
+      ch_deleted: now - 1000 // Only ch_deleted was deleted
+    }
+  };
+
+  const phoneState = {
+    chapters: [
+      { id: 'ch_1', title: 'Chương 1', updatedAt: now - 3000 },
+      { id: 'ch_brand_new_on_phone', title: 'Chương viết trên điện thoại', updatedAt: now - 500 }
+    ],
+    tombstones: {}
+  };
+
+  const { merged } = mergeWorkspaces(pcState, phoneState);
+  assert.equal(merged.chapters.length, 2, 'Brand new phone chapter must be safely retained');
+  assert.ok(merged.chapters.some(c => c.id === 'ch_brand_new_on_phone'));
+  assert.ok(merged.chapters.some(c => c.id === 'ch_1'));
+});
+
+
+

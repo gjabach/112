@@ -91,6 +91,22 @@ function getStoredJson(key: string, fallback: any = []) {
   }
 }
 
+export function recordTombstone(id: string, cascadeIds?: string[]): void {
+  if (typeof window === 'undefined' || !id) return;
+  try {
+    const raw = localStorage.getItem('novelist_tombstones');
+    const tombstones: Record<string, number> = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    tombstones[id] = now;
+    if (Array.isArray(cascadeIds)) {
+      for (const cid of cascadeIds) {
+        if (cid) tombstones[cid] = now;
+      }
+    }
+    localStorage.setItem('novelist_tombstones', JSON.stringify(tombstones));
+  } catch {}
+}
+
 export function exportFullWorkspace() {
   if (typeof window === 'undefined') return null;
   const lastModifiedStr = localStorage.getItem('novelist_last_modified');
@@ -119,6 +135,7 @@ export function exportFullWorkspace() {
     timeline: getStoredJson('novelist_timeline', getStoredJson('novelist_timeline_events', [])),
     timelineEras: getStoredJson('novelist_timeline_eras', []),
     outline: getStoredJson('novelist_outline', getStoredJson('novelist_outlines', [])),
+    tombstones: getStoredJson('novelist_tombstones', {}),
     user: getStoredJson('novelist_current_user', null),
     aiConfig: {
       provider: localStorage.getItem('ai_provider') || 'gemini',
@@ -214,6 +231,10 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
     if (finalData.aiConfig) {
       if (finalData.aiConfig.provider) localStorage.setItem('ai_provider', finalData.aiConfig.provider);
       if (finalData.aiConfig.model) localStorage.setItem('ai_model', finalData.aiConfig.model);
+    }
+
+    if (finalData.tombstones && typeof finalData.tombstones === 'object') {
+      localStorage.setItem('novelist_tombstones', JSON.stringify(finalData.tombstones));
     }
 
     if (finalData.lastModified) {
@@ -431,32 +452,34 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       console.warn('[Sync Pull] /api/sync primary fetch failed, trying direct:', e);
     }
 
-    // 2. BACKUP: Direct cloud store lookup (KVDB) across candidate keys
-    const keysToCheck = Array.from(new Set([dataKey, legacyKey, rawLegacyKey, ...candidateKeys].filter(Boolean)));
-    const kvdbFetches = keysToCheck.map(k => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      return fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
-        signal: controller.signal
-      })
-        .then(async res => {
-          clearTimeout(timeoutId);
-          if (res.ok) {
-            const text = await res.text();
-            if (text && text.trim().length > 2) {
-              try {
-                const parsed = JSON.parse(text);
-                addCandidate(parsed, `direct-kvdb-${k}`);
-              } catch {}
-            }
-          }
+    // 2. BACKUP: Direct cloud store lookup (KVDB) across candidate keys only if primary API didn't return candidates
+    if (candidates.length === 0) {
+      const keysToCheck = Array.from(new Set([dataKey, legacyKey, rawLegacyKey, ...candidateKeys].filter(Boolean)));
+      const kvdbFetches = keysToCheck.map(k => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        return fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
+          signal: controller.signal
         })
-        .catch(err => {
-          clearTimeout(timeoutId);
-        });
-    });
+          .then(async res => {
+            clearTimeout(timeoutId);
+            if (res.ok) {
+              const text = await res.text();
+              if (text && text.trim().length > 2) {
+                try {
+                  const parsed = JSON.parse(text);
+                  addCandidate(parsed, `direct-kvdb-${k}`);
+                } catch {}
+              }
+            }
+          })
+          .catch(err => {
+            clearTimeout(timeoutId);
+          });
+      });
 
-    await Promise.allSettled(kvdbFetches);
+      await Promise.allSettled(kvdbFetches);
+    }
 
     if (candidates.length === 0) {
       const local = exportFullWorkspace();
@@ -595,11 +618,11 @@ export function initAutoSync() {
     }
   });
 
-  // 4. Real-time active polling interval: every 3.5 seconds when active
-  // Solves the problem where BOTH PC and Phone have web open at the same time!
+  // 4. Real-time active polling interval: every 8 seconds when active
+  // Keeps PC and Phone synchronized without saturating API rate limits
   setInterval(() => {
     if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
       pullSync().catch(() => {});
     }
-  }, 3500);
+  }, 8000);
 }

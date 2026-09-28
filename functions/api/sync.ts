@@ -116,7 +116,7 @@ function unwrapWorkspace(data: any): any {
   }
   if (!data || typeof data !== 'object') return null;
   if (data.data && typeof data.data === 'object') {
-    if (data.data.projects || data.data.chapters || data.success !== undefined || !data.projects) {
+    if (data.data.projects || data.data.chapters || data.data.tombstones || data.success !== undefined || !data.projects) {
       return unwrapWorkspace(data.data);
     }
   }
@@ -132,6 +132,49 @@ function mergeWorkspaces(
 
   let hasRemoteChanges = false;
   let hasLocalChanges = false;
+
+  // --- Merge Tombstones (Retention: 30 days) ---
+  const localTombstones: Record<string, number> = (unwrappedLocal.tombstones && typeof unwrappedLocal.tombstones === 'object')
+    ? { ...unwrappedLocal.tombstones }
+    : {};
+  const remoteTombstones: Record<string, number> = (unwrappedRemote.tombstones && typeof unwrappedRemote.tombstones === 'object')
+    ? { ...unwrappedRemote.tombstones }
+    : {};
+
+  const mergedTombstones: Record<string, number> = {};
+  const allTombstoneIds = new Set([...Object.keys(localTombstones), ...Object.keys(remoteTombstones)]);
+  const now = Date.now();
+  const MAX_TOMBSTONE_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+  for (const id of allTombstoneIds) {
+    const lDel = Number(localTombstones[id] || 0);
+    const rDel = Number(remoteTombstones[id] || 0);
+    const maxDel = Math.max(lDel, rDel);
+    if (maxDel > 0 && now - maxDel < MAX_TOMBSTONE_AGE) {
+      mergedTombstones[id] = maxDel;
+    }
+  }
+
+  for (const k of Object.keys(mergedTombstones)) {
+    if (!localTombstones[k] || localTombstones[k] < mergedTombstones[k]) {
+      hasRemoteChanges = true;
+    }
+    if (!remoteTombstones[k] || remoteTombstones[k] < mergedTombstones[k]) {
+      hasLocalChanges = true;
+    }
+  }
+
+  const isDeleted = (id?: string, parentId?: string, updatedAt: number = 0): boolean => {
+    if (id && mergedTombstones[id]) {
+      const delTime = mergedTombstones[id];
+      if (delTime >= updatedAt) return true;
+    }
+    if (parentId && mergedTombstones[parentId]) {
+      const parentDelTime = mergedTombstones[parentId];
+      if (parentDelTime >= updatedAt) return true;
+    }
+    return false;
+  };
 
   const localProjects: any[] = Array.isArray(unwrappedLocal.projects) ? [...unwrappedLocal.projects] : [];
   const remoteProjects: any[] = Array.isArray(unwrappedRemote.projects) ? [...unwrappedRemote.projects] : [];
@@ -160,26 +203,33 @@ function mergeWorkspaces(
   const remoteOutline: any[] = Array.isArray(unwrappedRemote.outline || unwrappedRemote.outlines) 
     ? (unwrappedRemote.outline || unwrappedRemote.outlines) : [];
 
-  // --- Merge Chapters by id with Strict Last-Write-Wins (LWW) ---
+  // --- Merge Chapters by id with Strict Last-Write-Wins (LWW) and Tombstones ---
   const chapterMap = new Map<string, any>();
   for (const c of localChapters) {
-    if (c?.id) chapterMap.set(c.id, { ...c });
+    if (!c?.id) continue;
+    const cUp = Number(c.updatedAt || c.createdAt || 0);
+    if (isDeleted(c.id, c.projectId, cUp)) {
+      hasLocalChanges = true;
+      continue;
+    }
+    chapterMap.set(c.id, { ...c });
   }
 
   for (const rc of remoteChapters) {
     if (!rc?.id) continue;
+    const remoteUpdated = Number(rc.updatedAt || rc.createdAt || 0);
+    if (isDeleted(rc.id, rc.projectId, remoteUpdated)) {
+      hasRemoteChanges = true;
+      continue;
+    }
+
     const existing = chapterMap.get(rc.id);
     if (!existing) {
-      // Remote has a chapter that local does not have -> ADD IT!
+      // Remote has a chapter that local does not have and NOT deleted -> ADD IT!
       chapterMap.set(rc.id, { ...rc });
       hasRemoteChanges = true;
     } else {
-      // Both have this chapter: compare granular write timestamps (updatedAt)
-      // Note: We use rc.updatedAt || rc.createdAt. We do NOT fall back to container lastModified
-      // because container lastModified is bumped on heartbeat/hide and would falsely make stale chapters appear newer.
-      const remoteUpdated = Number(rc.updatedAt || rc.createdAt || 0);
       const localUpdated = Number(existing.updatedAt || existing.createdAt || 0);
-
       const remoteContentStr = typeof rc.content === 'string' ? rc.content : JSON.stringify(rc.content || '');
       const localContentStr = typeof existing.content === 'string' ? existing.content : JSON.stringify(existing.content || '');
       const isDifferent = remoteContentStr !== localContentStr || rc.title !== existing.title;
@@ -198,7 +248,6 @@ function mergeWorkspaces(
         hasLocalChanges = true;
       } else {
         // Timestamps are exactly equal but content differs (rare tie-break):
-        // Prefer non-empty content; if both non-empty, prefer remote for deterministic consensus across nodes
         const remoteHasContent = !!remoteContentStr.trim();
         const localHasContent = !!localContentStr.trim();
         if (!localHasContent && remoteHasContent) {
@@ -215,9 +264,10 @@ function mergeWorkspaces(
     }
   }
 
-  // Check if local has chapters remote does not have
+  // Check if local has active chapters remote does not have
   for (const lc of localChapters) {
-    if (lc?.id && !remoteChapters.some(rc => rc?.id === lc.id)) {
+    const lUp = Number(lc?.updatedAt || lc?.createdAt || 0);
+    if (lc?.id && !isDeleted(lc.id, lc.projectId, lUp) && !remoteChapters.some(rc => rc?.id === lc.id)) {
       hasLocalChanges = true;
     }
   }
@@ -249,20 +299,31 @@ function mergeWorkspaces(
     });
   }
 
-  // --- Merge Projects by id with Strict LWW ---
+  // --- Merge Projects by id with Strict LWW and Tombstones ---
   const projectMap = new Map<string, any>();
   for (const p of localProjects) {
-    if (p?.id) projectMap.set(p.id, { ...p });
+    if (!p?.id) continue;
+    const pUp = Number(p.updatedAt || p.createdAt || 0);
+    if (isDeleted(p.id, undefined, pUp)) {
+      hasLocalChanges = true;
+      continue;
+    }
+    projectMap.set(p.id, { ...p });
   }
 
   for (const rp of remoteProjects) {
     if (!rp?.id) continue;
+    const remoteUpdated = Number(rp.updatedAt || rp.createdAt || 0);
+    if (isDeleted(rp.id, undefined, remoteUpdated)) {
+      hasRemoteChanges = true;
+      continue;
+    }
+
     const existing = projectMap.get(rp.id);
     if (!existing) {
       projectMap.set(rp.id, { ...rp });
       hasRemoteChanges = true;
     } else {
-      const remoteUpdated = Number(rp.updatedAt || rp.createdAt || 0);
       const localUpdated = Number(existing.updatedAt || existing.createdAt || 0);
       if (remoteUpdated > localUpdated) {
         projectMap.set(rp.id, { ...existing, ...rp });
@@ -277,7 +338,8 @@ function mergeWorkspaces(
   }
 
   for (const lp of localProjects) {
-    if (lp?.id && !remoteProjects.some(rp => rp?.id === lp.id)) {
+    const lUp = Number(lp?.updatedAt || lp?.createdAt || 0);
+    if (lp?.id && !isDeleted(lp.id, undefined, lUp) && !remoteProjects.some(rp => rp?.id === lp.id)) {
       hasLocalChanges = true;
     }
   }
@@ -285,29 +347,42 @@ function mergeWorkspaces(
   const activeUser = unwrappedRemote.user || unwrappedLocal.user || null;
   const currentUserId = activeUser?.id;
 
+  const hasAnyChapters = localChapters.length > 0 || remoteChapters.length > 0;
   const mergedProjects = Array.from(projectMap.values()).map(p => {
     const pChapters = mergedChapters.filter(c => c.projectId === p.id);
     const calculatedWords = pChapters.reduce((acc, c) => acc + (c.wordCount || 0), 0);
     return {
       ...p,
       userId: p.userId || currentUserId || 'usr_default',
-      chapterCount: pChapters.length,
-      wordCount: calculatedWords
+      chapterCount: hasAnyChapters ? pChapters.length : (p.chapterCount || 0),
+      wordCount: hasAnyChapters ? calculatedWords : (p.wordCount || 0)
     };
   });
 
-  // --- Merge helper for characters, entities, timeline, outline ---
+  // --- Merge helper for characters, entities, timeline, outline with Tombstones ---
   const mergeEntityList = (localList: any[], remoteList: any[]) => {
     const map = new Map<string, any>();
-    for (const item of localList) if (item?.id) map.set(item.id, { ...item });
+    for (const item of localList) {
+      if (!item?.id) continue;
+      const lUp = Number(item.updatedAt || item.createdAt || 0);
+      if (isDeleted(item.id, item.projectId, lUp)) {
+        hasLocalChanges = true;
+        continue;
+      }
+      map.set(item.id, { ...item });
+    }
     for (const item of remoteList) {
       if (!item?.id) continue;
+      const rUp = Number(item.updatedAt || item.createdAt || 0);
+      if (isDeleted(item.id, item.projectId, rUp)) {
+        hasRemoteChanges = true;
+        continue;
+      }
       const existing = map.get(item.id);
       if (!existing) {
         map.set(item.id, { ...item });
         hasRemoteChanges = true;
       } else {
-        const rUp = Number(item.updatedAt || item.createdAt || 0);
         const lUp = Number(existing.updatedAt || existing.createdAt || 0);
         if (rUp > lUp) {
           map.set(item.id, { ...existing, ...item });
@@ -321,7 +396,8 @@ function mergeWorkspaces(
       }
     }
     for (const item of localList) {
-      if (item?.id && !remoteList.some(r => r?.id === item.id)) {
+      const lUp = Number(item?.updatedAt || item?.createdAt || 0);
+      if (item?.id && !isDeleted(item.id, item.projectId, lUp) && !remoteList.some(r => r?.id === item.id)) {
         hasLocalChanges = true;
       }
     }
@@ -356,6 +432,7 @@ function mergeWorkspaces(
       timelineEras: mergedTimelineEras,
       outline: mergedOutline,
       outlines: mergedOutline,
+      tombstones: mergedTombstones,
       user: unwrappedRemote.user || unwrappedLocal.user || null,
       aiConfig: unwrappedRemote.aiConfig || unwrappedLocal.aiConfig || { provider: 'gemini', model: 'gemini-3.8-flash' }
     },

@@ -103,6 +103,13 @@ export default function ChapterEditorPage() {
         apiFetch(`/api/chapters/${chapterId}`),
         apiFetch(`/api/projects/${projectId}/chapters`)
       ]);
+      if (!res?.chapter) {
+        // Chapter was deleted or does not exist
+        isDirtyRef.current = false;
+        toast.error('Chương này đã bị xóa hoặc không còn tồn tại', { id: 'chapter-deleted-error' });
+        router.push(`/editor/${projectId}`);
+        return;
+      }
       if (res?.chapter) {
         if (isInitial || !chapterRef.current || chapterRef.current.id !== chapterId) {
           setChapter(res.chapter);

@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail } from './sync';
+import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail, recordTombstone } from './sync';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -627,11 +627,14 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { project: updated.find((p: any) => p.id === id) };
     }
     if (method === 'DELETE') {
+      const chapters = getStorage('novelist_chapters', []);
+      const relatedChapterIds = chapters.filter((c: any) => c.projectId === id).map((c: any) => c.id);
+      recordTombstone(id, relatedChapterIds);
+
       const filtered = projects.filter((p: any) => p.id !== id);
       setStorage('novelist_projects', filtered);
 
       // Cascade delete related records to prevent localStorage bloat
-      const chapters = getStorage('novelist_chapters', []);
       setStorage('novelist_chapters', chapters.filter((c: any) => c.projectId !== id));
 
       const characters = getStorage('novelist_characters', []);
@@ -796,7 +799,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     const id = chapMatch[1];
     const chapters = getStorage('novelist_chapters', []);
     if (method === 'GET') {
-      const chapter = chapters.find((c: any) => c.id === id) || { id, title: 'Chương', content: '', wordCount: 0 };
+      const chapter = chapters.find((c: any) => c.id === id) || null;
       return { chapter };
     }
     if (method === 'PATCH') {
@@ -828,6 +831,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { chapter: updated.find((c: any) => c.id === id) };
     }
     if (method === 'DELETE') {
+      recordTombstone(id);
       const targetChap = chapters.find((c: any) => c.id === id);
       const filtered = chapters.filter((c: any) => c.id !== id);
       setStorage('novelist_chapters', filtered);
@@ -922,6 +926,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { character: updated.find((c: any) => c.id === id) };
     }
     if (method === 'DELETE') {
+      recordTombstone(id);
       setStorage('novelist_characters', characters.filter((c: any) => c.id !== id));
       return { success: true };
     }
@@ -1101,6 +1106,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
           }
         }
       }
+      recordTombstone(id, Array.from(idsToDelete));
       const filtered = nodes.filter((n: any) => !idsToDelete.has(n.id));
       setStorage('novelist_outline', filtered);
       return { success: true };
@@ -1229,6 +1235,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { event: updated.find((e: any) => e.id === id) };
     }
     if (method === 'DELETE') {
+      recordTombstone(id);
       setStorage('novelist_timeline', events.filter((e: any) => e.id !== id));
       return { success: true };
     }
@@ -1350,6 +1357,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { entity: updated.find((e: any) => e.id === id), success: true };
     }
     if (method === 'DELETE') {
+      recordTombstone(id);
       setStorage('novelist_worldbuilding', entities.filter((e: any) => e.id !== id));
       return { success: true };
     }
