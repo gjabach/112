@@ -25,12 +25,13 @@ function extractRawText(raw: string): string {
       const getTxt = (n: any): string => {
         if (!n) return '';
         if (typeof n === 'string') return n;
+        if (n.type === 'hardBreak' || n.type === 'hard_break') return '\n';
         if (n.text) return n.text;
-        if (Array.isArray(n.content)) return n.content.map(getTxt).join(n.type === 'paragraph' ? '\n' : ' ');
+        if (Array.isArray(n.content)) return n.content.map(getTxt).join(n.type === 'paragraph' ? '\n' : '');
         return '';
       };
       if (Array.isArray(json.content)) {
-        return json.content.map(getTxt).join('\n\n');
+        return json.content.map(getTxt).join('\n');
       }
     }
   } catch {}
@@ -90,11 +91,13 @@ export class EditorErrorBoundary extends Component<Props, State> {
               placeholder={this.props.placeholder || 'Bắt đầu viết chương này...'}
               onChange={(e) => {
                 const val = e.target.value;
-                // Convert plain lines into standard TipTap JSON paragraphs so data format remains consistent
-                const paras = val.split('\n\n').filter(p => p.length > 0).map(p => ({
-                  type: 'paragraph',
-                  content: [{ type: 'text', text: p }]
-                }));
+                // Convert plain lines into standard TipTap JSON paragraphs so each Enter keypress is preserved
+                const lines = val.split(/\r?\n/);
+                const paras = lines.map(p => {
+                  return p
+                    ? { type: 'paragraph', content: [{ type: 'text', text: p }] }
+                    : { type: 'paragraph' };
+                });
                 const jsonDoc = JSON.stringify({
                   type: 'doc',
                   content: paras.length > 0 ? paras : [{ type: 'paragraph' }]

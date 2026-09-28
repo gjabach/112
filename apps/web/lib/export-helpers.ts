@@ -1,43 +1,141 @@
 // Helpers for parsing novel chapter content and generating publication-ready layouts
 
+export function sortChapters<T extends { orderIndex?: number; createdAt?: number; title?: string }>(chaps: T[]): T[] {
+  return [...chaps].sort((a, b) => {
+    const orderA = typeof a.orderIndex === 'number' ? a.orderIndex : 0;
+    const orderB = typeof b.orderIndex === 'number' ? b.orderIndex : 0;
+    if (orderA !== orderB) return orderA - orderB;
+    const timeA = a.createdAt || 0;
+    const timeB = b.createdAt || 0;
+    if (timeA !== timeB) return timeA - timeB;
+    return String(a.title || '').localeCompare(String(b.title || ''), 'vi', { numeric: true });
+  });
+}
+
 export function parseChapterParagraphs(rawContent: string): string[] {
   if (!rawContent) return [];
 
   // 1. Try parsing TipTap JSON format
   try {
     const json = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
-    if (json && json.type === 'doc' && Array.isArray(json.content)) {
-      const paragraphs: string[] = [];
-      const extractText = (node: any): string => {
+    if (json && (json.type === 'doc' || Array.isArray(json.content))) {
+      const extractedLines: string[] = [];
+
+      const extractInlineText = (node: any): string => {
         if (!node) return '';
         if (typeof node === 'string') return node;
+        if (node.type === 'hardBreak' || node.type === 'hard_break') return '\n';
         if (node.text) return node.text;
         if (Array.isArray(node.content)) {
-          return node.content.map(extractText).join('');
+          return node.content.map(extractInlineText).join('');
         }
         return '';
       };
 
-      for (const node of json.content) {
-        const text = extractText(node).trim();
-        if (text) paragraphs.push(text);
-      }
-      if (paragraphs.length > 0) return paragraphs;
+      const walkNode = (node: any) => {
+        if (!node) return;
+
+        if (node.type === 'doc') {
+          if (Array.isArray(node.content)) {
+            for (const child of node.content) walkNode(child);
+          }
+          return;
+        }
+
+        if (node.type === 'paragraph' || node.type === 'heading') {
+          const text = extractInlineText(node);
+          if (text.includes('\n')) {
+            const subLines = text.split(/\r?\n/);
+            for (const sub of subLines) {
+              const trimmed = sub.trim();
+              if (trimmed) extractedLines.push(trimmed);
+            }
+          } else {
+            const trimmed = text.trim();
+            if (trimmed) extractedLines.push(trimmed);
+          }
+          return;
+        }
+
+        if (node.type === 'blockquote') {
+          if (Array.isArray(node.content)) {
+            for (const child of node.content) walkNode(child);
+          } else {
+            const text = extractInlineText(node).trim();
+            if (text) extractedLines.push(text);
+          }
+          return;
+        }
+
+        if (node.type === 'bulletList') {
+          if (Array.isArray(node.content)) {
+            for (const item of node.content) {
+              const itemText = extractInlineText(item).trim();
+              if (itemText) extractedLines.push(`• ${itemText}`);
+            }
+          }
+          return;
+        }
+
+        if (node.type === 'orderedList') {
+          if (Array.isArray(node.content)) {
+            node.content.forEach((item: any, idx: number) => {
+              const itemText = extractInlineText(item).trim();
+              if (itemText) extractedLines.push(`${idx + 1}. ${itemText}`);
+            });
+          }
+          return;
+        }
+
+        if (node.type === 'codeBlock') {
+          const text = extractInlineText(node);
+          const lines = text.split(/\r?\n/);
+          for (const line of lines) {
+            extractedLines.push(line);
+          }
+          return;
+        }
+
+        if (Array.isArray(node.content)) {
+          for (const child of node.content) walkNode(child);
+          return;
+        }
+
+        if (node.text) {
+          const trimmed = node.text.trim();
+          if (trimmed) extractedLines.push(trimmed);
+        }
+      };
+
+      walkNode(json);
+      if (extractedLines.length > 0) return extractedLines;
     }
   } catch {}
 
-  // 2. Try parsing HTML tags (e.g. <p>...</p>, <div>...</div>, <h1-6>)
+  // 2. Try parsing HTML tags (e.g. <p>...</p>, <div>...</div>, <h1-6>, <br>)
   if (/<[a-z][\s\S]*>/i.test(rawContent)) {
     const cleaned = rawContent
-      .replace(/<\/?(p|div|h[1-6]|li|blockquote)[^>]*>/gi, '\n')
       .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, '');
-    const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+      .replace(/<\/?(p|div|h[1-6]|li|blockquote)[^>]*>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+    const lines = cleaned
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(Boolean);
     if (lines.length > 0) return lines;
   }
 
   // 3. Fallback: split by newlines
-  return rawContent.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  return rawContent
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
 }
 
 export function generatePrintableBookHtml(
@@ -68,6 +166,8 @@ export function generatePrintableBookHtml(
 
   let bodyContent = '';
 
+  const sortedChapters = sortChapters(chapters);
+
   // 1. Cover Page / Front Matter
   if (includeFrontMatter) {
     bodyContent += `
@@ -85,12 +185,12 @@ export function generatePrintableBookHtml(
   }
 
   // 2. Table of Contents
-  if (includeToc && chapters.length > 0) {
+  if (includeToc && sortedChapters.length > 0) {
     bodyContent += `
       <section class="toc-page">
         <h2 class="toc-heading">MỤC LỤC</h2>
         <div class="toc-list">
-          ${chapters.map((ch, idx) => `
+          ${sortedChapters.map((ch, idx) => `
             <div class="toc-item">
               <span class="toc-title">${escapeHtml(ch.title || `Chương ${idx + 1}`)}</span>
               <span class="toc-dots"></span>
@@ -104,7 +204,7 @@ export function generatePrintableBookHtml(
   }
 
   // 3. Chapters
-  chapters.forEach((ch, idx) => {
+  sortedChapters.forEach((ch, idx) => {
     const paragraphs = parseChapterParagraphs(ch.content);
     bodyContent += `
       <article class="chapter-article">
@@ -113,12 +213,15 @@ export function generatePrintableBookHtml(
         </header>
         <div class="chapter-body">
           ${paragraphs.length > 0
-            ? paragraphs.map(p => `<p>${escapeHtml(p)}</p>`).join('\n')
+            ? paragraphs.map(p => {
+                const safe = escapeHtml(p).replace(/\n/g, '<br/>');
+                return `<p>${safe}</p>`;
+              }).join('\n')
             : '<p class="empty-chapter"><em>(Chương này chưa có nội dung)</em></p>'
           }
         </div>
       </article>
-      ${idx < chapters.length - 1 ? '<div class="page-break"></div>' : ''}
+      ${idx < sortedChapters.length - 1 ? '<div class="page-break"></div>' : ''}
     `;
   });
 
@@ -352,6 +455,13 @@ export function generatePrintableBookHtml(
       text-indent: 1.5em;
       margin-bottom: 0.8em;
       color: #1e293b;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .chapter-body p.empty-line {
+      text-indent: 0;
+      min-height: 1.2em;
     }
 
     @media print {

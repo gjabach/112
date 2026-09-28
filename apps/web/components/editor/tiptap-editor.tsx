@@ -34,6 +34,15 @@ interface TiptapEditorProps {
   editable?: boolean;
 }
 
+function formatPlainTextToHtml(text: string): string {
+  if (!text) return '';
+  if (/<[a-z][\s\S]*>/i.test(text)) return text;
+  return text
+    .split(/\r?\n/)
+    .map(line => `<p>${line ? line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : '<br>'}</p>`)
+    .join('');
+}
+
 export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true }: TiptapEditorProps) {
   const lastEmittedContentRef = useRef<string | null>(null);
   const lastUserTypingTimeRef = useRef<number>(0);
@@ -46,9 +55,9 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     try {
       const parsed = JSON.parse(content);
       if (parsed && typeof parsed === 'object') return parsed;
-      return `<p>${content}</p>`;
+      return formatPlainTextToHtml(content);
     } catch {
-      return `<p>${content}</p>`;
+      return formatPlainTextToHtml(content);
     }
   })();
 
@@ -123,7 +132,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       lastEmittedContentRef.current = typeof content === 'string' ? content : JSON.stringify(content);
     } catch {
       if (editor.isEmpty && content) {
-        editor.commands.setContent(`<p>${content}</p>`);
+        editor.commands.setContent(formatPlainTextToHtml(content));
       }
     }
   }, [content, editor]);

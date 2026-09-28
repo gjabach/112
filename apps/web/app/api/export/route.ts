@@ -11,7 +11,7 @@ import {
   PageNumber
 } from 'docx';
 
-import { parseChapterParagraphs, generatePrintableBookHtml } from '@/lib/export-helpers';
+import { parseChapterParagraphs, generatePrintableBookHtml, sortChapters } from '@/lib/export-helpers';
 
 export const runtime = 'nodejs';
 
@@ -30,8 +30,8 @@ export async function POST(req: NextRequest) {
     const includeFrontMatter = options.includeFrontMatter ?? true;
     const includeToc = options.includeToc ?? true;
 
-    // Filter & sort chapters
-    const sortedChapters = [...chapters].sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    // Filter & sort chapters deterministically
+    const sortedChapters: any[] = sortChapters<any>(chapters);
 
     if (format === 'docx') {
       const docChildren: any[] = [];
@@ -154,20 +154,32 @@ export async function POST(req: NextRequest) {
           );
         } else {
           paragraphs.forEach((pText: string) => {
-            docChildren.push(
-              new Paragraph({
-                alignment: AlignmentType.JUSTIFIED,
-                indent: { firstLine: 720 }, // 0.5 inch first line indent
-                spacing: { after: 120, line: 360 }, // 1.5 line spacing
-                children: [
-                  new TextRun({
-                    text: pText,
-                    size: 24, // 12pt
-                    font: 'Times New Roman'
+            const subLines = pText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            if (subLines.length === 0) {
+              docChildren.push(
+                new Paragraph({
+                  spacing: { after: 120 },
+                  children: [new TextRun({ text: '', font: 'Times New Roman' })]
+                })
+              );
+            } else {
+              subLines.forEach((line: string) => {
+                docChildren.push(
+                  new Paragraph({
+                    alignment: AlignmentType.JUSTIFIED,
+                    indent: { firstLine: 720 }, // 0.5 inch first line indent
+                    spacing: { after: 120, line: 360 }, // 1.5 line spacing
+                    children: [
+                      new TextRun({
+                        text: line,
+                        size: 24, // 12pt
+                        font: 'Times New Roman'
+                      })
+                    ]
                   })
-                ]
-              })
-            );
+                );
+              });
+            }
           });
         }
       });
@@ -247,7 +259,14 @@ export async function POST(req: NextRequest) {
       sortedChapters.forEach((ch: any, idx: number) => {
         md += `## Chương ${idx + 1}: ${ch.title}\n\n`;
         const paras = parseChapterParagraphs(ch.content);
-        md += paras.join('\n\n') + '\n\n---\n\n';
+        const mdLines: string[] = [];
+        paras.forEach((p: string) => {
+          const sub = p.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          if (sub.length > 0) {
+            mdLines.push(sub.join('  \n'));
+          }
+        });
+        md += mdLines.join('\n\n') + '\n\n---\n\n';
       });
 
       return NextResponse.json({
@@ -260,12 +279,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Default plain text
-    let txt = `${projectTitle}\n${authorName ? `Tác giả: ${authorName}\n` : ''}\n====================\n\n`;
+    // Default plain text (Windows CRLF compatible)
+    let txt = `${projectTitle}\r\n${authorName ? `Tác giả: ${authorName}\r\n` : ''}\r\n====================\r\n\r\n`;
     sortedChapters.forEach((ch: any, idx: number) => {
-      txt += `\n\n--- Chương ${idx + 1}: ${ch.title} ---\n\n`;
+      txt += `\r\n\r\n--- Chương ${idx + 1}: ${ch.title} ---\r\n\r\n`;
       const paras = parseChapterParagraphs(ch.content);
-      txt += paras.join('\n\n') + '\n';
+      const lines: string[] = [];
+      paras.forEach((p: string) => {
+        p.split(/\r?\n/).forEach(l => {
+          const t = l.trim();
+          if (t) lines.push(t);
+        });
+      });
+      txt += lines.join('\r\n\r\n') + '\r\n';
     });
 
     return NextResponse.json({

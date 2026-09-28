@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Download, FileText, BookOpen, File, Code, FileJson, Check, Loader2, Printer } from 'lucide-react';
-import { parseChapterParagraphs, generatePrintableBookHtml } from '@/lib/export-helpers';
+import { parseChapterParagraphs, generatePrintableBookHtml, sortChapters } from '@/lib/export-helpers';
 import { fireConfetti } from '@/components/vfx/confetti';
 
 interface ExportDialogProps {
@@ -91,9 +91,9 @@ export function ExportDialog({
   };
 
   const downloadHtmlOffline = () => {
-    const filteredChapters = chapters
-      .filter((c: any) => selectedChapters.includes(c.id))
-      .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    const filteredChapters = sortChapters(
+      chapters.filter((c: any) => selectedChapters.includes(c.id))
+    );
 
     const html = generatePrintableBookHtml(projectTitle, authorName, filteredChapters, {
       style: selectedStyle,
@@ -115,9 +115,9 @@ export function ExportDialog({
     setLoading(true);
     setResult(null);
 
-    const filteredChapters = chapters
-      .filter((c: any) => selectedChapters.includes(c.id))
-      .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    const filteredChapters = sortChapters(
+      chapters.filter((c: any) => selectedChapters.includes(c.id))
+    );
 
     try {
       // 1. Specialized handling for PDF: Open formatted A4 Book print window
@@ -338,20 +338,32 @@ export function ExportDialog({
             );
           } else {
             paragraphs.forEach((pText: string) => {
-              docChildren.push(
-                new Paragraph({
-                  alignment: AlignmentType.JUSTIFIED,
-                  indent: { firstLine: 720 },
-                  spacing: { after: 120, line: 360 },
-                  children: [
-                    new TextRun({
-                      text: pText,
-                      size: 24,
-                      font: 'Times New Roman'
+              const subLines = pText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+              if (subLines.length === 0) {
+                docChildren.push(
+                  new Paragraph({
+                    spacing: { after: 120 },
+                    children: [new TextRun({ text: '', font: 'Times New Roman' })]
+                  })
+                );
+              } else {
+                subLines.forEach((line: string) => {
+                  docChildren.push(
+                    new Paragraph({
+                      alignment: AlignmentType.JUSTIFIED,
+                      indent: { firstLine: 720 },
+                      spacing: { after: 120, line: 360 },
+                      children: [
+                        new TextRun({
+                          text: line,
+                          size: 24,
+                          font: 'Times New Roman'
+                        })
+                      ]
                     })
-                  ]
-                })
-              );
+                  );
+                });
+              }
             });
           }
         });
@@ -420,7 +432,7 @@ export function ExportDialog({
 h1.book-title { text-align: center; font-size: 2.2em; margin-top: 25%; margin-bottom: 0.5em; font-weight: bold; }
 p.author { text-align: center; font-style: italic; font-size: 1.2em; margin-bottom: 40%; }
 h2.chapter-title { text-align: center; font-size: 1.6em; margin-top: 2em; margin-bottom: 1.5em; border-bottom: 1px solid #ccc; padding-bottom: 0.5em; }
-p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
+p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: pre-wrap; word-break: break-word; }`
         );
 
         zip.file(
@@ -449,7 +461,10 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
           const paragraphs = parseChapterParagraphs(ch.content);
           const parasHtml =
             paragraphs.length > 0
-              ? paragraphs.map(p => `<p>${escapeXml(p)}</p>`).join('\n')
+              ? paragraphs.map(p => {
+                  const safe = escapeXml(p).replace(/\n/g, '<br/>');
+                  return `<p>${safe}</p>`;
+                }).join('\n')
               : '<p></p>';
 
           zip.file(
@@ -534,7 +549,14 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
         filteredChapters.forEach((ch: any, idx: number) => {
           md += `## ${ch.title || `Chương ${idx + 1}`}\n\n`;
           const paras = parseChapterParagraphs(ch.content);
-          md += paras.join('\n\n') + '\n\n---\n\n';
+          const mdLines: string[] = [];
+          paras.forEach((p: string) => {
+            const sub = p.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            if (sub.length > 0) {
+              mdLines.push(sub.join('  \n'));
+            }
+          });
+          md += mdLines.join('\n\n') + '\n\n---\n\n';
         });
         blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
       } else if (selectedFormat === 'json') {
@@ -552,11 +574,18 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
         blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
       } else {
         // Plain text
-        let text = `${projectTitle}\n${authorName ? `Tác giả: ${authorName}\n` : ''}\n====================\n\n`;
+        let text = `${projectTitle}\r\n${authorName ? `Tác giả: ${authorName}\r\n` : ''}\r\n====================\r\n\r\n`;
         filteredChapters.forEach((ch: any, idx: number) => {
-          text += `\n\n--- ${ch.title || `Chương ${idx + 1}`} ---\n\n`;
+          text += `\r\n\r\n--- ${ch.title || `Chương ${idx + 1}`} ---\r\n\r\n`;
           const paras = parseChapterParagraphs(ch.content);
-          text += paras.join('\n\n') + '\n';
+          const lines: string[] = [];
+          paras.forEach((p: string) => {
+            p.split(/\r?\n/).forEach(l => {
+              const t = l.trim();
+              if (t) lines.push(t);
+            });
+          });
+          text += lines.join('\r\n\r\n') + '\r\n';
         });
         blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       }
@@ -697,8 +726,7 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; }`
                 {chapters.length === 0 ? (
                   <div className="p-4 text-center text-xs text-muted-foreground">Chưa có chương nào trong dự án</div>
                 ) : (
-                  chapters
-                    .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0))
+                  sortChapters(chapters)
                     .map((ch: any, idx: number) => (
                       <label key={ch.id} className="flex items-center gap-2.5 p-2.5 hover:bg-accent/50 cursor-pointer text-sm">
                         <input

@@ -269,42 +269,138 @@ test('Workspace sync snapshot schema contains all essential creative entities', 
   assert.equal(mockSnapshot.chapters[0].content, 'Khởi đầu mới');
 });
 
-test('parseChapterParagraphs handles TipTap JSON, HTML tags, and raw Vietnamese text accurately', () => {
+test('parseChapterParagraphs handles TipTap JSON, hardBreaks, newlines, HTML tags, and raw Vietnamese text accurately', () => {
   // Inline implementation matching export-helpers.ts for isolated node test runner
+  function sortChapters(chaps) {
+    return [...chaps].sort((a, b) => {
+      const orderA = typeof a.orderIndex === 'number' ? a.orderIndex : 0;
+      const orderB = typeof b.orderIndex === 'number' ? b.orderIndex : 0;
+      if (orderA !== orderB) return orderA - orderB;
+      const timeA = a.createdAt || 0;
+      const timeB = b.createdAt || 0;
+      if (timeA !== timeB) return timeA - timeB;
+      return String(a.title || '').localeCompare(String(b.title || ''), 'vi', { numeric: true });
+    });
+  }
+
   function parseChapterParagraphs(rawContent) {
     if (!rawContent) return [];
+
     try {
       const json = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
-      if (json && json.type === 'doc' && Array.isArray(json.content)) {
-        const paragraphs = [];
-        const extractText = (node) => {
+      if (json && (json.type === 'doc' || Array.isArray(json.content))) {
+        const extractedLines = [];
+
+        const extractInlineText = (node) => {
           if (!node) return '';
           if (typeof node === 'string') return node;
+          if (node.type === 'hardBreak' || node.type === 'hard_break') return '\n';
           if (node.text) return node.text;
-          if (Array.isArray(node.content)) return node.content.map(extractText).join('');
+          if (Array.isArray(node.content)) {
+            return node.content.map(extractInlineText).join('');
+          }
           return '';
         };
-        for (const node of json.content) {
-          const text = extractText(node).trim();
-          if (text) paragraphs.push(text);
-        }
-        if (paragraphs.length > 0) return paragraphs;
+
+        const walkNode = (node) => {
+          if (!node) return;
+
+          if (node.type === 'doc') {
+            if (Array.isArray(node.content)) {
+              for (const child of node.content) walkNode(child);
+            }
+            return;
+          }
+
+          if (node.type === 'paragraph' || node.type === 'heading') {
+            const text = extractInlineText(node);
+            if (text.includes('\n')) {
+              const subLines = text.split(/\r?\n/);
+              for (const sub of subLines) {
+                const trimmed = sub.trim();
+                if (trimmed) extractedLines.push(trimmed);
+              }
+            } else {
+              const trimmed = text.trim();
+              if (trimmed) extractedLines.push(trimmed);
+            }
+            return;
+          }
+
+          if (node.type === 'blockquote') {
+            if (Array.isArray(node.content)) {
+              for (const child of node.content) walkNode(child);
+            } else {
+              const text = extractInlineText(node).trim();
+              if (text) extractedLines.push(text);
+            }
+            return;
+          }
+
+          if (node.type === 'bulletList') {
+            if (Array.isArray(node.content)) {
+              for (const item of node.content) {
+                const itemText = extractInlineText(item).trim();
+                if (itemText) extractedLines.push(`• ${itemText}`);
+              }
+            }
+            return;
+          }
+
+          if (node.type === 'orderedList') {
+            if (Array.isArray(node.content)) {
+              node.content.forEach((item, idx) => {
+                const itemText = extractInlineText(item).trim();
+                if (itemText) extractedLines.push(`${idx + 1}. ${itemText}`);
+              });
+            }
+            return;
+          }
+
+          if (node.type === 'codeBlock') {
+            const text = extractInlineText(node);
+            const lines = text.split(/\r?\n/);
+            for (const line of lines) {
+              extractedLines.push(line);
+            }
+            return;
+          }
+
+          if (Array.isArray(node.content)) {
+            for (const child of node.content) walkNode(child);
+            return;
+          }
+
+          if (node.text) {
+            const trimmed = node.text.trim();
+            if (trimmed) extractedLines.push(trimmed);
+          }
+        };
+
+        walkNode(json);
+        if (extractedLines.length > 0) return extractedLines;
       }
     } catch {}
 
     if (/<[a-z][\s\S]*>/i.test(rawContent)) {
       const cleaned = rawContent
-        .replace(/<\/?(p|div|h[1-6]|li|blockquote)[^>]*>/gi, '\n')
         .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]+>/g, '');
-      const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+        .replace(/<\/?(p|div|h[1-6]|li|blockquote)[^>]*>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'");
+      const lines = cleaned.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
       if (lines.length > 0) return lines;
     }
 
     return rawContent.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   }
 
-  // 1. TipTap JSON
+  // 1. TipTap JSON with standard paragraphs
   const tiptapJson = JSON.stringify({
     type: 'doc',
     content: [
@@ -317,17 +413,72 @@ test('parseChapterParagraphs handles TipTap JSON, HTML tags, and raw Vietnamese 
   assert.equal(fromJson[0], 'Đoạn văn mở đầu cuốn tiểu thuyết.');
   assert.equal(fromJson[1], 'Nhân vật chính bước vào thế giới mới đầy huyền bí.');
 
-  // 2. HTML string
-  const htmlContent = '<p>Đoạn văn thứ nhất trong HTML.</p><p>Đoạn văn thứ hai có dấu tiếng Việt: sắc, huyền, hỏi, ngã, nặng.</p>';
-  const fromHtml = parseChapterParagraphs(htmlContent);
-  assert.equal(fromHtml.length, 2);
-  assert.equal(fromHtml[0], 'Đoạn văn thứ nhất trong HTML.');
-  assert.equal(fromHtml[1], 'Đoạn văn thứ hai có dấu tiếng Việt: sắc, huyền, hỏi, ngã, nặng.');
+  // 2. TipTap JSON with hardBreak (Shift+Enter or soft enter) - Prevents lines gluing together!
+  const tiptapHardBreak = JSON.stringify({
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Dòng thứ nhất trước khi ấn enter' },
+          { type: 'hardBreak' },
+          { type: 'text', text: 'Dòng thứ hai sau khi ấn enter' }
+        ]
+      }
+    ]
+  });
+  const fromHardBreak = parseChapterParagraphs(tiptapHardBreak);
+  assert.equal(fromHardBreak.length, 2);
+  assert.equal(fromHardBreak[0], 'Dòng thứ nhất trước khi ấn enter');
+  assert.equal(fromHardBreak[1], 'Dòng thứ hai sau khi ấn enter');
 
-  // 3. Raw text with newlines
-  const rawText = 'Dòng 1\n\nDòng 2\nDòng 3';
+  // 3. TipTap JSON with embedded newlines in text block
+  const tiptapMultilineText = JSON.stringify({
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Dòng 1 trong đoạn văn\nDòng 2 trong cùng đoạn văn' }
+        ]
+      }
+    ]
+  });
+  const fromMultiline = parseChapterParagraphs(tiptapMultilineText);
+  assert.equal(fromMultiline.length, 2);
+  assert.equal(fromMultiline[0], 'Dòng 1 trong đoạn văn');
+  assert.equal(fromMultiline[1], 'Dòng 2 trong cùng đoạn văn');
+
+  // 4. HTML string with <p> and <br/>
+  const htmlContent = '<p>Đoạn văn thứ nhất trong HTML.<br/>Dòng phụ nối tiếp sau ngắt dòng.</p><p>Đoạn văn thứ hai có dấu tiếng Việt: sắc, huyền, hỏi, ngã, nặng.</p>';
+  const fromHtml = parseChapterParagraphs(htmlContent);
+  assert.equal(fromHtml.length, 3);
+  assert.equal(fromHtml[0], 'Đoạn văn thứ nhất trong HTML.');
+  assert.equal(fromHtml[1], 'Dòng phụ nối tiếp sau ngắt dòng.');
+  assert.equal(fromHtml[2], 'Đoạn văn thứ hai có dấu tiếng Việt: sắc, huyền, hỏi, ngã, nặng.');
+
+  // 5. Raw text with newlines
+  const rawText = 'Dòng 1\r\n\r\nDòng 2\nDòng 3';
   const fromRaw = parseChapterParagraphs(rawText);
   assert.equal(fromRaw.length, 3);
+  assert.equal(fromRaw[0], 'Dòng 1');
+  assert.equal(fromRaw[1], 'Dòng 2');
+  assert.equal(fromRaw[2], 'Dòng 3');
+
+  // 6. Test deterministic sortChapters
+  const unsorted = [
+    { title: 'Chương 10', orderIndex: 0, createdAt: 100 },
+    { title: 'Chương 2', orderIndex: 0, createdAt: 100 },
+    { title: 'Chương 1', orderIndex: 0, createdAt: 50 },
+    { title: 'Chương B', orderIndex: 2, createdAt: 200 },
+    { title: 'Chương A', orderIndex: 1, createdAt: 300 }
+  ];
+  const sorted = sortChapters(unsorted);
+  assert.equal(sorted[0].title, 'Chương 1'); // lowest createdAt when orderIndex=0
+  assert.equal(sorted[1].title, 'Chương 2'); // numeric locale comparison: 'Chương 2' before 'Chương 10'
+  assert.equal(sorted[2].title, 'Chương 10');
+  assert.equal(sorted[3].title, 'Chương A'); // orderIndex = 1
+  assert.equal(sorted[4].title, 'Chương B'); // orderIndex = 2
 });
 
 test('generatePrintableBookHtml produces valid A4 book structure with cover, TOC and Vietnamese typography', () => {
