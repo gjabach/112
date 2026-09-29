@@ -1,34 +1,74 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { TimelineEvent } from '@/components/timeline/timeline-event';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, Clock, Filter, Search, Sparkles, Calendar, Trash2, Flag, User } from 'lucide-react';
+import { 
+  ArrowLeft, 
+  Plus, 
+  Clock, 
+  Search, 
+  Sparkles, 
+  GitFork, 
+  Milestone, 
+  Trash2, 
+  Edit3, 
+  AlertTriangle, 
+  CheckCircle2, 
+  Calendar,
+  Users,
+  Filter
+} from 'lucide-react';
+import { InteractiveTimelineTrack } from '@/components/timeline/interactive-timeline-track';
+import { ParallelTracksView } from '@/components/timeline/parallel-tracks-view';
+import { motion, AnimatePresence } from 'framer-motion';
+
+interface TimelineEvent {
+  id: string;
+  projectId?: string;
+  title: string;
+  description?: string;
+  dateInStory?: string;
+  dateRealWorld?: string;
+  era?: string;
+  importance: 'major' | 'minor' | 'turning_point' | 'flashback' | string;
+  involvedCharacterIds?: string[];
+  locationId?: string;
+  chapterId?: string;
+  orderIndex?: number;
+}
 
 export default function TimelinePage() {
   const params = useParams();
   const projectId = params.projectId as string;
 
-  const [events, setEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [eras, setEras] = useState<string[]>([]);
   const [stats, setStats] = useState<any>(null);
+  const [characters, setCharacters] = useState<any[]>([]);
+  const [chapters, setChapters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // View mode
+  const [viewMode, setViewMode] = useState<'track' | 'parallel'>('track');
+
+  // Filters
   const [filterEra, setFilterEra] = useState('all');
   const [filterImportance, setFilterImportance] = useState('all');
   const [filterCharacter, setFilterCharacter] = useState('all');
   const [search, setSearch] = useState('');
-  const [zoom, setZoom] = useState<'all' | 'era' | 'year' | 'month'>('all');
-  const [showNewDialog, setShowNewDialog] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<any>(null);
-  const [form, setForm] = useState({
+
+  // Event Edit / Create Dialog
+  const [showEventDialog, setShowEventDialog] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<TimelineEvent | null>(null);
+  const [eventForm, setEventForm] = useState({
     title: '',
     description: '',
     dateInStory: '',
@@ -36,18 +76,18 @@ export default function TimelinePage() {
     era: '',
     importance: 'minor',
     involvedCharacterIds: [] as string[],
-    locationId: '',
     chapterId: ''
   });
+
+  // AI Chrono Audit Dialog
+  const [showAIDialog, setShowAIDialog] = useState(false);
   const [aiCheck, setAiCheck] = useState<any>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [characters, setCharacters] = useState<any[]>([]);
-  const [showMobileFilter, setShowMobileFilter] = useState(false);
 
   useEffect(() => {
     if (projectId) {
       fetchTimeline();
-      fetchCharacters();
+      fetchCharactersAndChapters();
     }
   }, [projectId, filterEra, filterImportance]);
 
@@ -56,7 +96,7 @@ export default function TimelinePage() {
       const query = new URLSearchParams();
       if (filterEra !== 'all') query.set('era', filterEra);
       if (filterImportance !== 'all') query.set('importance', filterImportance);
-      
+
       const res = await apiFetch(`/api/projects/${projectId}/timeline?${query.toString()}`);
       setEvents(Array.isArray(res?.events) ? res.events : []);
       setEras(Array.isArray(res?.eras) ? res.eras : []);
@@ -71,509 +111,440 @@ export default function TimelinePage() {
     }
   };
 
-  const fetchCharacters = async () => {
+  const fetchCharactersAndChapters = async () => {
     try {
-      const res = await apiFetch(`/api/projects/${projectId}/characters`);
-      setCharacters(Array.isArray(res?.characters) ? res.characters : []);
-    } catch {
-      setCharacters([]);
+      const [charRes, chapRes] = await Promise.all([
+        apiFetch(`/api/projects/${projectId}/characters`).catch(() => ({ characters: [] })),
+        apiFetch(`/api/projects/${projectId}/chapters`).catch(() => ({ chapters: [] }))
+      ]);
+      setCharacters(Array.isArray(charRes?.characters) ? charRes.characters : []);
+      setChapters(Array.isArray(chapRes?.chapters) ? chapRes.chapters : []);
+    } catch {}
+  };
+
+  const handleSaveEvent = async () => {
+    if (!eventForm.title.trim()) {
+      toast.error('Nhập tiêu đề sự kiện');
+      return;
+    }
+    try {
+      if (editingEvent?.id) {
+        await apiFetch(`/api/timeline/${editingEvent.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(eventForm)
+        });
+        toast.success('Đã cập nhật sự kiện thành công!');
+      } else {
+        await apiFetch(`/api/projects/${projectId}/timeline`, {
+          method: 'POST',
+          body: JSON.stringify(eventForm)
+        });
+        toast.success('Đã thêm sự kiện mới vào dòng thời gian!');
+      }
+      setShowEventDialog(false);
+      setEditingEvent(null);
+      fetchTimeline();
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi khi lưu');
     }
   };
 
-  const saveEvent = async () => {
-    if (!form.title.trim()) { toast.error('Nhập tiêu đề sự kiện'); return; }
-    try {
-      if (editingEvent) {
-        await apiFetch(`/api/timeline/${editingEvent.id}`, { method: 'PATCH', body: JSON.stringify(form) });
-        toast.success('Cập nhật sự kiện');
-      } else {
-        await apiFetch(`/api/projects/${projectId}/timeline`, { method: 'POST', body: JSON.stringify(form) });
-        toast.success('Tạo sự kiện mới');
-      }
-      setShowNewDialog(false);
-      setEditingEvent(null);
-      setForm({ title: '', description: '', dateInStory: '', dateRealWorld: '', era: '', importance: 'minor', involvedCharacterIds: [], locationId: '', chapterId: '' });
-      fetchTimeline();
-    } catch (e: any) { toast.error(e.message); }
-  };
-
-  const deleteEvent = async (id: string) => {
-    if (!confirm('Xóa sự kiện này?')) return;
+  const handleDeleteEvent = async (id: string, title: string) => {
+    if (!confirm(`Bạn có chắc muốn xóa sự kiện "${title}"?`)) return;
     try {
       await apiFetch(`/api/timeline/${id}`, { method: 'DELETE' });
-      toast.success('Đã xóa');
+      toast.success(`Đã xóa "${title}"`);
       fetchTimeline();
-    } catch (e: any) { toast.error(e.message); }
-  };
-
-  const openEdit = (event: any) => {
-    setEditingEvent(event);
-    setForm({
-      title: event.title || '',
-      description: event.description || '',
-      dateInStory: event.dateInStory || '',
-      dateRealWorld: event.dateRealWorld || '',
-      era: event.era || '',
-      importance: event.importance || 'minor',
-      involvedCharacterIds: Array.isArray(event.involvedCharacterIds) ? event.involvedCharacterIds : [],
-      locationId: event.locationId || '',
-      chapterId: event.chapterId || ''
-    });
-    setShowNewDialog(true);
-  };
-
-  const checkTimeline = async () => {
-    setAiLoading(true);
-    try {
-      const res = await apiFetch(`/api/projects/${projectId}/timeline/check`, { method: 'POST' });
-      setAiCheck(res.check || { summary: 'Dòng thời gian hợp lý, không có xung đột.', issues: [] });
-      toast.success('AI đã kiểm tra xong');
     } catch (e: any) {
       toast.error(e.message);
+    }
+  };
+
+  const openCreateEvent = () => {
+    setEditingEvent(null);
+    setEventForm({
+      title: '',
+      description: '',
+      dateInStory: '',
+      dateRealWorld: '',
+      era: eras[0] || '',
+      importance: 'minor',
+      involvedCharacterIds: [],
+      chapterId: ''
+    });
+    setShowEventDialog(true);
+  };
+
+  const openEditEvent = (ev: TimelineEvent) => {
+    setEditingEvent(ev);
+    setEventForm({
+      title: ev.title || '',
+      description: ev.description || '',
+      dateInStory: ev.dateInStory || '',
+      dateRealWorld: ev.dateRealWorld || '',
+      era: ev.era || '',
+      importance: ev.importance || 'minor',
+      involvedCharacterIds: Array.isArray(ev.involvedCharacterIds) ? ev.involvedCharacterIds : [],
+      chapterId: ev.chapterId || ''
+    });
+    setShowEventDialog(true);
+  };
+
+  const runChronoAudit = async () => {
+    setAiLoading(true);
+    setShowAIDialog(true);
+    try {
+      const res = await apiFetch(`/api/projects/${projectId}/timeline/check`, { method: 'POST' });
+      setAiCheck(res?.check || { summary: 'Dòng thời gian liền mạch, logic.', issues: [] });
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi kiểm tra');
     } finally {
       setAiLoading(false);
     }
   };
 
   const safeEvents = Array.isArray(events) ? events : [];
-  const safeEras = Array.isArray(eras) ? eras : [];
-  const safeCharacters = Array.isArray(characters) ? characters : [];
-
-  const charactersMap = safeCharacters.reduce((acc: Record<string, string>, c: any) => {
-    if (c?.id && c?.name) acc[c.id] = c.name;
-    return acc;
-  }, {});
-
   const filteredEvents = safeEvents.filter(e => {
-    const matchesSearch = (e?.title || '').toLowerCase().includes(search.toLowerCase()) ||
-      (e?.description && e.description.toLowerCase().includes(search.toLowerCase()));
-    const matchesCharacter = filterCharacter === 'all' ||
-      (Array.isArray(e?.involvedCharacterIds) && e.involvedCharacterIds.includes(filterCharacter));
-    return matchesSearch && matchesCharacter;
+    const matchSearch =
+      (e.title || '').toLowerCase().includes(search.toLowerCase()) ||
+      (e.description || '').toLowerCase().includes(search.toLowerCase()) ||
+      (e.dateInStory || '').toLowerCase().includes(search.toLowerCase());
+    const matchChar = filterCharacter === 'all' ||
+      (Array.isArray(e.involvedCharacterIds) && e.involvedCharacterIds.includes(filterCharacter));
+    return matchSearch && matchChar;
   });
 
-  // Group by era for zoom=era
-  const groupedByEra = safeEras.length > 0 ? safeEras.map(era => ({
-    era,
-    events: filteredEvents.filter((e: any) => e.era === era)
-  })) : [{ era: 'Chưa phân loại', events: filteredEvents }];
-
-  const hasActiveFilter = filterEra !== 'all' || filterImportance !== 'all' || filterCharacter !== 'all' || search.trim() !== '';
-  const resetFilters = () => {
-    setFilterEra('all');
-    setFilterImportance('all');
-    setFilterCharacter('all');
-    setSearch('');
-  };
-
-  if (loading) return <div className="p-8">Đang tải timeline...</div>;
-
   return (
-    <div className="min-h-screen bg-background flex flex-col w-full max-w-full overflow-x-clip">
-      <header className="border-b bg-card sticky top-0 z-20 shadow-xs">
-        <div className="p-3 max-w-6xl mx-auto w-full">
-          <div className="flex items-center justify-between gap-2 sm:gap-4">
-            {/* Left: Back button + title & stats */}
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <Link href={`/editor/${projectId}`} className="shrink-0">
-                <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9">
-                  <ArrowLeft className="w-4 h-4" />
-                </Button>
-              </Link>
-              <div className="min-w-0">
-                <h1 className="font-bold text-sm sm:text-base flex items-center gap-1.5 truncate">
-                  <Clock className="w-4 h-4 text-purple-500 shrink-0" />
-                  <span className="truncate">Dòng thời gian</span>
-                </h1>
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
-                  <span>{stats?.total || 0} sự kiện</span>
-                  <span className="hidden sm:inline">•</span>
-                  <span className="hidden sm:inline">{stats?.major || 0} quan trọng</span>
-                  <span className="hidden sm:inline">•</span>
-                  <span className="hidden sm:inline">{stats?.eras || 0} kỷ nguyên</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Right: Actions */}
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              {/* Desktop Zoom Switcher */}
-              <div className="hidden md:flex bg-muted rounded-lg p-0.5">
-                <Button variant={zoom === 'all' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setZoom('all')}>Tất cả</Button>
-                <Button variant={zoom === 'era' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setZoom('era')}>Theo kỷ nguyên</Button>
-              </div>
-
-              {/* Mobile Filter Toggle */}
-              <Button
-                variant={hasActiveFilter ? 'default' : 'outline'}
-                size="sm"
-                className="md:hidden h-8 px-2.5 text-xs relative"
-                onClick={() => setShowMobileFilter(!showMobileFilter)}
-              >
-                <Filter className="w-3.5 h-3.5 mr-1" />
-                <span>Lọc</span>
-                {hasActiveFilter && (
-                  <span className="w-2 h-2 rounded-full bg-amber-400 absolute -top-0.5 -right-0.5" />
-                )}
+    <div className="min-h-screen bg-background w-full max-w-full overflow-x-clip pb-12">
+      {/* Top Header */}
+      <header className="border-b bg-card/95 backdrop-blur-md sticky top-0 z-20 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 max-w-7xl mx-auto">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Link href={`/editor/${projectId}`} className="shrink-0">
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9">
+                <ArrowLeft className="w-4 h-4" />
               </Button>
-
-              <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs" onClick={checkTimeline} disabled={aiLoading}>
-                <Sparkles className="w-3.5 h-3.5 sm:mr-1 text-primary" />
-                <span className="hidden sm:inline">{aiLoading ? 'Đang check...' : 'AI Check'}</span>
-              </Button>
-
-              <Button size="sm" className="h-8 px-2.5 text-xs" onClick={() => {
-                setEditingEvent(null);
-                setForm({ title: '', description: '', dateInStory: '', dateRealWorld: '', era: '', importance: 'minor', involvedCharacterIds: [], locationId: '', chapterId: '' });
-                setShowNewDialog(true);
-              }}>
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                <span>Sự kiện</span>
-              </Button>
+            </Link>
+            <div className="min-w-0">
+              <h1 className="font-bold text-base sm:text-lg flex items-center gap-2 truncate">
+                <span className="truncate">Dòng Thời Gian Tác Phẩm</span>
+                <span className="hidden sm:inline text-xs text-muted-foreground font-normal">(Story Chrono-Timeline)</span>
+                <Badge variant="secondary" className="text-[11px] px-1.5 py-0 font-normal shrink-0">
+                  {safeEvents.length} sự kiện
+                </Badge>
+              </h1>
+              <p className="text-[11px] sm:text-xs text-muted-foreground truncate">
+                Theo dõi diễn biến lịch sử, ngày tháng câu chuyện, kiểm tra nghịch lý và phân nhánh đa tuyến
+              </p>
             </div>
           </div>
 
-          {/* Mobile Secondary Row: Zoom Switcher */}
-          <div className="md:hidden mt-2 pt-2 border-t flex items-center justify-between gap-2">
-            <div className="flex bg-muted rounded-lg p-0.5 w-full">
+          {/* Action Toolbar */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* View Mode Switcher */}
+            <div className="flex items-center bg-muted/60 p-0.5 rounded-xl border border-border/60">
               <Button
-                variant={zoom === 'all' ? 'secondary' : 'ghost'}
+                variant={viewMode === 'track' ? 'secondary' : 'ghost'}
                 size="sm"
-                className="flex-1 h-7 text-xs"
-                onClick={() => setZoom('all')}
+                className="h-7 px-2.5 text-xs rounded-lg gap-1"
+                onClick={() => setViewMode('track')}
+                title="Trục phát sáng Chrono-Track"
               >
-                Tất cả ({filteredEvents.length})
+                <Milestone className="w-3.5 h-3.5 text-primary" />
+                <span className="hidden md:inline">Trục phát sáng</span>
               </Button>
               <Button
-                variant={zoom === 'era' ? 'secondary' : 'ghost'}
+                variant={viewMode === 'parallel' ? 'secondary' : 'ghost'}
                 size="sm"
-                className="flex-1 h-7 text-xs"
-                onClick={() => setZoom('era')}
+                className="h-7 px-2.5 text-xs rounded-lg gap-1"
+                onClick={() => setViewMode('parallel')}
+                title="Theo dõi đa tuyến song song"
               >
-                Theo kỷ nguyên ({safeEras.length || 1})
+                <GitFork className="w-3.5 h-3.5 text-purple-500" />
+                <span className="hidden md:inline">Đa tuyến</span>
               </Button>
             </div>
+
+            {/* AI Chrono Audit Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20"
+              onClick={runChronoAudit}
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1" />
+              <span className="hidden sm:inline">Kiểm tra logic</span>
+            </Button>
+
+            {/* Create Event Button */}
+            <Button size="sm" onClick={openCreateEvent} className="h-8 text-xs font-semibold shadow-xs">
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              <span>Thêm sự kiện</span>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <main className="max-w-7xl mx-auto p-3 sm:p-6 space-y-6">
+        {/* Search & Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card p-3 rounded-2xl border border-border/60 shadow-xs">
+          <div className="relative flex-1 max-w-md">
+            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5" />
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Tìm kiếm sự kiện theo tên, ngày tháng, nội dung..."
+              className="h-9 text-xs pl-9 bg-muted/20"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            {/* Importance Filter */}
+            <select
+              value={filterImportance}
+              onChange={e => setFilterImportance(e.target.value)}
+              className="h-8 border rounded-xl bg-background px-2.5 text-xs"
+            >
+              <option value="all">Tất cả tầm quan trọng</option>
+              <option value="major">👑 Đại sự kiện / Cao trào</option>
+              <option value="turning_point">⚡ Bước ngoặt cốt truyện</option>
+              <option value="minor">📖 Diễn biến thường</option>
+              <option value="flashback">⏳ Hồi tưởng / Tiền truyện</option>
+            </select>
+
+            {/* Character Filter */}
+            <select
+              value={filterCharacter}
+              onChange={e => setFilterCharacter(e.target.value)}
+              className="h-8 border rounded-xl bg-background px-2.5 text-xs"
+            >
+              <option value="all">Tất cả nhân vật ({characters.length})</option>
+              {characters.map(c => (
+                <option key={c.id} value={c.id}>
+                  👤 {c.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* Mobile Collapsible Filter Drawer */}
-        {showMobileFilter && (
-          <div className="md:hidden border-t bg-card/95 backdrop-blur-md p-3 space-y-3">
-            <div className="flex items-center justify-between pb-1 border-b">
-              <span className="text-xs font-semibold flex items-center gap-1.5">
-                <Filter className="w-3.5 h-3.5 text-primary" /> Bộ lọc dòng thời gian
-              </span>
-              {hasActiveFilter && (
-                <button onClick={resetFilters} className="text-[11px] text-destructive hover:underline font-medium">
-                  Đặt lại lọc
-                </button>
-              )}
+        {/* VIEW 1: INTERACTIVE GLOWING CHRONO-TRACK */}
+        {viewMode === 'track' && (
+          <div>
+            {loading ? (
+              <div className="p-12 text-center text-xs text-muted-foreground animate-pulse">
+                Đang tải dòng thời gian...
+              </div>
+            ) : (
+              <InteractiveTimelineTrack
+                events={filteredEvents}
+                characters={characters}
+                projectId={projectId}
+                onEdit={openEditEvent}
+                onDelete={handleDeleteEvent}
+              />
+            )}
+          </div>
+        )}
+
+        {/* VIEW 2: MULTI-TRACK PARALLEL SUBPLOTS */}
+        {viewMode === 'parallel' && (
+          <div>
+            <ParallelTracksView
+              events={filteredEvents}
+              characters={characters}
+              projectId={projectId}
+              onEdit={openEditEvent}
+              onDelete={handleDeleteEvent}
+            />
+          </div>
+        )}
+      </main>
+
+      {/* Event Edit / Create Dialog */}
+      <Dialog open={showEventDialog} onOpenChange={setShowEventDialog}>
+        <DialogContent className="max-w-md p-5 rounded-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Clock className="w-4 h-4 text-primary" />
+              <span>{editingEvent ? 'Chỉnh Sửa Sự Kiện' : 'Thêm Sự Kiện Vào Dòng Thời Gian'}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Ghi lại mốc thời gian, các nhân vật tham gia và liên kết với chương truyện
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3.5 text-xs pt-2">
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Tiêu đề sự kiện *</label>
+              <Input
+                value={eventForm.title}
+                onChange={e => setEventForm({ ...eventForm, title: e.target.value })}
+                placeholder="Ví dụ: Đại chiến Hắc Sơn, Đêm trăng máu, Lễ thức tỉnh linh hồn..."
+                className="h-8 text-xs font-semibold"
+              />
             </div>
 
-            <div>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <label className="font-semibold text-foreground">Thời điểm trong truyện</label>
                 <Input
-                  placeholder="Tìm kiếm sự kiện..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="h-8 pl-8 text-xs w-full"
+                  value={eventForm.dateInStory}
+                  onChange={e => setEventForm({ ...eventForm, dateInStory: e.target.value })}
+                  placeholder="Ví dụ: Năm 104, Ngày 15 tháng 3..."
+                  className="h-8 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="font-semibold text-foreground">Kỷ nguyên (Era)</label>
+                <Input
+                  value={eventForm.era}
+                  onChange={e => setEventForm({ ...eventForm, era: e.target.value })}
+                  placeholder="Ví dụ: Thời Kỳ Hỗn Mang, Triều Đại Thứ Ba..."
+                  className="h-8 text-xs"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Kỷ nguyên</label>
-                <select
-                  value={filterEra}
-                  onChange={e => setFilterEra(e.target.value)}
-                  className="w-full h-8 px-2 text-xs bg-background border rounded-md"
-                >
-                  <option value="all">Tất cả ({safeEvents.length})</option>
-                  {safeEras.map(era => (
-                    <option key={era} value={era}>{era}</option>
-                  ))}
-                </select>
-              </div>
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Tầm quan trọng</label>
+              <select
+                value={eventForm.importance}
+                onChange={e => setEventForm({ ...eventForm, importance: e.target.value })}
+                className="w-full h-8 border rounded-lg bg-background px-2 text-xs"
+              >
+                <option value="major">👑 Đại sự kiện / Cao trào (Major Climax)</option>
+                <option value="turning_point">⚡ Bước ngoặt cốt truyện (Turning Point)</option>
+                <option value="minor">📖 Diễn biến thường (Minor Scene)</option>
+                <option value="flashback">⏳ Tiền truyện / Hồi tưởng (Flashback)</option>
+              </select>
+            </div>
 
-              <div>
-                <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Mức độ</label>
-                <select
-                  value={filterImportance}
-                  onChange={e => setFilterImportance(e.target.value)}
-                  className="w-full h-8 px-2 text-xs bg-background border rounded-md"
-                >
-                  <option value="all">Tất cả mức độ</option>
-                  <option value="major">🚩 Quan trọng</option>
-                  <option value="minor">Phụ</option>
-                </select>
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Chương liên kết (Tùy chọn)</label>
+              <select
+                value={eventForm.chapterId}
+                onChange={e => setEventForm({ ...eventForm, chapterId: e.target.value })}
+                className="w-full h-8 border rounded-lg bg-background px-2 text-xs"
+              >
+                <option value="">-- Chưa gắn với chương nào --</option>
+                {chapters.map((ch, idx) => (
+                  <option key={ch.id} value={ch.id}>
+                    Chương {idx + 1}: {ch.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Nhân vật tham gia</label>
+              <div className="border rounded-lg p-2 max-h-28 overflow-y-auto space-y-1 bg-muted/15">
+                {characters.length === 0 ? (
+                  <span className="text-[11px] text-muted-foreground">Chưa có nhân vật nào trong dự án.</span>
+                ) : (
+                  characters.map(c => {
+                    const isChecked = eventForm.involvedCharacterIds.includes(c.id);
+                    return (
+                      <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/30 p-1 rounded">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setEventForm(prev => ({
+                                ...prev,
+                                involvedCharacterIds: [...prev.involvedCharacterIds, c.id]
+                              }));
+                            } else {
+                              setEventForm(prev => ({
+                                ...prev,
+                                involvedCharacterIds: prev.involvedCharacterIds.filter(id => id !== c.id)
+                              }));
+                            }
+                          }}
+                          className="rounded"
+                        />
+                        <span>{c.name}</span>
+                        <span className="text-[10px] text-muted-foreground">({c.role})</span>
+                      </label>
+                    );
+                  })
+                )}
               </div>
             </div>
 
-            {safeCharacters.length > 0 && (
-              <div>
-                <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Nhân vật liên quan</label>
-                <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-1">
-                  <button
-                    onClick={() => setFilterCharacter('all')}
-                    className={`px-2.5 py-1 rounded-full text-[11px] shrink-0 border transition-all ${
-                      filterCharacter === 'all' ? 'bg-primary text-primary-foreground font-medium' : 'bg-muted/50 text-muted-foreground'
-                    }`}
-                  >
-                    Tất cả
-                  </button>
-                  {safeCharacters.map(char => (
-                    <button
-                      key={char.id}
-                      onClick={() => setFilterCharacter(filterCharacter === char.id ? 'all' : char.id)}
-                      className={`px-2.5 py-1 rounded-full text-[11px] shrink-0 border transition-all truncate max-w-[120px] ${
-                        filterCharacter === char.id ? 'bg-primary text-primary-foreground font-medium' : 'bg-muted/50 text-muted-foreground'
-                      }`}
-                    >
-                      {char.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Mô tả diễn biến</label>
+              <Textarea
+                value={eventForm.description}
+                onChange={e => setEventForm({ ...eventForm, description: e.target.value })}
+                placeholder="Nguyên nhân, diễn biến và hậu quả của sự kiện đối với các nhân vật..."
+                className="min-h-[85px] text-xs leading-relaxed"
+              />
+            </div>
+          </div>
 
-            {aiCheck && (
-              <div className="p-2.5 rounded-lg border bg-orange-50/50 dark:bg-orange-950/20 text-xs">
-                <div className="font-semibold text-orange-700 dark:text-orange-400 mb-1 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" /> Kết quả AI Check:
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <Button variant="ghost" size="sm" onClick={() => setShowEventDialog(false)} className="text-xs h-8">
+              Hủy
+            </Button>
+            <Button size="sm" onClick={handleSaveEvent} className="text-xs h-8 font-semibold">
+              Lưu Sự Kiện
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Chrono Audit Dialog */}
+      <Dialog open={showAIDialog} onOpenChange={setShowAIDialog}>
+        <DialogContent className="max-w-md p-5 rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-500" /> Kiểm Tra Logic Dòng Thời Gian
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              AI phân tích tính nhất quán, phát hiện xung đột thời gian và liên kết nhân vật
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-xs pt-2">
+            {aiLoading ? (
+              <div className="py-8 text-center text-muted-foreground animate-pulse">
+                Đang đối chiếu các mốc thời gian và sự kiện...
+              </div>
+            ) : aiCheck ? (
+              <div className="space-y-3">
+                <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-foreground leading-relaxed">
+                  {aiCheck.summary}
                 </div>
-                {aiCheck.summary && <p className="text-muted-foreground text-[11px]">{aiCheck.summary}</p>}
-                {aiCheck.issues?.length > 0 && (
-                  <div className="mt-1 space-y-1">
+
+                {Array.isArray(aiCheck.issues) && aiCheck.issues.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="font-semibold text-foreground flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                      <AlertTriangle className="w-3.5 h-3.5" /> Điểm cần lưu ý:
+                    </span>
                     {aiCheck.issues.map((issue: any, idx: number) => (
-                      <div key={idx} className="text-[11px] p-1.5 rounded bg-background/80 border">
-                        <span className="font-medium text-destructive">{issue.type} ({issue.severity}): </span>
-                        <span>{issue.description}</span>
+                      <div key={idx} className="p-2.5 rounded-lg border bg-muted/20 space-y-1">
+                        <p className="font-medium text-foreground">{issue.description}</p>
+                        {issue.suggestion && (
+                          <p className="text-[11px] text-muted-foreground italic">
+                            💡 Gợi ý: {issue.suggestion}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-            )}
+            ) : null}
           </div>
-        )}
-      </header>
 
-      <div className="flex-1 flex max-w-6xl mx-auto w-full">
-        {/* Sidebar filters */}
-        <aside className="w-64 border-r bg-card p-4 hidden md:block">
-          <div className="space-y-6">
-            <div>
-              <label className="text-xs font-medium mb-2 block">Tìm kiếm</label>
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-                <Input placeholder="Tìm sự kiện..." value={search} onChange={e => setSearch(e.target.value)} className="h-8 pl-7 text-sm" />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium mb-2 block flex items-center gap-1"><Filter className="w-3 h-3" /> Kỷ nguyên</label>
-              <div className="space-y-1">
-                <button onClick={() => setFilterEra('all')} className={`w-full text-left px-2 py-1 rounded text-xs ${filterEra === 'all' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>Tất cả ({safeEvents.length})</button>
-                {safeEras.map(era => (
-                  <button key={era} onClick={() => setFilterEra(era)} className={`w-full text-left px-2 py-1 rounded text-xs ${filterEra === era ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>{era}</button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium mb-2 block">Mức độ</label>
-              <div className="space-y-1">
-                <button onClick={() => setFilterImportance('all')} className={`w-full text-left px-2 py-1 rounded text-xs ${filterImportance === 'all' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>Tất cả</button>
-                <button onClick={() => setFilterImportance('major')} className={`w-full text-left px-2 py-1 rounded text-xs flex items-center gap-1 ${filterImportance === 'major' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}><Flag className="w-3 h-3" /> Quan trọng</button>
-                <button onClick={() => setFilterImportance('minor')} className={`w-full text-left px-2 py-1 rounded text-xs ${filterImportance === 'minor' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>Phụ</button>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium mb-2 block flex items-center gap-1"><User className="w-3 h-3" /> Nhân vật</label>
-              <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
-                <button
-                  onClick={() => setFilterCharacter('all')}
-                  className={`w-full text-left px-2 py-1 rounded text-xs flex justify-between items-center ${filterCharacter === 'all' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
-                >
-                  <span>Tất cả</span>
-                  <span className="text-[10px] opacity-75">{safeEvents.length}</span>
-                </button>
-                {safeCharacters.map(char => {
-                  const count = safeEvents.filter(e => Array.isArray(e.involvedCharacterIds) && e.involvedCharacterIds.includes(char.id)).length;
-                  return (
-                    <button
-                      key={char.id}
-                      onClick={() => setFilterCharacter(filterCharacter === char.id ? 'all' : char.id)}
-                      className={`w-full text-left px-2 py-1 rounded text-xs flex justify-between items-center ${filterCharacter === char.id ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
-                    >
-                      <span className="truncate">{char.name}</span>
-                      <span className="text-[10px] opacity-75 ml-1">{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {aiCheck && (
-              <Card className="border-orange-200 bg-orange-50 dark:bg-orange-950/20">
-                <CardHeader className="pb-2"><CardTitle className="text-xs">🔍 AI Check Result</CardTitle></CardHeader>
-                <CardContent className="text-xs space-y-2">
-                  {aiCheck.summary && <p className="text-muted-foreground">{aiCheck.summary}</p>}
-                  {aiCheck.issues?.map((issue: any, idx: number) => (
-                    <div key={idx} className={`p-2 rounded border-l-2 ${issue.severity === 'high' ? 'border-red-500 bg-red-50' : issue.severity === 'medium' ? 'border-yellow-500 bg-yellow-50' : 'border-gray-300 bg-gray-50'} dark:bg-opacity-10`}>
-                      <div className="font-medium">{issue.type} - {issue.severity}</div>
-                      <div className="text-[11px] mt-1">{issue.description}</div>
-                      {issue.suggestion && <div className="text-[11px] mt-1 italic">Gợi ý: {issue.suggestion}</div>}
-                    </div>
-                  ))}
-                  {(!aiCheck.issues || aiCheck.issues.length === 0) && <p className="text-green-600">✅ Không phát hiện mâu thuẫn!</p>}
-                </CardContent>
-              </Card>
-            )}
-
-            <div className="text-[11px] text-muted-foreground">
-              <p className="font-medium mb-1">Mẹo:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Drag để sắp xếp lại thứ tự</li>
-                <li>Filter theo kỷ nguyên, mức độ</li>
-                <li>AI Check phát hiện plot hole thời gian</li>
-                <li>Link sự kiện với chương và nhân vật</li>
-              </ul>
-            </div>
-          </div>
-        </aside>
-
-        {/* Main timeline */}
-        <main className="flex-1 p-3 sm:p-4 md:p-6 overflow-x-hidden min-w-0">
-          {filteredEvents.length === 0 ? (
-            <Card className="border-dashed">
-              <CardContent className="py-16 text-center">
-                <div className="text-6xl mb-4">⏳</div>
-                <h3 className="font-semibold mb-2">Chưa có sự kiện nào</h3>
-                <p className="text-sm text-muted-foreground mb-4">Tạo dòng thời gian cho tiểu thuyết của bạn</p>
-                <Button onClick={() => setShowNewDialog(true)}><Plus className="w-4 h-4 mr-2" /> Tạo sự kiện đầu tiên</Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              {zoom === 'all' ? (
-                <div className="relative">
-                  {filteredEvents
-                    .sort((a: any, b: any) => a.orderIndex - b.orderIndex)
-                    .map((event: any, idx: number) => (
-                      <TimelineEvent
-                        key={event.id}
-                        event={event}
-                        onEdit={openEdit}
-                        onDelete={deleteEvent}
-                        isFirst={idx === 0}
-                        isLast={idx === filteredEvents.length - 1}
-                        charactersMap={charactersMap}
-                        onFilterByCharacter={(charId) => setFilterCharacter(filterCharacter === charId ? 'all' : charId)}
-                      />
-                    ))}
-                </div>
-              ) : (
-                <div className="space-y-8">
-                  {groupedByEra.map(group => (
-                    <div key={group.era}>
-                      <div className="flex items-center gap-2 mb-4 sticky top-14 md:top-16 bg-background/90 backdrop-blur-sm py-2 z-10">
-                        <div className="w-3 h-3 bg-primary rounded-full"></div>
-                        <h3 className="font-bold">{group.era}</h3>
-                        <Badge variant="secondary" className="text-xs">{group.events.length} sự kiện</Badge>
-                        <div className="flex-1 h-px bg-border ml-2"></div>
-                      </div>
-                      <div className="ml-1">
-                        {group.events
-                          .sort((a: any, b: any) => a.orderIndex - b.orderIndex)
-                          .map((event: any, idx: number) => (
-                            <TimelineEvent
-                              key={event.id}
-                              event={event}
-                              onEdit={openEdit}
-                              onDelete={deleteEvent}
-                              isFirst={idx === 0}
-                              isLast={idx === group.events.length - 1}
-                              charactersMap={charactersMap}
-                              onFilterByCharacter={(charId) => setFilterCharacter(filterCharacter === charId ? 'all' : charId)}
-                            />
-                          ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </main>
-      </div>
-
-      {/* New/Edit Dialog */}
-      <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
-        <DialogContent onClose={() => setShowNewDialog(false)} className="max-w-xl max-h-[90vh] overflow-auto">
-          <DialogHeader>
-            <DialogTitle>{editingEvent ? 'Sửa sự kiện' : 'Sự kiện mới'}</DialogTitle>
-            <DialogDescription>Thêm sự kiện vào dòng thời gian</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Input placeholder="Tiêu đề sự kiện *" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
-            <Textarea placeholder="Mô tả chi tiết..." value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={3} />
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium">Ngày trong truyện</label>
-                <Input placeholder="VD: Ngày 15/03/2024, Năm 3024..." value={form.dateInStory} onChange={e => setForm({ ...form, dateInStory: e.target.value })} className="mt-1" />
-              </div>
-              <div>
-                <label className="text-xs font-medium">Ngày thực tế (nếu có)</label>
-                <Input placeholder="VD: 2024-03-15" value={form.dateRealWorld} onChange={e => setForm({ ...form, dateRealWorld: e.target.value })} className="mt-1" />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium">Kỷ nguyên</label>
-                <Input placeholder="VD: Kỷ nguyên Ánh Sáng, Thời kỳ Đen Tối..." value={form.era} onChange={e => setForm({ ...form, era: e.target.value })} className="mt-1" list="eras" />
-                <datalist id="eras">
-                  {safeEras.map(era => <option key={era} value={era} />)}
-                </datalist>
-              </div>
-              <div>
-                <label className="text-xs font-medium">Mức độ quan trọng</label>
-                <select className="flex h-9 w-full rounded-lg border border-input px-3 text-sm mt-1" value={form.importance} onChange={e => setForm({ ...form, importance: e.target.value })}>
-                  <option value="minor">Phụ - Minor</option>
-                  <option value="major">Quan trọng - Major</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium">Nhân vật liên quan</label>
-              <div className="mt-1 border rounded-lg p-2 max-h-24 overflow-auto space-y-1">
-                {safeCharacters.map(char => (
-                  <label key={char.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-accent p-1 rounded">
-                    <input
-                      type="checkbox"
-                      checked={form.involvedCharacterIds.includes(char.id)}
-                      onChange={e => {
-                        if (e.target.checked) setForm({ ...form, involvedCharacterIds: [...form.involvedCharacterIds, char.id] });
-                        else setForm({ ...form, involvedCharacterIds: form.involvedCharacterIds.filter(id => id !== char.id) });
-                      }}
-                    />
-                    {char.name} ({char.role})
-                  </label>
-                ))}
-                {safeCharacters.length === 0 && <p className="text-xs text-muted-foreground">Chưa có nhân vật</p>}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowNewDialog(false)}>Hủy</Button>
-              <Button onClick={saveEvent}>{editingEvent ? 'Cập nhật' : 'Tạo sự kiện'}</Button>
-            </div>
+          <div className="flex justify-end pt-3 border-t">
+            <Button size="sm" onClick={() => setShowAIDialog(false)} className="text-xs h-8">
+              Đóng
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

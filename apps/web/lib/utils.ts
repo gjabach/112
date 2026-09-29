@@ -210,6 +210,21 @@ export const OUTLINE_TEMPLATES: Record<string, { name: string; nameVi: string; d
         ]
       }
     ]
+  },
+  'story-circle': {
+    name: "Dan Harmon's Story Circle",
+    nameVi: 'Vòng Tròn Cốt Truyện (8 bước)',
+    desc: 'Dan Harmon - Mô hình vòng tròn phát triển nhân vật hiện đại',
+    nodes: [
+      { type: 'beat', title: '1. Vùng an toàn (Comfort Zone)', description: 'Nhân vật ở trong thế giới quen thuộc và an toàn' },
+      { type: 'beat', title: '2. Khao khát (Need / Want)', description: 'Xuất hiện ham muốn hoặc sự thiếu thốn cần bù đắp' },
+      { type: 'beat', title: '3. Bước vào thế giới lạ (Go / Cross Threshold)', description: 'Dấn thân vào môi trường xa lạ và không lường trước' },
+      { type: 'beat', title: '4. Thích nghi & Thử thách (Search / Road of Trials)', description: 'Chật vật học các quy tắc mới và đối mặt trở ngại' },
+      { type: 'beat', title: '5. Đạt được điều mong ước (Find / The Prize)', description: 'Tìm thấy thứ mình tìm kiếm nhưng phát hiện sự thật bất ngờ' },
+      { type: 'beat', title: '6. Trả giá đắt (Take / Heavy Price)', description: 'Mất mát to lớn hoặc khủng hoảng để giữ lấy thành quả' },
+      { type: 'beat', title: '7. Trở về (Return)', description: 'Trở về thế giới cũ với nhận thức hoàn toàn mới' },
+      { type: 'beat', title: '8. Biến đổi hoàn toàn (Change / Master of Both Worlds)', description: 'Trở thành một con người mới sau hành trình' }
+    ]
   }
 };
 

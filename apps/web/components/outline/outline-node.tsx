@@ -15,7 +15,7 @@ interface OutlineNodeProps {
   projectId?: string;
   onUpdate: (id: string, data: any) => void;
   onDelete: (id: string) => void;
-  onAddChild: (parentId: string) => void;
+  onAddChild: (parentId: string, type?: string) => void;
   onConvertToChapter?: (node: any) => void;
   isDragging?: boolean;
 }
@@ -110,7 +110,7 @@ export function OutlineNode({ node, depth = 0, projectId, onUpdate, onDelete, on
 
             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsEditing(true)}><Edit3 className="w-3 h-3" /></Button>
-              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onAddChild(node.id)}><Plus className="w-3 h-3" /></Button>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onAddChild(node.id, node.type === 'act' ? 'chapter' : 'scene')}><Plus className="w-3 h-3" /></Button>
               <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => onDelete(node.id)}><Trash2 className="w-3 h-3" /></Button>
             </div>
           </div>

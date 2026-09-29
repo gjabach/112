@@ -111,10 +111,18 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
+    const handleInsertText = (e: Event) => {
+      const custom = e as CustomEvent<{ text: string }>;
+      if (editor && custom.detail?.text) {
+        editor.chain().focus().insertContent(custom.detail.text).run();
+      }
+    };
+    window.addEventListener('novelist-insert-text', handleInsertText);
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('novelist-insert-text', handleInsertText);
     };
-  }, [openFindReplace]);
+  }, [editor, openFindReplace]);
 
   useEffect(() => {
     if (!editor || !content) return;

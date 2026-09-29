@@ -1,4 +1,5 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -11,17 +12,36 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { OutlineNode } from '@/components/outline/outline-node';
 import { KanbanView } from '@/components/outline/kanban-view';
 import { CorkboardView } from '@/components/outline/corkboard-view';
+import { StoryArcVisualizer } from '@/components/outline/story-arc-visualizer';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, LayoutList, Kanban, Pin, Clock, Sparkles, Download, Trash2, FileText } from 'lucide-react';
+import { 
+  ArrowLeft, 
+  Plus, 
+  LayoutList, 
+  Kanban, 
+  Pin, 
+  Clock, 
+  Sparkles, 
+  Download, 
+  Trash2, 
+  FileText,
+  Activity,
+  BookOpen,
+  Layers,
+  ChevronRight,
+  ExternalLink
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
-type ViewMode = 'tree' | 'kanban' | 'corkboard' | 'timeline';
+type ViewMode = 'tree' | 'kanban' | 'corkboard' | 'arc';
 
 const templates = [
-  { id: 'three-act', name: '3-Act Structure', nameVi: '3 Hồi', desc: 'Mở đầu - Đối đầu - Kết thúc (25%-50%-25%)', icon: '🎬' },
-  { id: 'hero-journey', name: "Hero's Journey", nameVi: 'Hành trình người hùng', desc: '12 bước theo Joseph Campbell', icon: '🦸' },
-  { id: 'save-the-cat', name: 'Save the Cat', nameVi: '15 Nhịp', desc: 'Blake Snyder - cho truyện thương mại', icon: '🐱' },
-  { id: 'snowflake', name: 'Snowflake', nameVi: 'Bông tuyết', desc: 'Từ 1 câu lên tiểu thuyết (10 bước)', icon: '❄️' }
+  { id: 'three-act', name: '3-Act Structure', nameVi: 'Cấu trúc 3 Hồi', desc: 'Mở đầu - Đối đầu - Kết thúc (25%-50%-25%)', icon: '🎬' },
+  { id: 'save-the-cat', name: 'Save the Cat', nameVi: '15 Nhịp (Blake Snyder)', desc: 'Tiêu chuẩn cho cốt truyện điện ảnh & tiểu thuyết thương mại', icon: '🐱' },
+  { id: 'hero-journey', name: "Hero's Journey", nameVi: 'Hành trình người hùng', desc: '12 bước phiêu lưu chuyển hóa theo Joseph Campbell', icon: '🦸' },
+  { id: 'snowflake', name: 'Snowflake', nameVi: 'Phương pháp Bông tuyết', desc: 'Randy Ingermanson - Từ 1 câu phát triển lên trọn vẹn tiểu thuyết', icon: '❄️' },
+  { id: 'story-circle', name: 'Story Circle', nameVi: 'Vòng tròn cốt truyện (Dan Harmon)', desc: '8 bước chuyển hóa nhân vật hiện đại', icon: '⭕' }
 ];
 
 export default function OutlinePage() {
@@ -33,11 +53,27 @@ export default function OutlinePage() {
   const [progress, setProgress] = useState(0);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('tree');
+
+  // Dialog states
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
   const [showAIDialog, setShowAIDialog] = useState(false);
-  const [newNode, setNewNode] = useState({ title: '', description: '', type: 'scene', parentId: null as string | null, status: 'idea', color: '#3b82f6' });
-  const [aiForm, setAiForm] = useState({ premise: '', genre: '', numChapters: 10, templateId: 'three-act' });
+
+  const [newNode, setNewNode] = useState({
+    title: '',
+    description: '',
+    type: 'scene',
+    parentId: null as string | null,
+    status: 'idea',
+    color: '#3b82f6'
+  });
+
+  const [aiForm, setAiForm] = useState({
+    premise: '',
+    genre: 'fantasy',
+    numChapters: 12,
+    templateId: 'three-act'
+  });
   const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
@@ -54,7 +90,7 @@ export default function OutlinePage() {
       setOutline([]);
       setFlat([]);
       setProgress(0);
-      toast.error(e.message || 'Lỗi tải outline');
+      toast.error(e.message || 'Lỗi tải dàn ý');
     } finally {
       setLoading(false);
     }
@@ -62,57 +98,71 @@ export default function OutlinePage() {
 
   const createNode = async (override?: any) => {
     const data = { ...newNode, ...override };
-    if (!data.title.trim()) { toast.error('Nhập tiêu đề'); return; }
+    if (!data.title.trim()) {
+      toast.error('Tiêu đề không được để trống');
+      return;
+    }
     try {
       await apiFetch(`/api/projects/${projectId}/outline`, {
         method: 'POST',
         body: JSON.stringify(data)
       });
-      toast.success('Tạo node mới');
+      toast.success('Đã thêm mục dàn ý mới!');
       setShowNewDialog(false);
       setNewNode({ title: '', description: '', type: 'scene', parentId: null, status: 'idea', color: '#3b82f6' });
       fetchOutline();
-    } catch (e: any) { toast.error(e.message); }
+    } catch (e: any) {
+      toast.error(e.message);
+    }
   };
 
   const updateNode = async (id: string, data: any) => {
     try {
       await apiFetch(`/api/outline/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
       fetchOutline();
-    } catch (e: any) { toast.error(e.message); }
+    } catch (e: any) {
+      toast.error(e.message);
+    }
   };
 
   const deleteNode = async (id: string) => {
-    if (!confirm('Xóa node này và tất cả con của nó?')) return;
+    if (!confirm('Bạn có chắc muốn xóa mục này cùng tất cả mục con của nó?')) return;
     try {
       await apiFetch(`/api/outline/${id}`, { method: 'DELETE' });
       toast.success('Đã xóa');
       fetchOutline();
-    } catch (e: any) { toast.error(e.message); }
+    } catch (e: any) {
+      toast.error(e.message);
+    }
   };
 
   const applyTemplate = async (templateId: string) => {
-    if (!confirm(`Áp dụng template "${templateId}"? Outline hiện tại sẽ được giữ lại và thêm mới.`)) return;
+    if (!confirm(`Áp dụng mẫu "${templateId}"? Dàn ý hiện tại sẽ được giữ lại và thêm các hồi/phân cảnh mới.`)) return;
     try {
       await apiFetch(`/api/projects/${projectId}/outline/template`, {
         method: 'POST',
         body: JSON.stringify({ templateId })
       });
-      toast.success('Đã áp dụng template');
+      toast.success('Đã áp dụng mẫu dàn ý thành công!');
       setShowTemplateDialog(false);
       fetchOutline();
-    } catch (e: any) { toast.error(e.message); }
+    } catch (e: any) {
+      toast.error(e.message);
+    }
   };
 
   const generateWithAI = async () => {
-    if (!aiForm.premise.trim()) { toast.error('Nhập premise (ý tưởng cốt truyện)'); return; }
+    if (!aiForm.premise.trim()) {
+      toast.error('Vui lòng nhập tiền đề cốt truyện (Premise)');
+      return;
+    }
     setAiLoading(true);
     try {
       const res = await apiFetch(`/api/projects/${projectId}/outline/generate`, {
         method: 'POST',
         body: JSON.stringify(aiForm)
       });
-      toast.success(`AI đã tạo ${res.generatedCount || 10} nodes`);
+      toast.success(`AI đã tạo thành công ${res.generatedCount || 10} phân cảnh hồi!`);
       setShowAIDialog(false);
       fetchOutline();
     } catch (e: any) {
@@ -153,12 +203,12 @@ export default function OutlinePage() {
         a.download = `outline-${projectId}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        toast.success('Đã tải xuống file JSON');
+        toast.success('Đã xuất file JSON thành công');
       } else if (format === 'opml') {
         const safeFlat = Array.isArray(flat) ? flat : [];
         const opmlContent = `<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
-  <head><title>Dàn ý - ${projectId}</title></head>
+  <head><title>Dàn ý tác phẩm - ${projectId}</title></head>
   <body>
     ${safeFlat.map(n => `<outline text="${(n.title || '').replace(/"/g, '&quot;')}" _note="${(n.description || '').replace(/"/g, '&quot;')}" type="${n.type || 'scene'}" status="${n.status || 'idea'}" />`).join('\n    ')}
   </body>
@@ -170,13 +220,15 @@ export default function OutlinePage() {
         a.download = `outline-${projectId}.opml`;
         a.click();
         URL.revokeObjectURL(url);
-        toast.success('Đã tải xuống file OPML');
+        toast.success('Đã xuất file OPML thành công');
       }
-    } catch (e: any) { toast.error(e.message); }
+    } catch (e: any) {
+      toast.error(e.message);
+    }
   };
 
   const clearAll = async () => {
-    if (!confirm('Xóa toàn bộ outline? Không thể hoàn tác!')) return;
+    if (!confirm('CẢNH BÁO: Xóa toàn bộ dàn ý của tác phẩm? Thao tác này không thể hoàn tác!')) return;
     try {
       const safeFlat = Array.isArray(flat) ? flat : [];
       for (const node of safeFlat) {
@@ -184,149 +236,248 @@ export default function OutlinePage() {
           await apiFetch(`/api/outline/${node.id}`, { method: 'DELETE' });
         }
       }
-      toast.success('Đã xóa toàn bộ');
+      toast.success('Đã dọn sạch dàn ý');
       fetchOutline();
-    } catch (e: any) { toast.error(e.message); }
+    } catch (e: any) {
+      toast.error(e.message);
+    }
   };
-
-  if (loading) return <div className="p-8">Đang tải outline...</div>;
 
   const safeFlat = Array.isArray(flat) ? flat : [];
   const safeOutline = Array.isArray(outline) ? outline : [];
+  const completedCount = safeFlat.filter(n => n.status === 'written' || n.status === 'revised').length;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col w-full max-w-full overflow-x-clip">
-      <header className="border-b bg-card sticky top-0 z-20 shadow-xs">
-        <div className="p-3 max-w-[1600px] mx-auto w-full">
-          <div className="flex items-center justify-between gap-2 sm:gap-4">
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <Link href={`/editor/${projectId}`} className="shrink-0">
-                <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9"><ArrowLeft className="w-4 h-4" /></Button>
-              </Link>
-              <div className="min-w-0">
-                <h1 className="font-bold text-sm sm:text-base flex items-center gap-1.5 truncate">Dàn ý - Outline</h1>
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
-                  <span>{safeFlat.length} nodes</span>
-                  <span>•</span>
-                  <span>{progress}%</span>
-                  <div className="w-16 sm:w-20 h-1 bg-muted rounded-full ml-1 shrink-0">
-                    <div className="h-1 bg-primary rounded-full" style={{ width: `${progress}%` }}></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              {/* Desktop View switcher */}
-              <div className="hidden lg:flex bg-muted rounded-lg p-0.5">
-                <Button variant={viewMode === 'tree' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('tree')}><LayoutList className="w-3 h-3 mr-1" /> Tree</Button>
-                <Button variant={viewMode === 'kanban' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('kanban')}><Kanban className="w-3 h-3 mr-1" /> Kanban</Button>
-                <Button variant={viewMode === 'corkboard' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('corkboard')}><Pin className="w-3 h-3 mr-1" /> Corkboard</Button>
-                <Button variant={viewMode === 'timeline' ? 'secondary' : 'ghost'} size="sm" className="h-7 text-xs" onClick={() => setViewMode('timeline')}><Clock className="w-3 h-3 mr-1" /> Timeline</Button>
-              </div>
-
-              <Button variant="outline" size="sm" className="h-8 px-2 sm:px-2.5 text-xs" onClick={() => setShowTemplateDialog(true)}>
-                <span className="hidden sm:inline">📚 Templates</span>
-                <span className="sm:hidden">📚 Mẫu</span>
+    <div className="min-h-screen bg-background flex flex-col w-full max-w-full overflow-x-clip pb-12">
+      {/* Top Sticky Header */}
+      <header className="border-b bg-card/95 backdrop-blur-md sticky top-0 z-20 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 max-w-7xl mx-auto w-full">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Link href={`/editor/${projectId}`} className="shrink-0">
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9">
+                <ArrowLeft className="w-4 h-4" />
               </Button>
-              <Button variant="outline" size="sm" className="h-8 px-2 sm:px-2.5 text-xs" onClick={() => setShowAIDialog(true)}>
-                <Sparkles className="w-3.5 h-3.5 sm:mr-1 text-primary" />
-                <span className="hidden sm:inline">AI Generate</span>
-                <span className="sm:hidden">AI</span>
-              </Button>
-              <Button size="sm" className="h-8 px-2.5 text-xs" onClick={() => setShowNewDialog(true)}>
-                <Plus className="w-3.5 h-3.5 sm:mr-1" />
-                <span className="hidden sm:inline">Thêm</span>
-              </Button>
+            </Link>
+            <div className="min-w-0">
+              <h1 className="font-bold text-base sm:text-lg flex items-center gap-2 truncate">
+                <span className="truncate">Dàn Ý & Cấu Trúc Hồi</span>
+                <span className="hidden sm:inline text-xs text-muted-foreground font-normal">(Story Architecture)</span>
+                <Badge variant="secondary" className="text-[11px] px-1.5 py-0 font-normal shrink-0">
+                  {safeFlat.length} mục
+                </Badge>
+              </h1>
+              <p className="text-[11px] sm:text-xs text-muted-foreground truncate">
+                Cấu trúc nhịp hồi, phân cảnh, bảng Kanban, Corkboard và đồ thị cao trào
+              </p>
             </div>
           </div>
 
-          {/* Mobile Secondary Row: View Switcher */}
-          <div className="lg:hidden mt-2 pt-2 border-t">
-            <div className="grid grid-cols-4 gap-1 p-0.5 bg-muted rounded-lg w-full text-xs">
+          {/* Action Toolbar */}
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {/* View Mode Switcher */}
+            <div className="flex items-center bg-muted/60 p-0.5 rounded-xl border border-border/60">
               <Button
                 variant={viewMode === 'tree' ? 'secondary' : 'ghost'}
                 size="sm"
-                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
+                className="h-7 px-2.5 text-xs rounded-lg gap-1"
                 onClick={() => setViewMode('tree')}
+                title="Cây phân cấp nhịp hồi"
               >
-                <LayoutList className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Cây</span>
+                <LayoutList className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Cây nhịp</span>
               </Button>
               <Button
                 variant={viewMode === 'kanban' ? 'secondary' : 'ghost'}
                 size="sm"
-                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
+                className="h-7 px-2.5 text-xs rounded-lg gap-1"
                 onClick={() => setViewMode('kanban')}
+                title="Bảng Kanban"
               >
-                <Kanban className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Kanban</span>
+                <Kanban className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Kanban</span>
               </Button>
               <Button
                 variant={viewMode === 'corkboard' ? 'secondary' : 'ghost'}
                 size="sm"
-                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
+                className="h-7 px-2.5 text-xs rounded-lg gap-1"
                 onClick={() => setViewMode('corkboard')}
+                title="Bảng ghim thẻ Corkboard"
               >
-                <Pin className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Bảng</span>
+                <Pin className="w-3.5 h-3.5 text-amber-500" />
+                <span className="hidden md:inline">Corkboard</span>
               </Button>
               <Button
-                variant={viewMode === 'timeline' ? 'secondary' : 'ghost'}
+                variant={viewMode === 'arc' ? 'secondary' : 'ghost'}
                 size="sm"
-                className="h-7 px-1 text-xs truncate flex items-center justify-center gap-1"
-                onClick={() => setViewMode('timeline')}
+                className="h-7 px-2.5 text-xs rounded-lg gap-1"
+                onClick={() => setViewMode('arc')}
+                title="Đồ thị cao trào cốt truyện"
               >
-                <Clock className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Timeline</span>
+                <Activity className="w-3.5 h-3.5 text-primary" />
+                <span className="hidden md:inline">Đồ thị nhịp</span>
               </Button>
             </div>
+
+            {/* Template Dialog Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs bg-muted/40"
+              onClick={() => setShowTemplateDialog(true)}
+            >
+              <BookOpen className="w-3.5 h-3.5 mr-1 text-primary" />
+              <span className="hidden sm:inline">Mẫu chuẩn</span>
+            </Button>
+
+            {/* AI Generator Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20"
+              onClick={() => setShowAIDialog(true)}
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1" />
+              <span className="hidden sm:inline">AI Dàn ý</span>
+            </Button>
+
+            {/* Create Scene Button */}
+            <Button
+              size="sm"
+              onClick={() => {
+                setNewNode({ title: '', description: '', type: 'scene', parentId: null, status: 'idea', color: '#3b82f6' });
+                setShowNewDialog(true);
+              }}
+              className="h-8 text-xs font-semibold shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              <span>Thêm mục</span>
+            </Button>
+
+            {/* Export Menu */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs"
+              onClick={() => exportOutline('json')}
+              title="Xuất dàn ý JSON"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </Button>
           </div>
         </div>
       </header>
 
-      <div className="flex-1 p-3 sm:p-4 md:p-6 max-w-[1600px] mx-auto w-full min-w-0">
-        {safeFlat.length === 0 ? (
-          <Card className="border-dashed">
-            <CardContent className="py-12 sm:py-16 text-center px-4">
-              <div className="text-5xl sm:text-6xl mb-4">🗺️</div>
-              <h3 className="font-semibold text-base sm:text-lg mb-2">Chưa có dàn ý</h3>
-              <p className="text-muted-foreground text-xs sm:text-sm mb-6 max-w-md mx-auto">Bắt đầu với template có sẵn hoặc để AI tạo outline từ ý tưởng của bạn</p>
-              <div className="flex flex-col sm:flex-row gap-2 justify-center max-w-xs sm:max-w-none mx-auto">
-                <Button onClick={() => setShowTemplateDialog(true)}>📚 Chọn Template</Button>
-                <Button variant="outline" onClick={() => setShowAIDialog(true)}><Sparkles className="w-4 h-4 mr-2" /> AI Generate</Button>
-                <Button variant="outline" onClick={() => setShowNewDialog(true)}><Plus className="w-4 h-4 mr-2" /> Tạo thủ công</Button>
-              </div>
-            </CardContent>
-          </Card>
+      {/* Progress & Stats Bar */}
+      <div className="border-b bg-card/60 backdrop-blur-xs px-4 py-2.5">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-3">
+            <span className="font-semibold text-foreground flex items-center gap-1.5">
+              Tiến độ hoàn thiện:
+            </span>
+            <div className="w-36 h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-primary to-emerald-500 transition-all duration-300 rounded-full"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <span className="font-bold text-primary">{progress}%</span>
+            <span className="text-muted-foreground hidden sm:inline">
+              ({completedCount}/{safeFlat.length} phân cảnh đã viết)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-blue-500" /> Hồi ({safeFlat.filter(n => n.type === 'act').length})
+            </span>
+            <span>•</span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-500" /> Chương ({safeFlat.filter(n => n.type === 'chapter').length})
+            </span>
+            <span>•</span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-slate-400" /> Phân cảnh ({safeFlat.filter(n => n.type === 'scene' || n.type === 'beat').length})
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Body */}
+      <main className="max-w-7xl mx-auto p-3 sm:p-6 w-full flex-1">
+        {loading ? (
+          <div className="p-12 text-center text-muted-foreground animate-pulse text-xs">
+            Đang tải dữ liệu dàn ý tác phẩm...
+          </div>
         ) : (
-          <>
+          <div>
+            {/* VIEW 1: HIERARCHICAL TREE & BEATS */}
             {viewMode === 'tree' && (
-              <div className="space-y-2 max-w-4xl">
-                {safeOutline.map((node: any) => (
-                  <OutlineNode
-                    key={node.id}
-                    node={node}
-                    projectId={projectId}
-                    onUpdate={updateNode}
-                    onDelete={deleteNode}
-                    onAddChild={(parentId) => { setNewNode({ ...newNode, parentId }); setShowNewDialog(true); }}
-                    onConvertToChapter={convertToChapter}
-                  />
-                ))}
+              <div className="space-y-4">
+                {safeOutline.length === 0 ? (
+                  <div className="text-center py-16 border border-dashed rounded-2xl bg-muted/10 space-y-3">
+                    <LayoutList className="w-12 h-12 text-muted-foreground/30 mx-auto" />
+                    <h3 className="font-semibold text-sm">Chưa có dàn ý nào</h3>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                      Bắt đầu xây dựng cấu trúc 3 Hồi, áp dụng mẫu Save the Cat hoặc nhờ AI kiến tạo dàn ý nhanh chóng!
+                    </p>
+                    <div className="flex justify-center gap-2 pt-2">
+                      <Button size="sm" onClick={() => setShowTemplateDialog(true)} className="text-xs">
+                        <BookOpen className="w-3.5 h-3.5 mr-1" /> Chọn Mẫu Chuẩn
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setShowAIDialog(true)} className="text-xs">
+                        <Sparkles className="w-3.5 h-3.5 mr-1 text-purple-500" /> AI Tạo Dàn Ý
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {safeOutline.map((node) => (
+                      <OutlineNode
+                        key={node.id}
+                        node={node}
+                        onUpdate={updateNode}
+                        onDelete={deleteNode}
+                        onAddChild={(parentId: string, type?: string) => {
+                          setNewNode({
+                            title: '',
+                            description: '',
+                            type: type || 'scene',
+                            parentId,
+                            status: 'idea',
+                            color: '#3b82f6'
+                          });
+                          setShowNewDialog(true);
+                        }}
+                        onConvertToChapter={convertToChapter}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
+            {/* VIEW 2: KANBAN VIEW */}
             {viewMode === 'kanban' && (
               <KanbanView
                 nodes={safeFlat}
                 onUpdate={updateNode}
-                onAdd={(status) => { setNewNode({ ...newNode, status }); setShowNewDialog(true); }}
+                onAdd={(status) => {
+                  setNewNode({
+                    title: '',
+                    description: '',
+                    type: 'scene',
+                    parentId: null,
+                    status,
+                    color: '#3b82f6'
+                  });
+                  setShowNewDialog(true);
+                }}
                 onConvertToChapter={convertToChapter}
                 onDelete={deleteNode}
               />
             )}
 
+            {/* VIEW 3: CORKBOARD VIEW */}
             {viewMode === 'corkboard' && (
               <CorkboardView
                 nodes={safeFlat}
@@ -336,134 +487,202 @@ export default function OutlinePage() {
               />
             )}
 
-            {viewMode === 'timeline' && (
-              <div className="space-y-4 max-w-full overflow-hidden">
-                <div className="flex gap-2.5 overflow-x-auto pb-4 no-scrollbar scroll-smooth">
-                  {[...safeFlat]
-                    .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0))
-                    .map((node: any, idx: number) => (
-                      <Card key={node.id} className="min-w-[180px] sm:min-w-[220px] max-w-[260px] border-l-4 flex-shrink-0" style={{ borderLeftColor: node.color || '#3b82f6' }}>
-                        <CardContent className="p-3">
-                          <div className="text-xs text-muted-foreground">#{idx + 1}</div>
-                          <div className="font-medium text-sm truncate">{node.title}</div>
-                          <Badge variant="secondary" className="text-[10px] mt-1">{node.type} • {node.status}</Badge>
-                        </CardContent>
-                      </Card>
-                    ))}
-                </div>
-                <div className="h-2 bg-muted rounded-full relative">
-                  <div className="absolute inset-y-0 left-0 bg-primary rounded-full" style={{ width: `${progress}%` }}></div>
-                </div>
-                <p className="text-xs text-muted-foreground text-center">Timeline ngang - vuốt ngang để xem toàn bộ outline theo thứ tự</p>
-              </div>
+            {/* VIEW 4: STORY ARC TENSION VISUALIZER */}
+            {viewMode === 'arc' && (
+              <StoryArcVisualizer
+                nodes={safeFlat}
+                projectId={projectId}
+                onSelectNode={(node) => {
+                  if (node.linkedChapterId) {
+                    window.location.href = `/editor/${projectId}/${node.linkedChapterId}`;
+                  } else {
+                    convertToChapter(node);
+                  }
+                }}
+              />
             )}
-          </>
-        )}
-
-        {/* Actions footer */}
-        {flat.length > 0 && (
-          <div className="mt-8 flex flex-wrap gap-2 justify-between items-center border-t pt-4">
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => exportOutline('json')}><Download className="w-3 h-3 mr-1" /> Export JSON</Button>
-              <Button variant="outline" size="sm" onClick={() => exportOutline('opml')}><FileText className="w-3 h-3 mr-1" /> Export OPML</Button>
-            </div>
-            <Button variant="ghost" size="sm" className="text-destructive" onClick={clearAll}><Trash2 className="w-3 h-3 mr-1" /> Xóa toàn bộ</Button>
           </div>
         )}
-      </div>
+      </main>
 
       {/* New Node Dialog */}
       <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
-        <DialogContent onClose={() => setShowNewDialog(false)}>
+        <DialogContent className="max-w-md p-5 rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Thêm node mới</DialogTitle>
-            <DialogDescription>Act &gt; Chapter &gt; Scene &gt; Beat</DialogDescription>
+            <DialogTitle className="text-base font-bold">Thêm Mục Dàn Ý Mới</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Tạo Hồi, Chương hoặc Phân cảnh để cấu trúc câu chuyện
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <Input placeholder="Tiêu đề *" value={newNode.title} onChange={e => setNewNode({ ...newNode, title: e.target.value })} />
-            <Textarea placeholder="Mô tả..." value={newNode.description} onChange={e => setNewNode({ ...newNode, description: e.target.value })} />
-            <div className="grid grid-cols-2 gap-3">
-              <select className="flex h-9 rounded-lg border border-input px-3 text-sm" value={newNode.type} onChange={e => setNewNode({ ...newNode, type: e.target.value })}>
-                <option value="act">Act (Hồi)</option>
-                <option value="chapter">Chapter (Chương)</option>
-                <option value="scene">Scene (Cảnh)</option>
-                <option value="beat">Beat (Nhịp)</option>
-              </select>
-              <select className="flex h-9 rounded-lg border border-input px-3 text-sm" value={newNode.status} onChange={e => setNewNode({ ...newNode, status: e.target.value })}>
-                <option value="idea">Ý tưởng</option>
-                <option value="planned">Đã lên kế hoạch</option>
-                <option value="written">Đã viết</option>
-                <option value="revised">Đã sửa</option>
-              </select>
+
+          <div className="space-y-3.5 text-xs pt-2">
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Tiêu đề mục *</label>
+              <Input
+                value={newNode.title}
+                onChange={e => setNewNode({ ...newNode, title: e.target.value })}
+                placeholder="Ví dụ: Hồi I: Khởi Hành, Cảnh 1: Gặp gỡ trong quán trọ..."
+                className="h-8 text-xs font-semibold"
+              />
             </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm">Màu:</label>
-              <input type="color" value={newNode.color} onChange={e => setNewNode({ ...newNode, color: e.target.value })} className="w-8 h-8 rounded cursor-pointer" />
-              <span className="text-xs text-muted-foreground">{newNode.color}</span>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <label className="font-semibold text-foreground">Phân loại</label>
+                <select
+                  value={newNode.type}
+                  onChange={e => setNewNode({ ...newNode, type: e.target.value })}
+                  className="w-full h-8 border rounded-lg bg-background px-2 text-xs"
+                >
+                  <option value="act">Hồi (Act)</option>
+                  <option value="chapter">Chương (Chapter)</option>
+                  <option value="scene">Phân cảnh (Scene)</option>
+                  <option value="beat">Nhịp cốt truyện (Beat)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="font-semibold text-foreground">Trạng thái</label>
+                <select
+                  value={newNode.status}
+                  onChange={e => setNewNode({ ...newNode, status: e.target.value })}
+                  className="w-full h-8 border rounded-lg bg-background px-2 text-xs"
+                >
+                  <option value="idea">💡 Ý tưởng</option>
+                  <option value="planned">📋 Đã lên kế hoạch</option>
+                  <option value="drafting">✍️ Đang viết</option>
+                  <option value="written">✅ Hoàn thành</option>
+                </select>
+              </div>
             </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowNewDialog(false)}>Hủy</Button>
-              <Button onClick={() => createNode()}>Tạo</Button>
+
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Tóm tắt / Diễn biến chính</label>
+              <Textarea
+                value={newNode.description}
+                onChange={e => setNewNode({ ...newNode, description: e.target.value })}
+                placeholder="Mục tiêu của cảnh, mâu thuẫn chính và kết quả của phân cảnh này..."
+                className="min-h-[85px] text-xs leading-relaxed"
+              />
             </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <Button variant="ghost" size="sm" onClick={() => setShowNewDialog(false)} className="text-xs h-8">
+              Hủy
+            </Button>
+            <Button size="sm" onClick={() => createNode()} className="text-xs h-8 font-semibold">
+              Tạo Mục Dàn Ý
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Template Dialog */}
+      {/* Templates Dialog */}
       <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
-        <DialogContent onClose={() => setShowTemplateDialog(false)} className="max-w-2xl">
+        <DialogContent className="max-w-2xl p-5 rounded-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>📚 Chọn Template Outline</DialogTitle>
-            <DialogDescription>Các cấu trúc truyện kinh điển được dùng bởi hàng nghìn tác giả</DialogDescription>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-primary" /> Thư Viện Mẫu Dàn Ý Chuẩn Quốc Tế
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Áp dụng các cấu trúc biên kịch & tiểu thuyết kinh điển để giữ vững nhịp độ câu chuyện
+            </DialogDescription>
           </DialogHeader>
-          <div className="grid md:grid-cols-2 gap-4 max-h-[60vh] overflow-auto">
-            {templates.map(t => (
-              <Card key={t.id} className="hover:border-primary/50 cursor-pointer transition-colors" onClick={() => applyTemplate(t.id)}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base flex items-center gap-2"><span className="text-xl">{t.icon}</span> {t.nameVi}</CardTitle>
-                  <div className="text-xs text-muted-foreground">{t.name}</div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-xs text-muted-foreground">{t.desc}</p>
-                  <Button size="sm" className="w-full mt-3" variant="outline">Áp dụng</Button>
-                </CardContent>
-              </Card>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3">
+            {templates.map(tpl => (
+              <div
+                key={tpl.id}
+                onClick={() => applyTemplate(tpl.id)}
+                className="rounded-xl border border-border/70 p-4 bg-muted/15 hover:bg-muted/30 hover:border-primary/40 transition-all cursor-pointer space-y-2 group shadow-2xs"
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="text-2xl">{tpl.icon}</span>
+                  <div>
+                    <h4 className="font-bold text-xs sm:text-sm text-foreground group-hover:text-primary transition-colors">
+                      {tpl.nameVi}
+                    </h4>
+                    <span className="text-[10px] text-muted-foreground font-mono">{tpl.name}</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  {tpl.desc}
+                </p>
+                <div className="pt-1 flex justify-end">
+                  <span className="text-[11px] text-primary font-medium group-hover:underline">
+                    Áp dụng mẫu này →
+                  </span>
+                </div>
+              </div>
             ))}
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* AI Generate Dialog */}
+      {/* AI Outline Generator Dialog */}
       <Dialog open={showAIDialog} onOpenChange={setShowAIDialog}>
-        <DialogContent onClose={() => setShowAIDialog(false)} className="max-w-xl">
+        <DialogContent className="max-w-md p-5 rounded-2xl">
           <DialogHeader>
-            <DialogTitle>✨ AI Generate Outline</DialogTitle>
-            <DialogDescription>Nhập premise, AI sẽ tạo outline chi tiết theo cấu trúc bạn chọn</DialogDescription>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-500" /> AI Kiến Tạo Cấu Trúc Dàn Ý
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Tự động phân bổ Hồi và đề xuất các phân cảnh cao trào theo tiền đề truyện của bạn
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <Textarea placeholder="Premise: Ví dụ: Một cô gái phát hiện mình là phù thủy cuối cùng trong thế giới không còn phép thuật, phải tìm cách khôi phục ma thuật trước khi..." value={aiForm.premise} onChange={e => setAiForm({ ...aiForm, premise: e.target.value })} rows={4} />
-            <div className="grid grid-cols-2 gap-3">
-              <Input placeholder="Thể loại (fantasy, scifi...)" value={aiForm.genre} onChange={e => setAiForm({ ...aiForm, genre: e.target.value })} />
-              <Input type="number" placeholder="Số chương" value={aiForm.numChapters} onChange={e => setAiForm({ ...aiForm, numChapters: parseInt(e.target.value) || 10 })} />
+
+          <div className="space-y-3.5 text-xs pt-2">
+            <div className="space-y-1.5">
+              <label className="font-semibold text-foreground">Tiền đề cốt truyện (Premise) *</label>
+              <Textarea
+                placeholder="Ví dụ: Một thợ rèn trẻ vô tình rèn ra thanh kiếm thức tỉnh linh hồn rồng cổ đại, bị triều đình săn đuổi và phải dấn thân tìm lại nguồn gốc thân phận..."
+                value={aiForm.premise}
+                onChange={e => setAiForm({ ...aiForm, premise: e.target.value })}
+                className="min-h-[85px] text-xs leading-relaxed"
+              />
             </div>
-            <select className="flex h-9 w-full rounded-lg border border-input px-3 text-sm" value={aiForm.templateId} onChange={e => setAiForm({ ...aiForm, templateId: e.target.value })}>
-              <option value="three-act">3-Act Structure</option>
-              <option value="hero-journey">Hero's Journey</option>
-              <option value="save-the-cat">Save the Cat</option>
-              <option value="snowflake">Snowflake Method</option>
-            </select>
-            <div className="bg-muted p-3 rounded-lg text-xs">
-              <div className="font-medium mb-1">Yêu cầu:</div>
-              <ul className="list-disc list-inside text-muted-foreground">
-                <li>Đã cấu hình AI API key trong Settings</li>
-                <li>Groq/Gemini free tier hoạt động tốt cho task này</li>
-                <li>AI sẽ tạo JSON và tự lưu vào DB</li>
-              </ul>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <label className="font-semibold text-foreground">Thể loại</label>
+                <select
+                  value={aiForm.genre}
+                  onChange={e => setAiForm({ ...aiForm, genre: e.target.value })}
+                  className="w-full h-8 border rounded-lg bg-background px-2 text-xs"
+                >
+                  <option value="fantasy">Huyền huyễn / Tiên hiệp</option>
+                  <option value="scifi">Khoa huyễn / Viễn tưởng</option>
+                  <option value="mystery">Trinh thám / Ly kỳ</option>
+                  <option value="romance">Lãng mạn / Ngôn tình</option>
+                  <option value="thriller">Giật gân / Hành động</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="font-semibold text-foreground">Số chương dự kiến</label>
+                <input
+                  type="number"
+                  value={aiForm.numChapters}
+                  onChange={e => setAiForm({ ...aiForm, numChapters: Math.max(3, parseInt(e.target.value) || 10) })}
+                  className="w-full h-8 border rounded-lg bg-background px-2 text-xs"
+                />
+              </div>
             </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowAIDialog(false)}>Hủy</Button>
-              <Button onClick={generateWithAI} disabled={aiLoading}>{aiLoading ? 'Đang tạo...' : '✨ Tạo Outline'}</Button>
-            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <Button variant="ghost" size="sm" onClick={() => setShowAIDialog(false)} className="text-xs h-8">
+              Hủy
+            </Button>
+            <Button
+              size="sm"
+              onClick={generateWithAI}
+              disabled={aiLoading}
+              className="text-xs h-8 bg-purple-600 hover:bg-purple-700 text-white font-semibold"
+            >
+              {aiLoading ? 'Đang tạo dàn ý...' : 'Kiến Tạo Ngay'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

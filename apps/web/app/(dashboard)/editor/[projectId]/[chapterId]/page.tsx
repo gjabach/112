@@ -21,8 +21,12 @@ import {
   CheckCircle2,
   X,
   Loader2,
-  BookOpen
+  BookOpen,
+  Search,
+  LayoutList
 } from 'lucide-react';
+import { WriterStudioDock } from '@/components/editor/writer-studio-dock';
+import { QuickReferenceHud } from '@/components/editor/quick-reference-hud';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound } from '@/lib/sound';
@@ -95,6 +99,7 @@ export default function ChapterEditorPage() {
   const [isSwitching, setIsSwitching] = useState(false);
   const [switchDirection, setSwitchDirection] = useState<'next' | 'prev' | 'fade'>('fade');
   const [targetChapterInfo, setTargetChapterInfo] = useState<{ title: string; orderIndex?: number } | null>(null);
+  const [showSpotlight, setShowSpotlight] = useState(false);
 
   const fetchChapterData = async (isInitial = true) => {
     if (!chapterId || !projectId) return;
@@ -247,6 +252,22 @@ export default function ChapterEditorPage() {
     return () => window.removeEventListener('keydown', handleSaveShortcut);
   }, [saveChapter]);
 
+  // Global shortcuts for Spotlight HUD (Ctrl+Shift+K) and Studio Dock toggle (Alt+D)
+  useEffect(() => {
+    const handleStudioShortcuts = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setShowSpotlight(prev => !prev);
+      }
+      if (e.altKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        toggleInspector();
+      }
+    };
+    window.addEventListener('keydown', handleStudioShortcuts);
+    return () => window.removeEventListener('keydown', handleStudioShortcuts);
+  }, []);
+
   // Save before unload / closing tab or switching apps on mobile
   useEffect(() => {
     const handleFlushSave = () => {
@@ -361,154 +382,46 @@ export default function ChapterEditorPage() {
   if (loading) return <div className="p-8 animate-pulse text-muted-foreground">Đang mở trình soạn thảo...</div>;
 
   const renderInspectorContent = () => (
-    <>
-      <div className="p-4 border-b">
-        <h3 className="font-semibold flex items-center gap-2 text-sm">
-          <FileText className="w-4 h-4 text-primary" /> Thông số chương
-        </h3>
-        <div className="mt-3 space-y-2.5 text-xs">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Số từ</span>
-            <span className="font-medium">{currentWords.toLocaleString()} từ</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Ký tự</span>
-            <span>{(content || '').length.toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Thời gian đọc ước tính</span>
-            <span>~{Math.max(1, Math.ceil(currentWords / 200))} phút</span>
-          </div>
-          <div className="flex justify-between items-center pt-2 border-t">
-            <span className="text-muted-foreground">Trạng thái</span>
-            <select
-              className="h-8 text-xs border rounded-lg bg-transparent px-2 font-medium"
-              value={chapter?.status || 'draft'}
-              onChange={async (e) => {
-                const newStatus = e.target.value;
-                setChapter({ ...chapter, status: newStatus });
-                await apiFetch(`/api/chapters/${chapterId}`, {
-                  method: 'PATCH',
-                  body: JSON.stringify({ status: newStatus })
-                });
-                toast.success('Đã cập nhật trạng thái');
-              }}
-            >
-              <option value="outline">Dàn ý (Outline)</option>
-              <option value="draft">Bản nháp (Draft)</option>
-              <option value="revised">Đã sửa (Revised)</option>
-              <option value="completed">Hoàn thành (Done)</option>
-            </select>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Mục tiêu từ</span>
-            <input
-              type="number"
-              value={targetWordCount}
-              onChange={e => setTargetWordCount(Math.max(100, parseInt(e.target.value) || 2000))}
-              className="w-24 h-7 text-xs text-right border rounded bg-transparent px-2"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="p-4 border-b">
-        <h4 className="font-medium mb-3 flex items-center gap-2 text-sm">
-          <Sparkles className="w-4 h-4 text-primary" /> Trợ lý viết AI
-        </h4>
-        <div className="space-y-2">
-          <Button size="sm" className="w-full text-xs bg-purple-600 hover:bg-purple-700 text-white" onClick={handleAIContinue} disabled={aiLoading}>
-            {aiLoading ? 'Đang sáng tác...' : '✍️ Viết tiếp đoạn văn'}
-          </Button>
-          <div className="grid grid-cols-2 gap-2">
-            <Button size="sm" variant="outline" className="text-xs" onClick={async () => {
-              setAiLoading(true);
-              setAiSuggestion('');
-              try {
-                await executeAIChat({
-                  projectId,
-                  contextType: 'chapter',
-                  contextId: chapterId,
-                  message: content.slice(-1000) || 'Viết lại đoạn văn này cho hấp dẫn và mượt mà hơn',
-                  skill: 'rewrite',
-                  stream: true,
-                  onChunk: (chunk) => setAiSuggestion(prev => prev + chunk)
-                });
-              } catch (e: any) {
-                toast.error(e.message || 'Lỗi AI');
-              } finally {
-                setAiLoading(false);
-              }
-            }}>
-              🔄 Viết lại
-            </Button>
-            <Button size="sm" variant="outline" className="text-xs" onClick={async () => {
-              setAiLoading(true);
-              setAiSuggestion('');
-              try {
-                await executeAIChat({
-                  projectId,
-                  contextType: 'chapter',
-                  contextId: chapterId,
-                  message: content.slice(-1500) || 'Phê bình chi tiết và nhận xét chương này',
-                  skill: 'critique',
-                  stream: true,
-                  onChunk: (chunk) => setAiSuggestion(prev => prev + chunk)
-                });
-              } catch (e: any) {
-                toast.error(e.message || 'Lỗi AI');
-              } finally {
-                setAiLoading(false);
-              }
-            }}>
-              🔍 Phê bình
-            </Button>
-          </div>
-
-          {aiSuggestion && (
-            <div className="mt-3 border rounded-lg p-3 bg-muted/40">
-              <div className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-primary">
-                <Sparkles className="w-3 h-3" /> Gợi ý từ AI:
-              </div>
-              <div className="text-xs whitespace-pre-wrap max-h-56 overflow-auto leading-relaxed text-foreground">
-                {aiSuggestion}
-              </div>
-              <div className="flex gap-2 mt-3 pt-2 border-t">
-                <Button size="sm" className="h-7 text-xs flex-1" onClick={insertAISuggestion}>
-                  Chèn vào văn bản
-                </Button>
-                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAiSuggestion('')}>
-                  Đóng
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="p-4">
-        <h4 className="font-medium mb-2 text-xs">Ghi chú tác giả</h4>
-        <textarea
-          className="w-full min-h-[90px] rounded-lg border border-input bg-transparent p-2 text-xs"
-          placeholder="Ghi chú ý tưởng, việc cần làm cho chương này..."
-          defaultValue={chapter?.notes || ''}
-          onBlur={e => {
-            apiFetch(`/api/chapters/${chapterId}`, {
-              method: 'PATCH',
-              body: JSON.stringify({ notes: e.target.value })
-            });
-          }}
-        />
-      </div>
-
-      <div className="mt-auto p-4 border-t">
-        <Link href={`/ai-assistant?projectId=${projectId}&chapterId=${chapterId}`}>
-          <Button variant="outline" size="sm" className="w-full text-xs">
-            <Sparkles className="w-3.5 h-3.5 mr-2 text-primary" /> Mở AI Assistant toàn diện
-          </Button>
-        </Link>
-      </div>
-    </>
+    <WriterStudioDock
+      projectId={projectId}
+      chapterId={chapterId}
+      chapter={chapter}
+      setChapter={setChapter}
+      currentWords={currentWords}
+      contentLength={(content || '').length}
+      targetWordCount={targetWordCount}
+      setTargetWordCount={setTargetWordCount}
+      aiLoading={aiLoading}
+      aiSuggestion={aiSuggestion}
+      setAiSuggestion={setAiSuggestion}
+      handleAIContinue={handleAIContinue}
+      insertAISuggestion={insertAISuggestion}
+      onExecuteAIChat={async (customMessage, skill) => {
+        setAiLoading(true);
+        setAiSuggestion('');
+        try {
+          await executeAIChat({
+            projectId,
+            contextType: 'chapter',
+            contextId: chapterId,
+            message: content.slice(-1500) || customMessage,
+            skill: skill || 'continue_writing',
+            stream: true,
+            onChunk: (chunk) => setAiSuggestion(prev => prev + chunk)
+          });
+        } catch (e: any) {
+          toast.error(e.message || 'Lỗi AI');
+        } finally {
+          setAiLoading(false);
+        }
+      }}
+      onOpenSpotlight={() => setShowSpotlight(true)}
+      onInsertText={(text) => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('novelist-insert-text', { detail: { text } }));
+        }
+      }}
+    />
   );
 
   return (
@@ -639,16 +552,29 @@ export default function ChapterEditorPage() {
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </Button>
 
-            {/* Inspector Toggle */}
+            {/* Quick Spotlight Search Button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 sm:h-8 px-2 text-xs text-muted-foreground hover:text-foreground hidden sm:flex items-center gap-1.5"
+              onClick={() => setShowSpotlight(true)}
+              title="Tra cứu nhanh Dàn ý, Nhân vật, Thế giới, Timeline (Ctrl+Shift+K)"
+            >
+              <Search className="w-3.5 h-3.5 text-primary" />
+              <span className="hidden xl:inline">Tra cứu</span>
+              <kbd className="hidden 2xl:inline-block text-[9px] font-mono px-1 py-0.2 rounded bg-muted border">Ctrl+Shift+K</kbd>
+            </Button>
+
+            {/* Studio Dock Toggle */}
             <Button
               variant={showInspector ? "secondary" : "ghost"}
               size="sm"
               className={`h-7 sm:h-8 px-2 sm:px-2.5 text-xs font-medium ${showInspector ? 'bg-primary/15 text-primary border border-primary/30' : ''}`}
               onClick={toggleInspector}
-              title={showInspector ? "Ẩn thông số chương & Trợ lý AI" : "Hiện thông số chương & Trợ lý AI"}
+              title={showInspector ? "Ẩn Studio Dock (Alt+D)" : "Hiện Studio Dock (Alt+D)"}
             >
-              <FileText className="w-3.5 h-3.5 sm:mr-1 text-primary" />
-              <span className="hidden sm:inline">Thông số & AI</span>
+              <LayoutList className="w-3.5 h-3.5 sm:mr-1 text-primary" />
+              <span className="hidden sm:inline">Studio Dock</span>
             </Button>
 
             {/* Cloud Sync Button */}
@@ -736,7 +662,7 @@ export default function ChapterEditorPage() {
 
         {/* Desktop Inspector Sidebar: Docked, full-height, independent scroll */}
         {showInspector && (
-          <aside className="hidden md:flex w-80 h-full border-l bg-card flex-col inspector overflow-y-auto shrink-0 z-10">
+          <aside className="hidden md:flex w-84 lg:w-96 h-full border-l bg-card flex-col inspector overflow-y-auto shrink-0 z-10">
             {renderInspectorContent()}
           </aside>
         )}
@@ -747,8 +673,8 @@ export default function ChapterEditorPage() {
             <div className="bg-card border-t rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-250">
               <div className="flex items-center justify-between p-3.5 border-b shrink-0">
                 <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-primary" />
-                  <h3 className="font-semibold text-sm">Thông tin chương</h3>
+                  <LayoutList className="w-4 h-4 text-primary" />
+                  <h3 className="font-semibold text-sm">Studio Dock</h3>
                 </div>
                 <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => setShowInspector(false)}>
                   <X className="w-4 h-4" />
@@ -761,6 +687,18 @@ export default function ChapterEditorPage() {
           </div>
         )}
       </div>
+
+      {/* Quick Reference Spotlight HUD */}
+      <QuickReferenceHud
+        isOpen={showSpotlight}
+        onClose={() => setShowSpotlight(false)}
+        projectId={projectId}
+        onInsertText={(text) => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('novelist-insert-text', { detail: { text } }));
+          }
+        }}
+      />
     </div>
     </MechKeyboardProvider>
   );
