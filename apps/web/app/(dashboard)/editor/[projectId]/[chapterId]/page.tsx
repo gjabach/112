@@ -32,7 +32,7 @@ import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound } from '@/lib/sound';
 import { SoundToggleButton } from '@/components/layout/sound-provider';
 import { SyncStatusButton } from '@/components/layout/sync-provider';
-import { pushSync, pullSync, triggerAutoPush } from '@/lib/sync';
+import { pushSync, pullSync, triggerAutoPush, pauseAutoSync, resumeAutoSync } from '@/lib/sync';
 import { MechKeyboardProvider, MechKeyboardToggle } from '@/components/editor/mech-keyboard-provider';
 
 const TiptapEditor = dynamic(
@@ -128,7 +128,7 @@ export default function ChapterEditorPage() {
           if (savingRef.current) return;
           const incomingUpdated = Number(res.chapter.updatedAt || res.chapter.createdAt || 0);
           const currentLocalUpdated = Number(chapterRef.current?.updatedAt || chapterRef.current?.createdAt || 0);
-          const isActivelyTypingNow = Date.now() - lastKeystrokeTimeRef.current < 1500;
+          const isActivelyTypingNow = Date.now() - lastKeystrokeTimeRef.current < 5000;
 
           if (incomingUpdated > currentLocalUpdated && !isActivelyTypingNow) {
             const rawContent = res.chapter.content;
@@ -166,7 +166,7 @@ export default function ChapterEditorPage() {
       fetchChapterData(true);
       pullSync(true)
         .then(() => {
-          if (!isDirtyRef.current && !savingRef.current && Date.now() - lastKeystrokeTimeRef.current > 1500) {
+          if (!isDirtyRef.current && !savingRef.current && Date.now() - lastKeystrokeTimeRef.current > 5000) {
             fetchChapterData(true);
           }
         })
@@ -180,7 +180,10 @@ export default function ChapterEditorPage() {
           setAllChapters(listRes.chapters);
         }
       } catch {}
-      fetchChapterData(false);
+      // Chỉ load lại content nếu KHÔNG đang chỉnh sửa
+      if (!isDirtyRef.current && !savingRef.current && Date.now() - lastKeystrokeTimeRef.current > 5000) {
+        fetchChapterData(false);
+      }
     };
 
     const handleFlushSync = () => {
@@ -192,6 +195,7 @@ export default function ChapterEditorPage() {
     window.addEventListener('novelist-sync-updated', handleSync);
     window.addEventListener('novelist-flush-save', handleFlushSync);
     return () => {
+      resumeAutoSync();
       window.removeEventListener('novelist-sync-updated', handleSync);
       window.removeEventListener('novelist-flush-save', handleFlushSync);
     };
@@ -215,6 +219,7 @@ export default function ChapterEditorPage() {
       setLastSaved(now);
       setChapter((prev: any) => ({ ...prev, title: titleToSave, content: contentToSave, updatedAt: now }));
       isDirtyRef.current = false;
+      resumeAutoSync();
       playSuccessSound();
       if (isManual) {
         pushSync().catch(() => {});
@@ -616,6 +621,7 @@ export default function ChapterEditorPage() {
               onChange={(newContent) => {
                 isDirtyRef.current = true;
                 lastKeystrokeTimeRef.current = Date.now();
+                pauseAutoSync();
                 setContent(newContent);
               }}
               placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..."
@@ -626,6 +632,7 @@ export default function ChapterEditorPage() {
                 onChange={(newContent) => {
                   isDirtyRef.current = true;
                   lastKeystrokeTimeRef.current = Date.now();
+                  pauseAutoSync();
                   setContent(newContent);
                 }}
                 placeholder="Bắt đầu viết những dòng đầu tiên cho chương này..."

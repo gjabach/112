@@ -148,6 +148,10 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
   if (typeof window === 'undefined' || !data || typeof data !== 'object') return false;
 
   try {
+    // Flush active editor content trước khi ghi đè localStorage
+    // để đảm bảo những phím gõ mới nhất được lưu trước
+    window.dispatchEvent(new CustomEvent('novelist-flush-save'));
+
     let finalData = data;
     if (merge) {
       const local = exportFullWorkspace();
@@ -570,9 +574,23 @@ export function triggerAutoPush(delayMs: number = 1000) {
 }
 
 let autoSyncInitialized = false;
+let autoSyncPaused = false;
+
+export function pauseAutoSync() {
+  autoSyncPaused = true;
+}
+
+export function resumeAutoSync() {
+  autoSyncPaused = false;
+}
+
+export function isAutoSyncPaused(): boolean {
+  return autoSyncPaused;
+}
 
 export function resetAutoSyncState() {
   autoSyncInitialized = false;
+  autoSyncPaused = false;
   if (debouncePushTimer) {
     clearTimeout(debouncePushTimer);
     debouncePushTimer = null;
@@ -588,7 +606,9 @@ export function initAutoSync() {
 
   // 2. Pull when window gains focus or tab becomes visible
   window.addEventListener('focus', () => {
-    pullSync().catch(() => {});
+    if (!autoSyncPaused) {
+      pullSync().catch(() => {});
+    }
   });
 
   const handleMobileHide = () => {
@@ -604,7 +624,9 @@ export function initAutoSync() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      pullSync().catch(() => {});
+      if (!autoSyncPaused) {
+        pullSync().catch(() => {});
+      }
     } else if (document.visibilityState === 'hidden') {
       handleMobileHide();
     }
@@ -621,7 +643,7 @@ export function initAutoSync() {
   // 4. Real-time active polling interval: every 8 seconds when active
   // Keeps PC and Phone synchronized without saturating API rate limits
   setInterval(() => {
-    if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
+    if (document.visibilityState === 'visible' && isAutoSyncEnabled() && !autoSyncPaused) {
       pullSync().catch(() => {});
     }
   }, 8000);

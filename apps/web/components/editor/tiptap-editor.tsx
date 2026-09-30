@@ -129,8 +129,8 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     // Skip if content matches what this editor instance just emitted to avoid circular re-renders
     if (content === lastEmittedContentRef.current) return;
 
-    // Guard: If user was actively typing on this device within the last 1500ms, do not clobber active keystrokes
-    if (Date.now() - lastUserTypingTimeRef.current < 1500) {
+    // Guard: If user was actively typing on this device within the last 5000ms, do not clobber active keystrokes
+    if (Date.now() - lastUserTypingTimeRef.current < 5000) {
       return;
     }
 
