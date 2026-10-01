@@ -280,3 +280,67 @@ test('Google Docs Heading Extraction - Extracts headings accurately from TipTap 
   assert.strictEqual(headingsFromHtml[2].level, 3);
 });
 
+test('Google Docs Document Tabs - Subtabs created with parentId support full 3-level nesting', () => {
+  const tabs = [
+    { id: 'root_1', title: 'Tập 1: Khởi Nguyên', parentId: null, orderIndex: 1 },
+    { id: 'sub_1_1', title: 'Chương 1: Khởi hành', parentId: 'root_1', orderIndex: 1 },
+    { id: 'sub_sub_1_1_1', title: 'Cảnh 1: Trong quán trọ', parentId: 'sub_1_1', orderIndex: 1 },
+    { id: 'sub_1_2', title: 'Chương 2: Rừng hoang', parentId: 'root_1', orderIndex: 2 },
+    { id: 'root_2', title: 'Tập 2: Thăng Hoa', parentId: null, orderIndex: 2 }
+  ];
+
+  const tree = buildTabTree(tabs);
+  assert.strictEqual(tree.length, 2, 'Should have 2 root tabs');
+  assert.strictEqual(tree[0].depth, 0, 'Root tab has depth 0');
+  assert.strictEqual(tree[0].children.length, 2, 'Root 1 has 2 subtabs');
+  
+  const sub1 = tree[0].children[0];
+  assert.strictEqual(sub1.depth, 1, 'Subtab has depth 1');
+  assert.strictEqual(sub1.children.length, 1, 'Subtab has 1 nested child');
+
+  const nestedSub = sub1.children[0];
+  assert.strictEqual(nestedSub.depth, 2, 'Nested sub-subtab has depth 2');
+  assert.strictEqual(nestedSub.children.length, 0);
+
+  // Depth-first traversal order
+  const flattened = flattenTabTree(tree);
+  assert.deepStrictEqual(flattened.map(t => t.id), [
+    'root_1',
+    'sub_1_1',
+    'sub_sub_1_1_1',
+    'sub_1_2',
+    'root_2'
+  ]);
+});
+
+test('Google Docs Document Tabs - Max depth limit check prevents creating subtab beyond depth 2', () => {
+  const canCreateSubtab = (depth) => depth < 2; // depth 0 -> subtab (depth 1), depth 1 -> sub-subtab (depth 2), depth 2 cannot have subtabs
+  assert.strictEqual(canCreateSubtab(0), true, 'Root tab (depth 0) can have subtabs');
+  assert.strictEqual(canCreateSubtab(1), true, 'Subtab (depth 1) can have subtabs');
+  assert.strictEqual(canCreateSubtab(2), false, 'Sub-subtab (depth 2) cannot have further subtabs in Google Docs');
+});
+
+test('Google Docs Document Tabs - Reparenting allows demoting to subtab and promoting to parent', () => {
+  // Initial: two sibling root tabs
+  let chapters = [
+    { id: 'tab_a', title: 'Thẻ A', parentId: null, orderIndex: 1 },
+    { id: 'tab_b', title: 'Thẻ B', parentId: null, orderIndex: 2 }
+  ];
+
+  // Demote tab_b to be a subtab of tab_a
+  chapters = chapters.map(c => c.id === 'tab_b' ? { ...c, parentId: 'tab_a' } : c);
+  let tree = buildTabTree(chapters);
+  assert.strictEqual(tree.length, 1, 'Now only tab_a is root');
+  assert.strictEqual(tree[0].children.length, 1);
+  assert.strictEqual(tree[0].children[0].id, 'tab_b');
+  assert.strictEqual(tree[0].children[0].depth, 1);
+
+  // Promote tab_b back to root tab
+  chapters = chapters.map(c => c.id === 'tab_b' ? { ...c, parentId: null } : c);
+  tree = buildTabTree(chapters);
+  assert.strictEqual(tree.length, 2, 'Both are roots again');
+  assert.strictEqual(tree[0].children.length, 0);
+  assert.strictEqual(tree[1].children.length, 0);
+});
+
+

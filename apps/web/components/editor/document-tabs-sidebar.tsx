@@ -15,7 +15,10 @@ import {
   PanelLeft, 
   Check, 
   X, 
-  Sparkles 
+  ListTree,
+  CornerDownRight,
+  CornerUpLeft,
+  Layers
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -126,7 +129,7 @@ export function extractHeadingsFromContent(rawContent?: string): HeadingItem[] {
   return list;
 }
 
-interface DocumentTabsSidebarProps {
+export interface DocumentTabsSidebarProps {
   projectId: string;
   currentChapterId: string;
   chapters: ChapterTab[];
@@ -140,6 +143,7 @@ interface DocumentTabsSidebarProps {
   onDeleteTab: (chapterId: string) => Promise<void>;
   onDuplicateTab: (chapterId: string) => Promise<void>;
   onMoveTab: (chapterId: string, direction: 'up' | 'down') => Promise<void>;
+  onReparentTab?: (chapterId: string, newParentId: string | null) => Promise<void>;
   className?: string;
 }
 
@@ -215,8 +219,12 @@ export function DocumentTabsSidebar({
   onDeleteTab,
   onDuplicateTab,
   onMoveTab,
+  onReparentTab,
   className = ''
 }: DocumentTabsSidebarProps) {
+  // Sidebar view switcher: Google Docs has "Các thẻ" (Document Tabs) & "Dàn ý" (Outline)
+  const [activeView, setActiveView] = useState<'tabs' | 'outline'>('tabs');
+
   // State for expanded parent tabs (defaults to expanded)
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
@@ -226,7 +234,7 @@ export function DocumentTabsSidebar({
     return init;
   });
 
-  // State for expanded headings in the live outline
+  // State for expanded headings in outline
   const [expandedHeadingIds, setExpandedHeadingIds] = useState<Record<string, boolean>>({});
 
   // State for inline renaming
@@ -254,7 +262,7 @@ export function DocumentTabsSidebar({
 
   const tree = buildTabTree(chapters);
 
-  // Active chapter's real-time live heading tree
+  // Active chapter's real-time live heading tree for Document Outline
   const activeChapter = chapters.find(c => c.id === currentChapterId);
   const effectiveHeadings = headings && headings.length > 0
     ? headings
@@ -300,6 +308,7 @@ export function DocumentTabsSidebar({
     }
   };
 
+  // Create root tab
   const handleCreateRootTab = async () => {
     const rootCount = chapters.filter(c => !c.parentId).length;
     const defaultTitle = `Thẻ ${rootCount + 1}`;
@@ -315,7 +324,39 @@ export function DocumentTabsSidebar({
     }
   };
 
-  // Google Docs live heading node renderer (H1 -> H2 -> H3)
+  // Create subtab under a parent tab (Native Google Docs subtab creation)
+  const handleCreateSubTab = async (parentNode: TabTreeNode, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveMenuId(null);
+
+    // Google Docs allows max 3 levels: depth 0 (root) -> depth 1 (subtab) -> depth 2 (sub-subtab)
+    if (parentNode.depth >= 2) {
+      toast.error('Google Docs giới hạn phân cấp tối đa 3 cấp thẻ');
+      return;
+    }
+
+    // Auto expand the parent node
+    setExpandedIds(prev => ({
+      ...prev,
+      [parentNode.id]: true
+    }));
+
+    const childCount = (parentNode.children || []).length + 1;
+    const defaultSubTitle = `${parentNode.title} - Thẻ con ${childCount}`;
+
+    try {
+      const createdId = await onCreateTab(defaultSubTitle, parentNode.id);
+      playSuccessSound();
+      toast.success(`Đã tạo thẻ con "${defaultSubTitle}"`);
+      if (createdId) {
+        onSelectTab(createdId);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Lỗi khi tạo thẻ con');
+    }
+  };
+
+  // Google Docs Document Outline renderer (H1 -> H2 -> H3)
   const renderHeadingNode = (hNode: HeadingTreeNode) => {
     const hasChildren = hNode.children && hNode.children.length > 0;
     const isExpanded = expandedHeadingIds[hNode.id] !== false;
@@ -346,7 +387,7 @@ export function DocumentTabsSidebar({
             }
           }}
           className={`
-            flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer transition-colors
+            flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors
             hover:bg-primary/10 hover:text-primary select-none
             ${textStyle}
           `}
@@ -376,7 +417,7 @@ export function DocumentTabsSidebar({
           </span>
         </div>
 
-        {/* Nested child headings (H2 under H1, or H3 under H2) */}
+        {/* Nested child headings */}
         {hasChildren && isExpanded && (
           <div className="ml-3 pl-2 border-l border-border/60 space-y-0.5 my-0.5">
             {hNode.children.map(child => renderHeadingNode(child))}
@@ -386,12 +427,22 @@ export function DocumentTabsSidebar({
     );
   };
 
-  // Recursive tab renderer
-  const renderTabNode = (node: TabTreeNode, isLastChild: boolean) => {
+  // Find previous sibling at the same level for demotion
+  const findPreviousSibling = (node: TabTreeNode, siblings: TabTreeNode[]): TabTreeNode | null => {
+    const idx = siblings.findIndex(s => s.id === node.id);
+    return idx > 0 ? siblings[idx - 1] : null;
+  };
+
+  // Recursive tab renderer matching Google Docs Tabs & Subtabs
+  const renderTabNode = (node: TabTreeNode, siblings: TabTreeNode[], isLastChild: boolean) => {
     const isActive = node.id === currentChapterId;
     const hasChildren = node.children && node.children.length > 0;
     const isExpanded = expandedIds[node.id] !== false;
     const isEditing = editingTabId === node.id;
+    const canHaveSubtab = node.depth < 2; // Google Docs allows max 3 levels (0, 1, 2)
+    const prevSibling = findPreviousSibling(node, siblings);
+    const canDemote = Boolean(prevSibling && prevSibling.depth < 2 && onReparentTab);
+    const canPromote = Boolean(node.parentId && onReparentTab);
 
     return (
       <div key={node.id} className="relative group/tab flex flex-col">
@@ -475,12 +526,24 @@ export function DocumentTabsSidebar({
             </span>
           )}
 
-          {/* Word count pill (desktop hover or active) */}
+          {/* Word count pill */}
           {node.wordCount ? (
             <span className="text-[10px] text-muted-foreground/80 font-mono opacity-0 group-hover/tab:opacity-100 transition-opacity">
               {node.wordCount.toLocaleString()}t
             </span>
           ) : null}
+
+          {/* Quick Add Subtab button on hover (Google Docs feature) */}
+          {canHaveSubtab && !isEditing && (
+            <button
+              type="button"
+              onClick={(e) => handleCreateSubTab(node, e)}
+              className="opacity-0 group-hover/tab:opacity-100 p-0.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+              title="Thêm thẻ con (+)"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {/* Three dots menu trigger */}
           <div className="relative shrink-0">
@@ -504,8 +567,25 @@ export function DocumentTabsSidebar({
               <div
                 ref={menuRef}
                 onClick={(e) => e.stopPropagation()}
-                className="absolute right-0 top-full mt-1 w-48 bg-card border border-border/80 rounded-xl shadow-xl z-50 py-1 text-xs animate-in fade-in-50 zoom-in-95 duration-100"
+                className="absolute right-0 top-full mt-1 w-52 bg-card border border-border/80 rounded-xl shadow-xl z-50 py-1 text-xs animate-in fade-in-50 zoom-in-95 duration-100"
               >
+                {/* 1. Add Subtab (Native Google Docs feature) */}
+                {canHaveSubtab ? (
+                  <button
+                    type="button"
+                    onClick={(e) => handleCreateSubTab(node, e)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-primary font-medium transition-colors text-left"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-primary" />
+                    <span>Thêm thẻ con</span>
+                  </button>
+                ) : (
+                  <div className="px-3 py-1 text-[11px] text-muted-foreground/60 italic">
+                    Đã đạt tối đa 3 cấp thẻ
+                  </div>
+                )}
+
+                {/* 2. Rename */}
                 <button
                   type="button"
                   onClick={(e) => handleStartRename(node, e)}
@@ -514,6 +594,8 @@ export function DocumentTabsSidebar({
                   <Edit3 className="w-3.5 h-3.5 text-blue-500" />
                   <span>Đổi tên thẻ</span>
                 </button>
+
+                {/* 3. Duplicate */}
                 <button
                   type="button"
                   onClick={async (e) => {
@@ -526,7 +608,47 @@ export function DocumentTabsSidebar({
                   <Copy className="w-3.5 h-3.5 text-emerald-500" />
                   <span>Nhân bản thẻ</span>
                 </button>
+
                 <div className="my-1 border-t border-border/50" />
+
+                {/* 4. Demote / Promote (Reparenting) */}
+                {canDemote && prevSibling && (
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setActiveMenuId(null);
+                      if (onReparentTab) {
+                        await onReparentTab(node.id, prevSibling.id);
+                        setExpandedIds(prev => ({ ...prev, [prevSibling.id]: true }));
+                      }
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                  >
+                    <CornerDownRight className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Thụt lề làm thẻ con</span>
+                  </button>
+                )}
+
+                {canPromote && (
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setActiveMenuId(null);
+                      if (onReparentTab) {
+                        const parent = chapters.find(c => c.id === node.parentId);
+                        await onReparentTab(node.id, parent?.parentId || null);
+                      }
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                  >
+                    <CornerUpLeft className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Nâng lên làm thẻ cha</span>
+                  </button>
+                )}
+
+                {/* 5. Move Up / Down */}
                 <button
                   type="button"
                   onClick={async (e) => {
@@ -551,7 +673,10 @@ export function DocumentTabsSidebar({
                   <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                   <span>Chuyển xuống dưới</span>
                 </button>
+
                 <div className="my-1 border-t border-border/50" />
+
+                {/* 6. Delete */}
                 <button
                   type="button"
                   onClick={async (e) => {
@@ -574,24 +699,11 @@ export function DocumentTabsSidebar({
           </div>
         </div>
 
-        {/* Live Automatic Heading Outline for Active Document (Google Docs Real-Time Heading Hierarchy) */}
-        {isActive && (
-          <div className="ml-3.5 pl-2 border-l-2 border-primary/30 space-y-0.5 my-1">
-            {activeHeadingTree.length === 0 ? (
-              <div className="px-2 py-1.5 text-[11px] text-muted-foreground/70 italic bg-muted/20 rounded-md">
-                Chưa có thẻ tiêu đề. Định dạng Tiêu đề 1 (H1), Tiêu đề 2 (H2), Tiêu đề 3 (H3) trong văn bản để tự động tạo thẻ tại đây.
-              </div>
-            ) : (
-              activeHeadingTree.map(hNode => renderHeadingNode(hNode))
-            )}
-          </div>
-        )}
-
-        {/* Render Nested Legacy Children with Google Docs-style Indentation Guide Line */}
+        {/* Render Nested Children with Google Docs-style Indentation Guide Line */}
         {hasChildren && isExpanded && (
           <div className="ml-4 pl-2.5 border-l-2 border-border/70 hover:border-primary/40 transition-colors my-0.5 space-y-0.5">
             {node.children.map((child, idx) =>
-              renderTabNode(child, idx === node.children.length - 1)
+              renderTabNode(child, node.children, idx === node.children.length - 1)
             )}
           </div>
         )}
@@ -623,7 +735,7 @@ export function DocumentTabsSidebar({
       `}
     >
       {/* Header matching Google Docs "Các thẻ trong tài liệu" */}
-      <div className="flex items-center justify-between px-3.5 py-3 border-b border-border/70">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border/70">
         <div className="flex items-center gap-2 min-w-0">
           <FileText className="w-4 h-4 text-primary shrink-0" />
           <h2 className="font-semibold text-xs sm:text-sm text-foreground truncate">
@@ -632,7 +744,7 @@ export function DocumentTabsSidebar({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          {/* Add Tab Button */}
+          {/* Add Root Tab Button */}
           <Button
             size="icon"
             variant="ghost"
@@ -656,16 +768,69 @@ export function DocumentTabsSidebar({
         </div>
       </div>
 
-      {/* Tabs Tree List */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
-        {tree.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            Chưa có thẻ nào. Bấm nút <Plus className="w-3 h-3 inline mx-0.5 text-primary" /> để tạo thẻ đầu tiên.
-          </div>
-        ) : (
-          tree.map((root, idx) => renderTabNode(root, idx === tree.length - 1))
-        )}
+      {/* Google Docs Mode Switcher: "Các thẻ" (Document Tabs) vs "Dàn ý" (Document Outline) */}
+      <div className="px-2.5 pt-2 pb-1 border-b border-border/40">
+        <div className="grid grid-cols-2 gap-1 p-0.5 bg-muted/60 rounded-lg text-xs font-medium">
+          <button
+            type="button"
+            onClick={() => setActiveView('tabs')}
+            className={`py-1 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 text-[11px] ${
+              activeView === 'tabs'
+                ? 'bg-card text-foreground shadow-2xs font-semibold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-primary" />
+            <span>Thẻ ({chapters.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView('outline')}
+            className={`py-1 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 text-[11px] ${
+              activeView === 'outline'
+                ? 'bg-card text-foreground shadow-2xs font-semibold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <ListTree className="w-3.5 h-3.5 text-indigo-500" />
+            <span>Dàn ý ({effectiveHeadings.length})</span>
+          </button>
+        </div>
       </div>
+
+      {/* Main Content Area */}
+      {activeView === 'tabs' ? (
+        /* Tabs Tree List */
+        <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+          {tree.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              Chưa có thẻ nào. Bấm nút <Plus className="w-3 h-3 inline mx-0.5 text-primary" /> để tạo thẻ đầu tiên.
+            </div>
+          ) : (
+            tree.map((root, idx) => renderTabNode(root, tree, idx === tree.length - 1))
+          )}
+        </div>
+      ) : (
+        /* Document Outline for Active Chapter */
+        <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+          <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground/80 flex items-center justify-between border-b border-border/30 pb-1.5 mb-1.5">
+            <span className="truncate">Dàn ý: {activeChapter?.title || 'Thẻ hiện tại'}</span>
+            <span className="font-mono text-[10px]">{effectiveHeadings.length} mục</span>
+          </div>
+
+          {activeHeadingTree.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground/80 space-y-2">
+              <ListTree className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+              <p className="font-medium text-foreground/80">Chưa có đề mục trong bài</p>
+              <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                Định dạng các đoạn văn thành Tiêu đề 1 (H1), Tiêu đề 2 (H2) trong bài viết để xem mục lục dàn ý điều hướng tại đây.
+              </p>
+            </div>
+          ) : (
+            activeHeadingTree.map(hNode => renderHeadingNode(hNode))
+          )}
+        </div>
+      )}
 
       {/* Footer Info */}
       <div className="p-2.5 border-t border-border/60 text-[11px] text-muted-foreground flex items-center justify-between bg-muted/20">

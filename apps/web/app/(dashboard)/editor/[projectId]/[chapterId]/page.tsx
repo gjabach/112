@@ -464,6 +464,21 @@ export default function ChapterEditorPage() {
     }
   };
 
+  const handleReparentTab = async (targetId: string, newParentId: string | null) => {
+    try {
+      await apiFetch(`/api/chapters/${targetId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parentId: newParentId })
+      });
+      playSuccessSound();
+      toast.success(newParentId ? 'Đã thụt lề làm thẻ con' : 'Đã nâng lên làm thẻ cha');
+      await fetchChapterData(false);
+      pushSync().catch(() => {});
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi thay đổi cấp độ thẻ');
+    }
+  };
+
   const currentWords = countWords(content);
   const wordGoalProgress = Math.min(100, Math.round((currentWords / targetWordCount) * 100));
 
@@ -645,6 +660,7 @@ export default function ChapterEditorPage() {
             onDeleteTab={handleDeleteTab}
             onDuplicateTab={handleDuplicateTab}
             onMoveTab={handleMoveTab}
+            onReparentTab={handleReparentTab}
             className="hidden md:flex"
           />
 
@@ -748,6 +764,7 @@ export default function ChapterEditorPage() {
                     onDeleteTab={handleDeleteTab}
                     onDuplicateTab={handleDuplicateTab}
                     onMoveTab={handleMoveTab}
+                    onReparentTab={handleReparentTab}
                     className="w-full border-r-0"
                   />
                 </div>

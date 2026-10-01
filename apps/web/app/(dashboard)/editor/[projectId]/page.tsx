@@ -590,6 +590,39 @@ export default function ProjectEditorPage() {
 
                           {/* Actions */}
                           <div className="flex items-center gap-0.5 shrink-0">
+                            {node.depth < 2 && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                onClick={async (e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const childNum = (node.children || []).length + 1;
+                                  const promptTitle = prompt(`Nhập tên thẻ con dưới "${node.title}":`, `${node.title} - Thẻ con ${childNum}`);
+                                  if (promptTitle?.trim()) {
+                                    const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
+                                    await apiFetch(`/api/projects/${projectId}/chapters`, {
+                                      method: 'POST',
+                                      body: JSON.stringify({
+                                        title: promptTitle.trim(),
+                                        orderIndex: maxOrder + 1,
+                                        status: 'draft',
+                                        parentId: node.id
+                                      })
+                                    });
+                                    setExpandedIds(prev => ({ ...prev, [node.id]: true }));
+                                    playSuccessSound();
+                                    toast.success('Đã tạo thẻ con mới');
+                                    fetchData();
+                                    pushSync().catch(() => {});
+                                  }
+                                }}
+                                title="Thêm thẻ con (+)"
+                              >
+                                <Plus className="w-3.5 h-3.5 text-primary" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
