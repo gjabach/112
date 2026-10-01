@@ -664,6 +664,9 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       const outline = getStorage('novelist_outline', []);
       setStorage('novelist_outline', outline.filter((n: any) => n.projectId !== id));
 
+      const wikiArticles = getStorage('novelist_wiki_articles', []);
+      setStorage('novelist_wiki_articles', wikiArticles.filter((a: any) => a.projectId !== id));
+
       return { success: true };
     }
   }
@@ -738,6 +741,18 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
         updatedAt: now
       }));
       setStorage('novelist_outline', [...outline, ...newOutline]);
+
+      // Deep clone wiki articles
+      const wikiArticles = getStorage('novelist_wiki_articles', []);
+      const origWiki = wikiArticles.filter((a: any) => a.projectId === id);
+      const newWiki = origWiki.map((a: any, idx: number) => ({
+        ...a,
+        id: 'wiki_' + (now + idx + 1),
+        projectId: newProjectId,
+        createdAt: now,
+        updatedAt: now
+      }));
+      setStorage('novelist_wiki_articles', [...wikiArticles, ...newWiki]);
 
       return { project: cloned };
     }
@@ -1375,6 +1390,63 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       recordTombstone(id);
       setStorage('novelist_worldbuilding', entities.filter((e: any) => e.id !== id));
       return { success: true };
+    }
+  }
+
+  // Wiki Articles
+  const projWikiMatch = path.match(/^\/api\/projects\/([^\/]+)\/wiki/);
+  if (projWikiMatch) {
+    const projectId = projWikiMatch[1];
+    const wikiArticles = getStorage('novelist_wiki_articles', []);
+    if (method === 'GET') {
+      const list = wikiArticles
+        .filter((a: any) => a.projectId === projectId)
+        .sort((a: any, b: any) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return (b.updatedAt || 0) - (a.updatedAt || 0);
+        });
+      return { articles: list };
+    }
+    if (method === 'POST') {
+      const newArticle = {
+        id: genId('wiki'),
+        projectId,
+        title: body.title || 'Bài viết mới',
+        content: body.content || '',
+        category: body.category || 'free_note',
+        summary: body.summary || '',
+        tags: Array.isArray(body.tags) ? body.tags : [],
+        icon: body.icon || '📝',
+        pinned: body.pinned || false,
+        createdAt: now,
+        updatedAt: now
+      };
+      wikiArticles.push(newArticle);
+      setStorage('novelist_wiki_articles', wikiArticles);
+      return { article: newArticle };
+    }
+  }
+
+  const wikiIdMatch = path.match(/^\/api\/wiki\/([^\/]+)$/);
+  if (wikiIdMatch) {
+    const id = wikiIdMatch[1];
+    const wikiArticles = getStorage('novelist_wiki_articles', []);
+    if (method === 'PATCH') {
+      const updated = wikiArticles.map((a: any) =>
+        a.id === id ? { ...a, ...body, updatedAt: now } : a
+      );
+      setStorage('novelist_wiki_articles', updated);
+      return { article: updated.find((a: any) => a.id === id) };
+    }
+    if (method === 'DELETE') {
+      recordTombstone(id);
+      setStorage('novelist_wiki_articles', wikiArticles.filter((a: any) => a.id !== id));
+      return { success: true };
+    }
+    if (method === 'GET') {
+      const article = wikiArticles.find((a: any) => a.id === id);
+      return { article: article || null };
     }
   }
 

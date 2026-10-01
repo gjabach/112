@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download, ChevronUp, ChevronDown, Search, Check, X, Upload, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download, ChevronUp, ChevronDown, Search, Check, X, Upload, Image as ImageIcon, BookOpen } from 'lucide-react';
 import { useProjectStore } from '@/lib/store';
 import { BookCoverArt } from '@/components/vfx/book-cover';
 import { fireConfetti } from '@/components/vfx/confetti';
@@ -360,6 +360,11 @@ export default function ProjectEditorPage() {
                 <MapIcon className="w-4 h-4 mr-1 text-amber-500" /> Thế giới
               </Button>
             </Link>
+            <Link href={`/wiki/${projectId}`}>
+              <Button variant="outline" size="sm" className="bg-cyan-50/50 dark:bg-cyan-950/20 border-cyan-200/50">
+                <BookOpen className="w-4 h-4 mr-1 text-cyan-500" /> Wiki
+              </Button>
+            </Link>
             <Link href={`/export/${projectId}`}>
               <Button variant="outline" size="sm" className="bg-green-50/50 dark:bg-green-950/20 border-green-200/50">
                 <Download className="w-4 h-4 mr-1 text-green-500" /> Xuất bản
@@ -402,6 +407,13 @@ export default function ProjectEditorPage() {
           >
             <MapIcon className="w-3.5 h-3.5 text-amber-500" />
             <span>Thế giới</span>
+          </Link>
+          <Link
+            href={`/wiki/${projectId}`}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-cyan-500" />
+            <span>Wiki</span>
           </Link>
           <Link
             href={`/timeline/${projectId}`}

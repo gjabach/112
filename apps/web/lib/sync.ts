@@ -135,6 +135,7 @@ export function exportFullWorkspace() {
     timeline: getStoredJson('novelist_timeline', getStoredJson('novelist_timeline_events', [])),
     timelineEras: getStoredJson('novelist_timeline_eras', []),
     outline: getStoredJson('novelist_outline', getStoredJson('novelist_outlines', [])),
+    wikiArticles: getStoredJson('novelist_wiki_articles', []),
     tombstones: getStoredJson('novelist_tombstones', {}),
     user: getStoredJson('novelist_current_user', null),
     aiConfig: {
@@ -226,6 +227,10 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
     if (outline) {
       localStorage.setItem('novelist_outline', JSON.stringify(outline));
       localStorage.setItem('novelist_outlines', JSON.stringify(outline));
+    }
+
+    if (Array.isArray(finalData.wikiArticles)) {
+      localStorage.setItem('novelist_wiki_articles', JSON.stringify(finalData.wikiArticles));
     }
 
     if (finalData.user) {
