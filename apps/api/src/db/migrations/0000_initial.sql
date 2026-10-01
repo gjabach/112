@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS chapters (
   pov TEXT,
   location TEXT,
   characters_present TEXT,
+  emoji TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

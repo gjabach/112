@@ -65,6 +65,7 @@ export interface Chapter {
   pov: string | null;
   location: string | null;
   charactersPresent: string[];
+  emoji?: string | null;
   createdAt: number;
   updatedAt: number;
 }

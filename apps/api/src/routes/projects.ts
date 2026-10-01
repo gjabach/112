@@ -211,13 +211,20 @@ projects.post('/:id/duplicate', async (c) => {
     updatedAt: now
   });
 
-  // Duplicate chapters
+  // Duplicate chapters with preserved parent-child tree mapping
   const chapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  const chapterIdMap = new Map<string, string>();
   for (const ch of chapters) {
+    chapterIdMap.set(ch.id, generateId());
+  }
+  for (const ch of chapters) {
+    const newChapterId = chapterIdMap.get(ch.id)!;
+    const newParentId = ch.parentId && chapterIdMap.has(ch.parentId) ? chapterIdMap.get(ch.parentId)! : null;
     await db.insert(schema.chapters).values({
       ...ch,
-      id: generateId(),
+      id: newChapterId,
       projectId: newId,
+      parentId: newParentId,
       createdAt: now,
       updatedAt: now
     });

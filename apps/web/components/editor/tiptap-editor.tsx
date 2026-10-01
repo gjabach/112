@@ -200,20 +200,42 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   // Jump to heading from Document Tabs sidebar
   useEffect(() => {
     const handleJumpHeading = (e: Event) => {
-      const custom = e as CustomEvent<{ pos?: number; text?: string }>;
+      const custom = e as CustomEvent<{ pos?: number; text?: string; index?: number; id?: string }>;
       if (!editor) return;
-      const { pos, text } = custom.detail || {};
+      const { pos, text, index } = custom.detail || {};
 
-      let targetPos = typeof pos === 'number' && pos >= 0 ? pos : -1;
+      let targetPos = -1;
 
-      // If position might have shifted, fallback to locating heading by matching text
+      // Find matching heading/paragraph candidates
       if (text) {
+        const candidates: number[] = [];
         editor.state.doc.descendants((node: any, p: number) => {
           if ((node.type?.name === 'heading' || node.type?.name === 'paragraph') && node.textContent?.trim() === text.trim()) {
-            targetPos = p;
-            return false;
+            candidates.push(p);
           }
         });
+
+        if (candidates.length > 0) {
+          if (typeof index === 'number' && index >= 0 && index < candidates.length) {
+            targetPos = candidates[index];
+          } else if (typeof pos === 'number' && pos >= 0) {
+            // Pick candidate closest to given pos
+            let closest = candidates[0];
+            for (const cPos of candidates) {
+              if (Math.abs(cPos - pos) < Math.abs(closest - pos)) {
+                closest = cPos;
+              }
+            }
+            targetPos = closest;
+          } else {
+            targetPos = candidates[0];
+          }
+        }
+      }
+
+      // Fallback to direct position if candidates not found or text not provided
+      if (targetPos < 0 && typeof pos === 'number' && pos >= 0 && pos < editor.state.doc.content.size) {
+        targetPos = pos;
       }
 
       if (targetPos >= 0) {

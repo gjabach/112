@@ -61,6 +61,7 @@ export const chapters = sqliteTable('chapters', {
   pov: text('pov'),
   location: text('location'),
   charactersPresent: text('characters_present'), // JSON array
+  emoji: text('emoji'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 }, (table) => ({

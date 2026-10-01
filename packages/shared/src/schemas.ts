@@ -38,7 +38,8 @@ export const createChapterSchema = z.object({
   notes: z.string().optional(),
   pov: z.string().max(100).optional(),
   location: z.string().max(200).optional(),
-  charactersPresent: z.array(z.string()).default([])
+  charactersPresent: z.array(z.string()).default([]),
+  emoji: z.string().max(30).optional().nullable()
 });
 
 export const updateChapterSchema = createChapterSchema.partial();

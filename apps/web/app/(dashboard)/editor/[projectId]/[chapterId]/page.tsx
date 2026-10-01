@@ -24,7 +24,7 @@ import {
   PanelLeft,
   Download
 } from 'lucide-react';
-import { DocumentTabsSidebar, buildTabTree, flattenTabTree, extractHeadingsFromContent } from '@/components/editor/document-tabs-sidebar';
+import { DocumentTabsSidebar, buildTabTree, flattenTabTree, extractHeadingsFromContent, getSubtreeHeight, type TabTreeNode } from '@/components/editor/document-tabs-sidebar';
 import type { EditorHeading } from '@/components/editor/tiptap-editor';
 import { MagicSparkles, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
@@ -372,6 +372,10 @@ export default function ChapterEditorPage() {
 
   // Tab Sidebar Operations
   const handleCreateTab = async (tabTitle: string, parentId?: string | null): Promise<string | void> => {
+    if (allChapters.length >= 100) {
+      toast.error('Tài liệu đã đạt giới hạn tối đa 100 thẻ');
+      return;
+    }
     try {
       const maxOrder = allChapters.length > 0 ? Math.max(...allChapters.map(c => c.orderIndex || 0)) : 0;
       const res = await apiFetch(`/api/projects/${projectId}/chapters`, {
@@ -383,10 +387,11 @@ export default function ChapterEditorPage() {
           parentId: parentId || null
         })
       });
-      if (res?.chapter?.id) {
+      const newId = res?.chapter?.id || res?.id;
+      if (newId) {
         await fetchChapterData(false);
         pushSync().catch(() => {});
-        return res.chapter.id;
+        return newId;
       }
     } catch (e: any) {
       toast.error(e.message || 'Lỗi tạo thẻ');
@@ -406,6 +411,10 @@ export default function ChapterEditorPage() {
   };
 
   const handleDeleteTab = async (targetId: string) => {
+    if (allChapters.length <= 1) {
+      toast.error('Tài liệu phải có tối thiểu 1 thẻ');
+      return;
+    }
     try {
       await apiFetch(`/api/chapters/${targetId}`, { method: 'DELETE' });
       playDeleteSound();
@@ -427,29 +436,67 @@ export default function ChapterEditorPage() {
   };
 
   const handleDuplicateTab = async (targetId: string) => {
+    if (allChapters.length >= 100) {
+      toast.error('Tài liệu đã đạt giới hạn tối đa 100 thẻ');
+      return;
+    }
     try {
       const res = await apiFetch(`/api/chapters/${targetId}/duplicate`, { method: 'POST' });
       playSuccessSound();
       toast.success('Đã nhân bản thẻ');
       pushSync().catch(() => {});
       await fetchChapterData(false);
-      if (res?.chapter?.id) {
-        navigateToChapter(res.chapter.id, 'next');
+      const newId = res?.chapter?.id || res?.id;
+      if (newId) {
+        navigateToChapter(newId, 'next');
       }
     } catch (e: any) {
       toast.error(e.message || 'Lỗi nhân bản thẻ');
     }
   };
 
+  // Move tab strictly swaps among siblings of the same parent (Google Docs standard)
   const handleMoveTab = async (targetId: string, direction: 'up' | 'down') => {
-    const idx = orderedChapters.findIndex(c => c.id === targetId);
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= orderedChapters.length) return;
+    const target = allChapters.find(c => c.id === targetId);
+    if (!target) return;
+    const parentId = target.parentId || null;
 
-    const newFlat = [...orderedChapters];
-    const temp = newFlat[idx];
-    newFlat[idx] = newFlat[targetIdx];
-    newFlat[targetIdx] = temp;
+    // Get all siblings with same parentId in their current relative order
+    const siblings = allChapters
+      .filter(c => (c.parentId || null) === parentId)
+      .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+
+    const idx = siblings.findIndex(c => c.id === targetId);
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= siblings.length) return;
+
+    // Build hierarchical tree
+    const tree = buildTabTree(allChapters);
+
+    // Swap strictly within sibling nodes in the tree
+    const swapSiblingInTree = (nodes: TabTreeNode[]): boolean => {
+      const sIdx = nodes.findIndex(n => n.id === targetId);
+      if (sIdx !== -1) {
+        const sTargetIdx = direction === 'up' ? sIdx - 1 : sIdx + 1;
+        if (sTargetIdx >= 0 && sTargetIdx < nodes.length) {
+          const temp = nodes[sIdx];
+          nodes[sIdx] = nodes[sTargetIdx];
+          nodes[sTargetIdx] = temp;
+          return true;
+        }
+      }
+      for (const n of nodes) {
+        if (n.children && n.children.length > 0) {
+          if (swapSiblingInTree(n.children)) return true;
+        }
+      }
+      return false;
+    };
+
+    swapSiblingInTree(tree);
+
+    // Flatten tree in preorder traversal to retain subtrees and updated sibling order
+    const newFlat = flattenTabTree(tree);
 
     try {
       await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
@@ -465,6 +512,52 @@ export default function ChapterEditorPage() {
   };
 
   const handleReparentTab = async (targetId: string, newParentId: string | null) => {
+    if (newParentId) {
+      if (newParentId === targetId) {
+        toast.error('Không thể chọn chính thẻ này làm thẻ cha');
+        return;
+      }
+      // Circular check: newParentId must not be a descendant of targetId
+      const getAllDescendantIds = (rootId: string): string[] => {
+        const children = allChapters.filter(c => c.parentId === rootId);
+        const childIds = children.map(c => c.id);
+        const nestedIds = childIds.flatMap(cid => getAllDescendantIds(cid));
+        return [...childIds, ...nestedIds];
+      };
+      const descendantIds = new Set(getAllDescendantIds(targetId));
+      if (descendantIds.has(newParentId)) {
+        toast.error('Quan hệ phân cấp vòng tròn không hợp lệ');
+        return;
+      }
+
+      // Max 3 levels depth check (Google Docs allows depth 0, 1, 2)
+      const tree = buildTabTree(allChapters);
+      const findNode = (nodes: TabTreeNode[], id: string): TabTreeNode | null => {
+        for (const n of nodes) {
+          if (n.id === id) return n;
+          if (n.children) {
+            const found = findNode(n.children, id);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      const parentNode = findNode(tree, newParentId);
+      const targetNode = findNode(tree, targetId);
+      if (!parentNode) {
+        toast.error('Thẻ cha không tồn tại');
+        return;
+      }
+      if (targetNode) {
+        const parentDepth = parentNode.depth;
+        const subtreeHeight = getSubtreeHeight(targetNode);
+        if (parentDepth + 1 + subtreeHeight > 2) {
+          toast.error('Google Docs giới hạn phân cấp tối đa 3 cấp thẻ');
+          return;
+        }
+      }
+    }
+
     try {
       await apiFetch(`/api/chapters/${targetId}`, {
         method: 'PATCH',
@@ -476,6 +569,19 @@ export default function ChapterEditorPage() {
       pushSync().catch(() => {});
     } catch (e: any) {
       toast.error(e.message || 'Lỗi thay đổi cấp độ thẻ');
+    }
+  };
+
+  const handleUpdateTabEmoji = async (targetId: string, emoji: string | null) => {
+    try {
+      await apiFetch(`/api/chapters/${targetId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ emoji })
+      });
+      await fetchChapterData(false);
+      pushSync().catch(() => {});
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi cập nhật biểu tượng');
     }
   };
 
@@ -652,8 +758,8 @@ export default function ChapterEditorPage() {
             isOpen={showTabsSidebar}
             onToggle={toggleTabsSidebar}
             onSelectTab={(selectedId) => navigateToChapter(selectedId, 'fade')}
-            onJumpToHeading={(pos, text) => {
-              window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos, text } }));
+            onJumpToHeading={(pos, text, index) => {
+              window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos, text, index } }));
             }}
             onCreateTab={handleCreateTab}
             onRenameTab={handleRenameTab}
@@ -661,6 +767,7 @@ export default function ChapterEditorPage() {
             onDuplicateTab={handleDuplicateTab}
             onMoveTab={handleMoveTab}
             onReparentTab={handleReparentTab}
+            onUpdateEmoji={handleUpdateTabEmoji}
             className="hidden md:flex"
           />
 
@@ -733,41 +840,31 @@ export default function ChapterEditorPage() {
           {/* Mobile Document Tabs Drawer / Sheet */}
           {mobileTabsOpen && (
             <div className="md:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end animate-in fade-in duration-200">
-              <div className="bg-card border-t rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-250">
-                <div className="flex items-center justify-between p-3 border-b shrink-0">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-primary" />
-                    <h3 className="font-semibold text-sm">Các thẻ trong tài liệu</h3>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => setMobileTabsOpen(false)}>
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
-                <div className="overflow-y-auto flex-1 pb-6">
-                  <DocumentTabsSidebar
-                    projectId={projectId}
-                    currentChapterId={chapterId}
-                    chapters={allChapters}
-                    headings={liveHeadings}
-                    isOpen={true}
-                    onToggle={() => setMobileTabsOpen(false)}
-                    onSelectTab={(selectedId) => {
-                      setMobileTabsOpen(false);
-                      navigateToChapter(selectedId, 'fade');
-                    }}
-                    onJumpToHeading={(pos, text) => {
-                      setMobileTabsOpen(false);
-                      window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos, text } }));
-                    }}
-                    onCreateTab={handleCreateTab}
-                    onRenameTab={handleRenameTab}
-                    onDeleteTab={handleDeleteTab}
-                    onDuplicateTab={handleDuplicateTab}
-                    onMoveTab={handleMoveTab}
-                    onReparentTab={handleReparentTab}
-                    className="w-full border-r-0"
-                  />
-                </div>
+              <div className="bg-card border-t rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-250 overflow-hidden">
+                <DocumentTabsSidebar
+                  projectId={projectId}
+                  currentChapterId={chapterId}
+                  chapters={allChapters}
+                  headings={liveHeadings}
+                  isOpen={true}
+                  onToggle={() => setMobileTabsOpen(false)}
+                  onSelectTab={(selectedId) => {
+                    setMobileTabsOpen(false);
+                    navigateToChapter(selectedId, 'fade');
+                  }}
+                  onJumpToHeading={(pos, text, index) => {
+                    setMobileTabsOpen(false);
+                    window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos, text, index } }));
+                  }}
+                  onCreateTab={handleCreateTab}
+                  onRenameTab={handleRenameTab}
+                  onDeleteTab={handleDeleteTab}
+                  onDuplicateTab={handleDuplicateTab}
+                  onMoveTab={handleMoveTab}
+                  onReparentTab={handleReparentTab}
+                  onUpdateEmoji={handleUpdateTabEmoji}
+                  className="w-full border-r-0 h-full max-h-[85vh]"
+                />
               </div>
             </div>
           )}

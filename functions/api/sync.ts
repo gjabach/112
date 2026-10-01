@@ -232,7 +232,12 @@ function mergeWorkspaces(
       const localUpdated = Number(existing.updatedAt || existing.createdAt || 0);
       const remoteContentStr = typeof rc.content === 'string' ? rc.content : JSON.stringify(rc.content || '');
       const localContentStr = typeof existing.content === 'string' ? existing.content : JSON.stringify(existing.content || '');
-      const isDifferent = remoteContentStr !== localContentStr || rc.title !== existing.title;
+      const isDifferent = 
+        remoteContentStr !== localContentStr || 
+        rc.title !== existing.title ||
+        Number(rc.orderIndex ?? 0) !== Number(existing.orderIndex ?? 0) ||
+        (rc.parentId || null) !== (existing.parentId || null) ||
+        (rc.emoji || null) !== (existing.emoji || null);
 
       if (!isDifferent) {
         // Content and title are identical: unify with the latest timestamp

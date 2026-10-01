@@ -682,13 +682,18 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       projects.unshift(cloned);
       setStorage('novelist_projects', projects);
 
-      // Deep clone chapters
+      // Deep clone chapters with preserved parent-child tree mapping
       const chapters = getStorage('novelist_chapters', []);
       const origChapters = chapters.filter((c: any) => c.projectId === id);
-      const newChapters = origChapters.map((c: any, idx: number) => ({
+      const chapterIdMap = new Map<string, string>();
+      origChapters.forEach((c: any) => {
+        chapterIdMap.set(c.id, genId('chap'));
+      });
+      const newChapters = origChapters.map((c: any) => ({
         ...c,
-        id: 'chap_' + (now + idx + 1),
+        id: chapterIdMap.get(c.id)!,
         projectId: newProjectId,
+        parentId: c.parentId && chapterIdMap.has(c.parentId) ? chapterIdMap.get(c.parentId) : null,
         createdAt: now,
         updatedAt: now
       }));
@@ -793,11 +798,31 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     }
     if (method === 'POST') {
       const projChaps = chapters.filter((c: any) => c.projectId === projectId);
+      if (projChaps.length >= 100) {
+        return { error: 'Tài liệu đã đạt giới hạn tối đa 100 thẻ' };
+      }
+      if (body.parentId) {
+        const parentChap = projChaps.find((c: any) => c.id === body.parentId);
+        if (!parentChap) {
+          return { error: 'Thẻ cha không tồn tại' };
+        }
+        let parentDepth = 0;
+        let curr: any = parentChap;
+        const visited = new Set<string>();
+        while (curr?.parentId && !visited.has(curr.id)) {
+          visited.add(curr.id);
+          parentDepth++;
+          curr = projChaps.find((c: any) => c.id === curr.parentId);
+        }
+        if (parentDepth >= 2) {
+          return { error: 'Google Docs giới hạn phân cấp tối đa 3 cấp thẻ' };
+        }
+      }
       const maxIdx = projChaps.length > 0 ? Math.max(...projChaps.map((c: any) => c.orderIndex || 0)) : 0;
       const orderIndex = (body.orderIndex !== undefined && body.orderIndex > maxIdx) ? body.orderIndex : maxIdx + 1;
 
       const newChap = {
-        id: 'chap_' + now,
+        id: genId('chap'),
         projectId,
         title: body.title || 'Thẻ mới',
         orderIndex,
@@ -805,6 +830,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
         wordCount: countWords(body.content || ''),
         status: body.status || 'draft',
         parentId: body.parentId || null,
+        emoji: body.emoji || null,
         createdAt: now,
         updatedAt: now
       };
@@ -833,16 +859,48 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     const source = chapters.find((c: any) => c.id === id);
     if (!source) return { error: 'Không tìm thấy thẻ' };
     const projChaps = chapters.filter((c: any) => c.projectId === source.projectId);
+    if (projChaps.length >= 100) {
+      return { error: 'Tài liệu đã đạt giới hạn tối đa 100 thẻ' };
+    }
+    const getAllDescendants = (rootId: string): any[] => {
+      const children = projChaps
+        .filter((c: any) => c.parentId === rootId)
+        .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0));
+      const result: any[] = [];
+      for (const child of children) {
+        result.push(child);
+        result.push(...getAllDescendants(child.id));
+      }
+      return result;
+    };
+    const descendants = getAllDescendants(id);
+    if (projChaps.length + 1 + descendants.length > 100) {
+      return { error: 'Tài liệu đã đạt giới hạn tối đa 100 thẻ' };
+    }
     const maxIdx = projChaps.length > 0 ? Math.max(...projChaps.map((c: any) => c.orderIndex || 0)) : 0;
+    const newChapId = genId('chap');
     const newChap = {
       ...source,
-      id: 'chap_' + now,
+      id: newChapId,
       title: `${source.title || 'Thẻ'} (Bản sao)`,
       orderIndex: maxIdx + 1,
       createdAt: now,
       updatedAt: now
     };
-    chapters.push(newChap);
+    const idMap = new Map<string, string>();
+    idMap.set(id, newChapId);
+    descendants.forEach((d: any) => {
+      idMap.set(d.id, genId('chap'));
+    });
+    const clonedDescendants = descendants.map((d: any, idx: number) => ({
+      ...d,
+      id: idMap.get(d.id)!,
+      orderIndex: maxIdx + 2 + idx,
+      parentId: idMap.get(d.parentId) || d.parentId,
+      createdAt: now,
+      updatedAt: now
+    }));
+    chapters.push(newChap, ...clonedDescendants);
     setStorage('novelist_chapters', chapters);
     if (typeof window !== 'undefined') {
       pushSync().catch(() => {});
@@ -887,6 +945,13 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { chapter: updated.find((c: any) => c.id === id) };
     }
     if (method === 'DELETE') {
+      const targetChap = chapters.find((c: any) => c.id === id);
+      if (!targetChap) return { error: 'Không tìm thấy thẻ' };
+      const projChaps = chapters.filter((c: any) => c.projectId === targetChap.projectId);
+      if (projChaps.length <= 1) {
+        return { error: 'Tài liệu phải có tối thiểu 1 thẻ' };
+      }
+
       const getAllDescendantIds = (rootId: string): string[] => {
         const children = chapters.filter((c: any) => c.parentId === rootId);
         const childIds = children.map((c: any) => c.id);
@@ -894,8 +959,10 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
         return [...childIds, ...nestedIds];
       };
       const toDeleteIds = new Set([id, ...getAllDescendantIds(id)]);
+      if (toDeleteIds.size >= projChaps.length) {
+        return { error: 'Tài liệu phải có tối thiểu 1 thẻ' };
+      }
       toDeleteIds.forEach(delId => recordTombstone(delId));
-      const targetChap = chapters.find((c: any) => c.id === id);
       const filtered = chapters.filter((c: any) => !toDeleteIds.has(c.id));
       setStorage('novelist_chapters', filtered);
 
@@ -1564,7 +1631,11 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       }
       if (res.status === 404 || (res.ok && ct.includes('text/html'))) {
         // Fall back to local API handler if the route does not exist or returned SPA index.html
-        return await handleLocalApi(path, options);
+        const localRes = await handleLocalApi(path, options);
+        if (localRes && typeof localRes === 'object' && localRes.error) {
+          throw new Error(localRes.error);
+        }
+        return localRes;
       }
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
@@ -1578,5 +1649,9 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   // 3. Client-side local storage fallback
-  return await handleLocalApi(path, options);
+  const localRes = await handleLocalApi(path, options);
+  if (localRes && typeof localRes === 'object' && localRes.error) {
+    throw new Error(localRes.error);
+  }
+  return localRes;
 }

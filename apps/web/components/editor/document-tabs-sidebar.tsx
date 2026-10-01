@@ -16,7 +16,11 @@ import {
   Check, 
   X, 
   CornerDownRight, 
-  CornerUpLeft 
+  CornerUpLeft,
+  Link as LinkIcon,
+  Smile,
+  ListTree,
+  AlertCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +35,7 @@ export interface ChapterTab {
   wordCount?: number;
   status?: string;
   parentId?: string | null;
+  emoji?: string | null;
   content?: string;
   createdAt?: number;
   updatedAt?: number;
@@ -154,40 +159,47 @@ export function extractHeadingsFromContent(rawContent?: string): HeadingItem[] {
   try {
     const json = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
     if (json && typeof json === 'object') {
-      let currentPos = 0;
-      const walk = (node: any) => {
-        if (!node) return;
-        if (node.type === 'heading') {
-          const level = Number(node.attrs?.level) || 1;
-          const text = (node.content || []).map((c: any) => c.text || '').join('').trim();
-          if (text) {
-            list.push({
-              id: `h-${list.length}-${text.slice(0, 15)}`,
-              level,
-              text,
-              pos: currentPos
-            });
-          }
-        } else if (node.type === 'paragraph') {
-          const text = (node.content || []).map((c: any) => c.text || '').join('').trim();
-          if (text) {
-            const detected = detectHeadingFromText(text);
-            if (detected) {
+      const getNodeSize = (n: any): number => {
+        if (!n) return 0;
+        if (n.type === 'text') return (n.text || '').length;
+        if (n.type === 'hardBreak' || n.type === 'image') return 1;
+        if (Array.isArray(n.content)) {
+          return n.content.reduce((acc: number, child: any) => acc + getNodeSize(child), 0) + 2;
+        }
+        return 2;
+      };
+
+      if (Array.isArray(json.content)) {
+        let docPos = 0;
+        for (const block of json.content) {
+          if (block.type === 'heading') {
+            const level = Number(block.attrs?.level) || 1;
+            const text = (block.content || []).map((c: any) => c.text || '').join('').trim();
+            if (text) {
               list.push({
-                id: `p-${list.length}-${text.slice(0, 15)}`,
-                level: detected.level,
+                id: `h-${list.length}-${text.slice(0, 15)}`,
+                level,
                 text,
-                pos: currentPos
+                pos: docPos
               });
             }
+          } else if (block.type === 'paragraph') {
+            const text = (block.content || []).map((c: any) => c.text || '').join('').trim();
+            if (text) {
+              const detected = detectHeadingFromText(text);
+              if (detected) {
+                list.push({
+                  id: `p-${list.length}-${text.slice(0, 15)}`,
+                  level: detected.level,
+                  text,
+                  pos: docPos
+                });
+              }
+            }
           }
+          docPos += getNodeSize(block);
         }
-        currentPos += 1;
-        if (Array.isArray(node.content)) {
-          node.content.forEach(walk);
-        }
-      };
-      walk(json);
+      }
       if (list.length > 0) return list;
     }
   } catch {}
@@ -230,14 +242,21 @@ export interface DocumentTabsSidebarProps {
   isOpen: boolean;
   onToggle: () => void;
   onSelectTab: (chapterId: string) => void;
-  onJumpToHeading?: (pos?: number, text?: string) => void;
+  onJumpToHeading?: (pos?: number, text?: string, index?: number) => void;
   onCreateTab: (title: string, parentId?: string | null) => Promise<string | void>;
   onRenameTab: (chapterId: string, newTitle: string) => Promise<void>;
   onDeleteTab: (chapterId: string) => Promise<void>;
   onDuplicateTab: (chapterId: string) => Promise<void>;
   onMoveTab: (chapterId: string, direction: 'up' | 'down') => Promise<void>;
   onReparentTab?: (chapterId: string, newParentId: string | null) => Promise<void>;
+  onUpdateEmoji?: (chapterId: string, emoji: string | null) => Promise<void>;
+  hideHeader?: boolean;
   className?: string;
+}
+
+export function getSubtreeHeight(node: TabTreeNode): number {
+  if (!node.children || node.children.length === 0) return 0;
+  return 1 + Math.max(...node.children.map(getSubtreeHeight));
 }
 
 export function buildTabTree(chapters: ChapterTab[]): TabTreeNode[] {
@@ -298,6 +317,14 @@ export function flattenTabTree(roots: TabTreeNode[]): ChapterTab[] {
   return result;
 }
 
+export const PRESET_EMOJIS = [
+  '📄', '📝', '📖', '📑', '🔖', '💡', '✍️', '🔍', 
+  '📌', '🎯', '⭐', '🌟', '🚀', '🔥', '☕', '🌲', 
+  '🌸', '🍀', '🌊', '🎭', '💬', '👤', '🏰', '⚔️', 
+  '🛡️', '💎', '👑', '📦', '🏷️', '🎨', '📜', '🌙', 
+  '☀️', '⚡', '🗝️', '🔮'
+];
+
 export function DocumentTabsSidebar({
   projectId,
   currentChapterId,
@@ -313,6 +340,8 @@ export function DocumentTabsSidebar({
   onDuplicateTab,
   onMoveTab,
   onReparentTab,
+  onUpdateEmoji,
+  hideHeader = false,
   className = ''
 }: DocumentTabsSidebarProps) {
   // State for expanded parent tabs (defaults to expanded)
@@ -335,6 +364,34 @@ export function DocumentTabsSidebar({
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // State for emoji picker popover
+  const [emojiPickerTabId, setEmojiPickerTabId] = useState<string | null>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const [customEmojiInput, setCustomEmojiInput] = useState('');
+
+  // State for tab outline hidden preference (persisted in localStorage)
+  const [hiddenOutlineTabs, setHiddenOutlineTabs] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem('novelist_tab_outline_hidden');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const toggleOutlineVisibility = (tabId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setHiddenOutlineTabs(prev => {
+      const next = { ...prev, [tabId]: !prev[tabId] };
+      try {
+        localStorage.setItem('novelist_tab_outline_hidden', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setActiveMenuId(null);
+  };
+
   // Close context menu on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -350,7 +407,25 @@ export function DocumentTabsSidebar({
     };
   }, [activeMenuId]);
 
+  // Close emoji picker on outside click
+  useEffect(() => {
+    const handleClickOutsideEmoji = (e: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
+        setEmojiPickerTabId(null);
+      }
+    };
+    if (emojiPickerTabId) {
+      document.addEventListener('mousedown', handleClickOutsideEmoji);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutsideEmoji);
+    };
+  }, [emojiPickerTabId]);
+
   const tree = buildTabTree(chapters);
+
+  const isAtMaxLimit = chapters.length >= 100;
+  const isNearLimit = chapters.length >= 90;
 
   // Active chapter's real-time live heading tree for automatic subtabs (e.g. I, aceererf / II, nrfnerjf)
   const activeChapter = chapters.find(c => c.id === currentChapterId);
@@ -358,6 +433,15 @@ export function DocumentTabsSidebar({
     ? headings
     : extractHeadingsFromContent(activeChapter?.content);
   const activeHeadingTree = buildHeadingTree(effectiveHeadings);
+
+  // Map occurrence index for identical heading titles
+  const headingOccurrenceIndexMap = new Map<string, number>();
+  const runningHeadingCounts = new Map<string, number>();
+  effectiveHeadings.forEach((h) => {
+    const seen = runningHeadingCounts.get(h.text) || 0;
+    headingOccurrenceIndexMap.set(h.id, seen);
+    runningHeadingCounts.set(h.text, seen + 1);
+  });
 
   const toggleExpand = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -383,12 +467,16 @@ export function DocumentTabsSidebar({
   };
 
   const handleSaveRename = async (tabId: string) => {
+    if (editingTabId !== tabId) return;
     const trimmed = editingTitle.trim();
-    if (!trimmed) {
-      toast.error('Tên thẻ không được để trống');
-      return;
-    }
     setEditingTabId(null);
+    if (!trimmed) {
+      return; // Revert silently on empty input
+    }
+    const currentTab = chapters.find(c => c.id === tabId);
+    if (currentTab && currentTab.title === trimmed) {
+      return; // No change
+    }
     try {
       await onRenameTab(tabId, trimmed);
       playSuccessSound();
@@ -398,8 +486,64 @@ export function DocumentTabsSidebar({
     }
   };
 
+  const handleSelectEmoji = async (tabId: string, emoji: string | null) => {
+    setEmojiPickerTabId(null);
+    try {
+      if (onUpdateEmoji) {
+        await onUpdateEmoji(tabId, emoji);
+        playSuccessSound();
+        toast.success(emoji ? 'Đã đổi biểu tượng thẻ' : 'Đã xóa biểu tượng');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Lỗi cập nhật biểu tượng');
+    }
+  };
+
+  const copyFallback = (text: string) => {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const success = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      if (success) {
+        playSuccessSound();
+        toast.success('Đã sao chép liên kết tới thẻ');
+      } else {
+        toast.error('Không thể sao chép liên kết');
+      }
+    } catch {
+      toast.error('Không thể sao chép liên kết');
+    }
+  };
+
+  const handleCopyLink = (tabId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveMenuId(null);
+    if (typeof window === 'undefined') return;
+    const link = `${window.location.origin}/editor/${projectId}/${tabId}`;
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(link).then(() => {
+        playSuccessSound();
+        toast.success('Đã sao chép liên kết tới thẻ');
+      }).catch(() => {
+        copyFallback(link);
+      });
+    } else {
+      copyFallback(link);
+    }
+  };
+
   // Create root tab
   const handleCreateRootTab = async () => {
+    if (isAtMaxLimit) {
+      toast.error('Tài liệu đã đạt giới hạn tối đa 100 thẻ');
+      return;
+    }
     const rootCount = chapters.filter(c => !c.parentId).length;
     const defaultTitle = `Thẻ ${rootCount + 1}`;
     try {
@@ -418,6 +562,11 @@ export function DocumentTabsSidebar({
   const handleCreateSubTab = async (parentNode: TabTreeNode, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setActiveMenuId(null);
+
+    if (isAtMaxLimit) {
+      toast.error('Tài liệu đã đạt giới hạn tối đa 100 thẻ');
+      return;
+    }
 
     // Google Docs allows max 3 levels: depth 0 (root) -> depth 1 (subtab) -> depth 2 (sub-subtab)
     if (parentNode.depth >= 2) {
@@ -487,10 +636,11 @@ export function DocumentTabsSidebar({
         <div
           onClick={(e) => {
             e.stopPropagation();
+            const occIndex = headingOccurrenceIndexMap.get(hNode.id) || 0;
             if (onJumpToHeading) {
-              onJumpToHeading(hNode.pos, hNode.text);
+              onJumpToHeading(hNode.pos, hNode.text, occIndex);
             } else {
-              window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos: hNode.pos, text: hNode.text } }));
+              window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos: hNode.pos, text: hNode.text, index: occIndex, id: hNode.id } }));
             }
           }}
           className={`
@@ -546,10 +696,25 @@ export function DocumentTabsSidebar({
     const hasChildren = node.children && node.children.length > 0;
     const isExpanded = expandedIds[node.id] !== false;
     const isEditing = editingTabId === node.id;
-    const canHaveSubtab = node.depth < 2; // Google Docs allows max 3 levels (0, 1, 2)
+    const isFirstChild = siblings[0]?.id === node.id;
+    const nodeSubtreeHeight = getSubtreeHeight(node);
+    const countSubtreeNodes = (n: TabTreeNode): number => {
+      let count = 1;
+      if (n.children && n.children.length > 0) {
+        for (const child of n.children) {
+          count += countSubtreeNodes(child);
+        }
+      }
+      return count;
+    };
+    const subtreeNodeCount = countSubtreeNodes(node);
+    const canHaveSubtab = node.depth < 2 && !isAtMaxLimit; // Google Docs allows max 3 levels (0, 1, 2)
     const prevSibling = findPreviousSibling(node, siblings);
-    const canDemote = Boolean(prevSibling && prevSibling.depth < 2 && onReparentTab);
+    const canDemote = Boolean(prevSibling && (prevSibling.depth + 1 + nodeSubtreeHeight <= 2) && onReparentTab);
     const canPromote = Boolean(node.parentId && onReparentTab);
+    const isOutlineHidden = Boolean(hiddenOutlineTabs[node.id]);
+    const canDelete = chapters.length > subtreeNodeCount;
+    const canDuplicate = !isAtMaxLimit && (chapters.length + subtreeNodeCount <= 100);
 
     return (
       <div key={node.id} className="relative group/tab flex flex-col">
@@ -559,6 +724,15 @@ export function DocumentTabsSidebar({
             if (!isEditing) {
               onSelectTab(node.id);
             }
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            handleStartRename(node, e);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setActiveMenuId(activeMenuId === node.id ? null : node.id);
           }}
           className={`
             relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg cursor-pointer text-xs font-medium transition-all select-none
@@ -586,8 +760,102 @@ export function DocumentTabsSidebar({
             <span className="w-2.5 shrink-0" />
           )}
 
-          {/* Document Tab Icon */}
-          <FileText className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} />
+          {/* Document Tab Emoji / Icon */}
+          <div className="relative shrink-0 flex items-center">
+            {node.emoji ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEmojiPickerTabId(emojiPickerTabId === node.id ? null : node.id);
+                }}
+                className="text-sm shrink-0 hover:scale-115 transition-transform p-0.5 leading-none"
+                title="Đổi biểu tượng cảm xúc"
+              >
+                {node.emoji}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEmojiPickerTabId(emojiPickerTabId === node.id ? null : node.id);
+                }}
+                className={`p-0.5 rounded hover:bg-muted/80 transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`}
+                title="Thêm biểu tượng cảm xúc"
+              >
+                <FileText className="w-3.5 h-3.5 shrink-0" />
+              </button>
+            )}
+
+            {/* Emoji Picker Popover */}
+            {emojiPickerTabId === node.id && (
+              <div
+                ref={emojiPickerRef}
+                onClick={(e) => e.stopPropagation()}
+                className="absolute left-0 top-full mt-1.5 w-60 bg-card border border-border/80 rounded-xl shadow-2xl p-2.5 z-50 text-xs animate-in fade-in-50 zoom-in-95"
+              >
+                <div className="flex items-center justify-between pb-1.5 border-b border-border/60 mb-2">
+                  <span className="font-semibold text-foreground text-[11px] flex items-center gap-1.5">
+                    <Smile className="w-3.5 h-3.5 text-primary" />
+                    Biểu tượng thẻ
+                  </span>
+                  {node.emoji && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelectEmoji(node.id, null)}
+                      className="text-[10px] text-destructive hover:underline font-medium"
+                    >
+                      Xóa biểu tượng
+                    </button>
+                  )}
+                </div>
+
+                {/* Popular Emojis Grid */}
+                <div className="grid grid-cols-6 gap-1 max-h-36 overflow-y-auto no-scrollbar p-0.5">
+                  {PRESET_EMOJIS.map(em => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => handleSelectEmoji(node.id, em)}
+                      className={`h-7 w-7 flex items-center justify-center rounded-md hover:bg-accent hover:scale-115 transition-transform text-sm ${node.emoji === em ? 'bg-primary/20 ring-1 ring-primary' : ''}`}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom input */}
+                <div className="mt-2 pt-2 border-t border-border/60 flex items-center gap-1">
+                  <Input
+                    placeholder="Dán emoji..."
+                    value={customEmojiInput}
+                    onChange={(e) => setCustomEmojiInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && customEmojiInput.trim()) {
+                        e.preventDefault();
+                        handleSelectEmoji(node.id, customEmojiInput.trim());
+                        setCustomEmojiInput('');
+                      }
+                    }}
+                    className="h-6 text-xs px-2 py-0.5 flex-1"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => {
+                      if (customEmojiInput.trim()) {
+                        handleSelectEmoji(node.id, customEmojiInput.trim());
+                        setCustomEmojiInput('');
+                      }
+                    }}
+                  >
+                    Lưu
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Title or inline edit input */}
           {isEditing ? (
@@ -598,6 +866,7 @@ export function DocumentTabsSidebar({
               <Input
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
+                onBlur={() => handleSaveRename(node.id)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -612,6 +881,7 @@ export function DocumentTabsSidebar({
               />
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleSaveRename(node.id)}
                 className="p-0.5 text-emerald-500 hover:text-emerald-600 rounded"
                 title="Lưu (Enter)"
@@ -620,6 +890,7 @@ export function DocumentTabsSidebar({
               </button>
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setEditingTabId(null)}
                 className="p-0.5 text-muted-foreground hover:text-foreground rounded"
                 title="Hủy (Esc)"
@@ -688,7 +959,7 @@ export function DocumentTabsSidebar({
                   </button>
                 ) : (
                   <div className="px-3 py-1 text-[11px] text-muted-foreground/60 italic">
-                    Đã đạt tối đa 3 cấp thẻ
+                    {node.depth >= 2 ? 'Đã đạt tối đa 3 cấp thẻ' : 'Đã đạt giới hạn 100 thẻ'}
                   </div>
                 )}
 
@@ -699,26 +970,57 @@ export function DocumentTabsSidebar({
                   className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
                 >
                   <Edit3 className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Đổi tên thẻ</span>
+                  <span>Đổi tên thẻ (nhấp đúp)</span>
                 </button>
 
-                {/* 3. Duplicate */}
+                {/* 3. Change emoji */}
                 <button
                   type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveMenuId(null);
+                    setEmojiPickerTabId(node.id);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                >
+                  <Smile className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Đổi biểu tượng cảm xúc</span>
+                </button>
+
+                {/* 4. Duplicate */}
+                <button
+                  type="button"
+                  disabled={!canDuplicate}
                   onClick={async (e) => {
                     e.stopPropagation();
                     setActiveMenuId(null);
+                    if (!canDuplicate) {
+                      toast.error('Tài liệu đã đạt giới hạn tối đa 100 thẻ');
+                      return;
+                    }
                     await onDuplicateTab(node.id);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left ${
+                    !canDuplicate ? 'opacity-40 cursor-not-allowed' : ''
+                  }`}
                 >
                   <Copy className="w-3.5 h-3.5 text-emerald-500" />
                   <span>Nhân bản thẻ</span>
                 </button>
 
+                {/* 5. Copy Link to Tab */}
+                <button
+                  type="button"
+                  onClick={(e) => handleCopyLink(node.id, e)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                >
+                  <LinkIcon className="w-3.5 h-3.5 text-sky-500" />
+                  <span>Sao chép liên kết tới thẻ</span>
+                </button>
+
                 <div className="my-1 border-t border-border/50" />
 
-                {/* 4. Demote / Promote (Reparenting) */}
+                {/* 6. Demote / Promote (Reparenting) */}
                 {canDemote && prevSibling && (
                   <button
                     type="button"
@@ -755,27 +1057,35 @@ export function DocumentTabsSidebar({
                   </button>
                 )}
 
-                {/* 5. Move Up / Down */}
+                {/* 7. Move Up / Down */}
                 <button
                   type="button"
+                  disabled={isFirstChild}
                   onClick={async (e) => {
                     e.stopPropagation();
+                    if (isFirstChild) return;
                     setActiveMenuId(null);
                     await onMoveTab(node.id, 'up');
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-foreground transition-colors text-left ${
+                    isFirstChild ? 'opacity-40 cursor-not-allowed' : 'hover:bg-accent'
+                  }`}
                 >
                   <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
                   <span>Chuyển lên trên</span>
                 </button>
                 <button
                   type="button"
+                  disabled={isLastChild}
                   onClick={async (e) => {
                     e.stopPropagation();
+                    if (isLastChild) return;
                     setActiveMenuId(null);
                     await onMoveTab(node.id, 'down');
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-foreground transition-colors text-left ${
+                    isLastChild ? 'opacity-40 cursor-not-allowed' : 'hover:bg-accent'
+                  }`}
                 >
                   <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                   <span>Chuyển xuống dưới</span>
@@ -783,20 +1093,42 @@ export function DocumentTabsSidebar({
 
                 <div className="my-1 border-t border-border/50" />
 
-                {/* 6. Delete */}
+                {/* 8. Toggle Outline */}
                 <button
                   type="button"
+                  onClick={(e) => toggleOutlineVisibility(node.id, e)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                >
+                  <ListTree className="w-3.5 h-3.5 text-violet-500" />
+                  <span>{isOutlineHidden ? 'Hiện dàn ý tài liệu' : 'Ẩn dàn ý tài liệu'}</span>
+                </button>
+
+                <div className="my-1 border-t border-border/50" />
+
+                {/* 9. Delete */}
+                <button
+                  type="button"
+                  disabled={!canDelete}
                   onClick={async (e) => {
                     e.stopPropagation();
                     setActiveMenuId(null);
+                    if (!canDelete) {
+                      toast.error('Tài liệu phải có tối thiểu 1 thẻ');
+                      return;
+                    }
                     const promptMsg = hasChildren 
-                      ? `Xóa thẻ "${node.title}" và toàn bộ ${node.children.length} thẻ con trực thuộc?`
+                      ? `Xóa thẻ "${node.title}" và toàn bộ ${subtreeNodeCount - 1} thẻ con trực thuộc?`
                       : `Xóa thẻ "${node.title}"?`;
                     if (confirm(promptMsg)) {
                       await onDeleteTab(node.id);
                     }
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-destructive/10 text-destructive transition-colors text-left font-medium"
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 transition-colors text-left font-medium ${
+                    !canDelete 
+                      ? 'opacity-40 cursor-not-allowed text-muted-foreground' 
+                      : 'hover:bg-destructive/10 text-destructive'
+                  }`}
+                  title={!canDelete ? 'Tài liệu phải có tối thiểu 1 thẻ' : undefined}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Xóa thẻ</span>
@@ -807,7 +1139,7 @@ export function DocumentTabsSidebar({
         </div>
 
         {/* Real-time automatic subtabs under active document (Google Docs style: e.g. I, aceererf / II, nrfnerjf) */}
-        {isActive && activeHeadingTree.length > 0 && (
+        {isActive && activeHeadingTree.length > 0 && !isOutlineHidden && (
           <div className="ml-4 pl-2.5 border-l-2 border-primary/40 space-y-0.5 my-1 animate-in fade-in duration-150">
             {activeHeadingTree.map(hNode => renderHeadingNode(hNode))}
           </div>
@@ -849,38 +1181,50 @@ export function DocumentTabsSidebar({
       `}
     >
       {/* Header matching Google Docs "Các thẻ trong tài liệu" */}
-      <div className="flex items-center justify-between px-3.5 py-3 border-b border-border/70">
-        <div className="flex items-center gap-2 min-w-0">
-          <FileText className="w-4 h-4 text-primary shrink-0" />
-          <h2 className="font-semibold text-xs sm:text-sm text-foreground truncate">
-            Các thẻ trong tài liệu
-          </h2>
-        </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between px-3.5 py-3 border-b border-border/70">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText className="w-4 h-4 text-primary shrink-0" />
+            <h2 className="font-semibold text-xs sm:text-sm text-foreground truncate">
+              Các thẻ trong tài liệu
+            </h2>
+            {isNearLimit && (
+              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                isAtMaxLimit ? 'bg-destructive/20 text-destructive' : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+              }`} title={isAtMaxLimit ? 'Đã đạt giới hạn tối đa 100 thẻ' : 'Sắp đạt giới hạn 100 thẻ'}>
+                {chapters.length}/100
+              </span>
+            )}
+          </div>
 
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Add Root Tab Button */}
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-            onClick={handleCreateRootTab}
-            title="Thêm thẻ mới (+)"
-          >
-            <Plus className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Add Root Tab Button */}
+            <Button
+              size="icon"
+              variant="ghost"
+              disabled={isAtMaxLimit}
+              className={`h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors ${
+                isAtMaxLimit ? 'opacity-40 cursor-not-allowed' : ''
+              }`}
+              onClick={handleCreateRootTab}
+              title={isAtMaxLimit ? 'Tài liệu đã đạt giới hạn tối đa 100 thẻ' : 'Thêm thẻ mới (+)'}
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
 
-          {/* Collapse Sidebar Button */}
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
-            onClick={onToggle}
-            title="Thu gọn thanh thẻ"
-          >
-            <PanelLeftClose className="w-4 h-4" />
-          </Button>
+            {/* Collapse Sidebar Button */}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+              onClick={onToggle}
+              title="Thu gọn thanh thẻ"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Tabs Tree List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
@@ -895,11 +1239,22 @@ export function DocumentTabsSidebar({
 
       {/* Footer Info */}
       <div className="p-2.5 border-t border-border/60 text-[11px] text-muted-foreground flex items-center justify-between bg-muted/20">
-        <span>{chapters.length} thẻ tài liệu</span>
+        <div className="flex items-center gap-1.5">
+          <span>{chapters.length} thẻ tài liệu</span>
+          {isNearLimit && (
+            <span className={`text-[10px] font-mono font-semibold ${isAtMaxLimit ? 'text-destructive font-bold' : 'text-amber-500'}`}>
+              ({chapters.length}/100)
+            </span>
+          )}
+        </div>
         <button
           type="button"
+          disabled={isAtMaxLimit}
           onClick={handleCreateRootTab}
-          className="text-primary hover:underline font-medium flex items-center gap-1 text-[11px]"
+          className={`text-primary hover:underline font-medium flex items-center gap-1 text-[11px] ${
+            isAtMaxLimit ? 'opacity-40 cursor-not-allowed' : ''
+          }`}
+          title={isAtMaxLimit ? 'Đã đạt tối đa 100 thẻ' : undefined}
         >
           <Plus className="w-3 h-3" />
           <span>Thêm thẻ</span>
