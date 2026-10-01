@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Users, Map as MapIcon, LayoutList, Clock, Download, ChevronUp, ChevronDown, Search, Check, X, Upload, Image as ImageIcon, BookOpen } from 'lucide-react';
+import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Download, ChevronUp, ChevronDown, ChevronRight, Search, Check, X, Upload, Image as ImageIcon, BookOpen, FolderPlus } from 'lucide-react';
 import { useProjectStore } from '@/lib/store';
 import { BookCoverArt } from '@/components/vfx/book-cover';
 import { fireConfetti } from '@/components/vfx/confetti';
@@ -18,6 +18,7 @@ import { SyncStatusButton } from '@/components/layout/sync-provider';
 import { pushSync, pullSync } from '@/lib/sync';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { buildTabTree, flattenTabTree, TabTreeNode } from '@/components/editor/document-tabs-sidebar';
 
 const genreLabels: Record<string, string> = {
   fantasy: 'Huyền Huyễn', scifi: 'Khoa Huyễn', romance: 'Lãng Mạn', mystery: 'Trinh Thám',
@@ -27,10 +28,12 @@ const genreLabels: Record<string, string> = {
 
 interface Chapter {
   id: string;
+  projectId: string;
   title: string;
   wordCount: number;
   status: string;
   orderIndex: number;
+  parentId?: string | null;
 }
 
 export default function ProjectEditorPage() {
@@ -44,7 +47,47 @@ export default function ProjectEditorPage() {
   const [activeTab, setActiveTab] = useState<'chapters' | 'overview'>('chapters');
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [addingChildUnderId, setAddingChildUnderId] = useState<string | null>(null);
+  const [newSubtabTitle, setNewSubtabTitle] = useState('');
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const setCurrentProjectId = useProjectStore(s => s.setCurrentProjectId);
+
+  const toggleExpand = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setExpandedIds(prev => ({
+      ...prev,
+      [id]: prev[id] === undefined ? false : !prev[id]
+    }));
+  };
+
+  const createSubtab = async (parentTabId: string) => {
+    const trimmed = newSubtabTitle.trim();
+    if (!trimmed) {
+      setAddingChildUnderId(null);
+      return;
+    }
+    try {
+      const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
+      await apiFetch(`/api/projects/${projectId}/chapters`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: trimmed,
+          orderIndex: maxOrder + 1,
+          status: 'draft',
+          parentId: parentTabId
+        })
+      });
+      setNewSubtabTitle('');
+      setAddingChildUnderId(null);
+      setExpandedIds(prev => ({ ...prev, [parentTabId]: true }));
+      playSuccessSound();
+      toast.success(`Đã thêm thẻ con "${trimmed}"`);
+      fetchData();
+      pushSync().catch(() => {});
+    } catch (e: any) {
+      toast.error(e.message || 'Lỗi tạo thẻ con');
+    }
+  };
 
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -146,7 +189,7 @@ export default function ProjectEditorPage() {
     }
   };
 
-  const startRename = (ch: Chapter) => {
+  const startRename = (ch: { id: string; title?: string }) => {
     setEditingChapterId(ch.id);
     setEditingTitle(ch.title || '');
   };
@@ -340,94 +383,50 @@ export default function ProjectEditorPage() {
           <div className="hidden md:flex gap-2 items-center shrink-0">
             <SyncStatusButton />
             <SoundToggleButton />
-            <Link href={`/outline/${projectId}`}>
-              <Button variant="outline" size="sm" className="bg-blue-50/50 dark:bg-blue-950/20 border-blue-200/50">
-                <LayoutList className="w-4 h-4 mr-1 text-blue-500" /> Dàn ý
-              </Button>
-            </Link>
-            <Link href={`/timeline/${projectId}`}>
-              <Button variant="outline" size="sm" className="bg-purple-50/50 dark:bg-purple-950/20 border-purple-200/50">
-                <Clock className="w-4 h-4 mr-1 text-purple-500" /> Timeline
-              </Button>
-            </Link>
-            <Link href={`/characters/${projectId}`}>
-              <Button variant="outline" size="sm">
-                <Users className="w-4 h-4 mr-1 text-emerald-500" /> Nhân vật
-              </Button>
-            </Link>
-            <Link href={`/worldbuilding/${projectId}`}>
-              <Button variant="outline" size="sm">
-                <MapIcon className="w-4 h-4 mr-1 text-amber-500" /> Thế giới
-              </Button>
-            </Link>
-            <Link href={`/wiki/${projectId}`}>
-              <Button variant="outline" size="sm" className="bg-cyan-50/50 dark:bg-cyan-950/20 border-cyan-200/50">
-                <BookOpen className="w-4 h-4 mr-1 text-cyan-500" /> Wiki
-              </Button>
-            </Link>
             <Link href={`/export/${projectId}`}>
-              <Button variant="outline" size="sm" className="bg-green-50/50 dark:bg-green-950/20 border-green-200/50">
-                <Download className="w-4 h-4 mr-1 text-green-500" /> Xuất bản
+              <Button variant="outline" size="sm" className="bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200/50">
+                <Download className="w-4 h-4 mr-1 text-emerald-500" /> Xuất bản
               </Button>
             </Link>
             <Link href={`/ai-assistant?projectId=${projectId}`}>
-              <Button size="sm">
-                <Sparkles className="w-4 h-4 mr-1" /> AI Trợ lý
+              <Button variant="outline" size="sm">
+                <Sparkles className="w-4 h-4 mr-1 text-purple-500" /> AI Trợ lý
               </Button>
             </Link>
+            {chapters.length > 0 && (
+              <Link href={`/editor/${projectId}/${chapters[0].id}`}>
+                <Button size="sm">
+                  <span>Vào viết →</span>
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
 
         {/* Mobile Swipeable Feature Tool Bar */}
         <div className="md:hidden flex items-center gap-1.5 px-3 py-2 border-t bg-muted/20 overflow-x-auto no-scrollbar scroll-smooth">
+          {chapters.length > 0 && (
+            <Link
+              href={`/editor/${projectId}/${chapters[0].id}`}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-primary text-primary-foreground shadow-xs"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Vào soạn thảo</span>
+            </Link>
+          )}
+          <Link
+            href={`/export/${projectId}`}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-500" />
+            <span>Xuất bản</span>
+          </Link>
           <Link
             href={`/ai-assistant?projectId=${projectId}`}
             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20 shadow-xs"
           >
             <Sparkles className="w-3.5 h-3.5 text-primary" />
             <span>AI Trợ lý</span>
-          </Link>
-          <Link
-            href={`/outline/${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
-          >
-            <LayoutList className="w-3.5 h-3.5 text-blue-500" />
-            <span>Dàn ý</span>
-          </Link>
-          <Link
-            href={`/characters/${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
-          >
-            <Users className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Nhân vật</span>
-          </Link>
-          <Link
-            href={`/worldbuilding/${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
-          >
-            <MapIcon className="w-3.5 h-3.5 text-amber-500" />
-            <span>Thế giới</span>
-          </Link>
-          <Link
-            href={`/wiki/${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
-          >
-            <BookOpen className="w-3.5 h-3.5 text-cyan-500" />
-            <span>Wiki</span>
-          </Link>
-          <Link
-            href={`/timeline/${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
-          >
-            <Clock className="w-3.5 h-3.5 text-purple-500" />
-            <span>Timeline</span>
-          </Link>
-          <Link
-            href={`/export/${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
-          >
-            <Download className="w-3.5 h-3.5 text-rose-500" />
-            <span>Xuất bản</span>
           </Link>
         </div>
 
@@ -531,132 +530,196 @@ export default function ProjectEditorPage() {
             )}
           </div>
 
-          {/* Chapters list */}
+          {/* Chapters and Subtabs Tree List */}
           <div className="flex-1 overflow-y-auto p-2 sm:p-3 space-y-1.5">
             {chapters.length === 0 ? (
               <div className="p-6 text-center text-xs text-muted-foreground">
-                Chưa có chương nào. Nhập tên và bấm "Thêm" để bắt đầu viết.
+                Chưa có thẻ nào. Nhập tên và bấm "Thêm" để bắt đầu viết.
               </div>
-            ) : (
-              chapters
-                .filter(ch => (ch.title || '').toLowerCase().includes(searchChapter.toLowerCase()))
-                .map((ch, idx) => (
-                  <div
-                    key={ch.id}
-                    className="group flex items-center gap-2 p-2.5 rounded-xl border border-border/60 bg-card hover:border-primary/50 hover:bg-accent/40 transition-all shadow-2xs"
-                  >
-                    {/* Reorder buttons */}
-                    <div className="flex flex-col opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        onClick={() => moveChapter(idx, 'up')}
-                        className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                        title="Chuyển lên"
-                      >
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={idx === chapters.length - 1}
-                        onClick={() => moveChapter(idx, 'down')}
-                        className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                        title="Chuyển xuống"
-                      >
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+            ) : (() => {
+              const tree = buildTabTree(chapters);
+              const renderTreeItem = (node: TabTreeNode) => {
+                const hasChildren = node.children && node.children.length > 0;
+                const isExpanded = expandedIds[node.id] !== false;
+                const isEditing = editingChapterId === node.id;
+                const isAddingChild = addingChildUnderId === node.id;
 
-                    <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-
-                    {/* Chapter details link or inline rename */}
-                    {editingChapterId === ch.id ? (
-                      <div className="flex-1 min-w-0 flex items-center gap-1.5 py-0.5" onClick={e => e.stopPropagation()}>
-                        <Input
-                          value={editingTitle}
-                          onChange={e => setEditingTitle(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              saveChapterRename(ch.id);
-                            } else if (e.key === 'Escape') {
-                              e.preventDefault();
-                              cancelRename();
-                            }
-                          }}
-                          className="h-8 text-xs font-medium py-1 px-2.5 flex-1 bg-background border-primary/50 focus-visible:ring-1"
-                          autoFocus
-                          placeholder="Nhập tên chương..."
-                        />
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 shrink-0"
-                          onClick={() => saveChapterRename(ch.id)}
-                          title="Lưu tên chương (Enter)"
+                return (
+                  <div key={node.id} className="space-y-1">
+                    <div className="group flex items-center gap-1.5 p-2 rounded-xl border border-border/60 bg-card hover:border-primary/50 hover:bg-accent/40 transition-all shadow-2xs">
+                      {hasChildren ? (
+                        <button
+                          type="button"
+                          onClick={(e) => toggleExpand(node.id, e)}
+                          className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors shrink-0"
+                          title={isExpanded ? "Thu gọn thẻ con" : "Mở rộng thẻ con"}
                         >
-                          <Check className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
-                          onClick={cancelRename}
-                          title="Hủy (Esc)"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <>
-                        <Link href={`/editor/${projectId}/${ch.id}`} className="flex-1 min-w-0">
-                          <div className="truncate text-sm font-medium text-foreground group-hover:text-primary transition-colors">
-                            {ch.title}
-                          </div>
-                          <div className="flex gap-2 items-center mt-0.5">
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
-                              {ch.status || 'draft'}
-                            </Badge>
-                            <span className="text-[11px] text-muted-foreground">
-                              {(ch.wordCount || 0).toLocaleString()} từ
-                            </span>
-                          </div>
-                        </Link>
+                          {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                        </button>
+                      ) : (
+                        <span className="w-4 shrink-0" />
+                      )}
 
-                        {/* Actions */}
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              startRename(ch);
+                      <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+
+                      {isEditing ? (
+                        <div className="flex-1 min-w-0 flex items-center gap-1.5 py-0.5" onClick={e => e.stopPropagation()}>
+                          <Input
+                            value={editingTitle}
+                            onChange={e => setEditingTitle(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                saveChapterRename(node.id);
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                cancelRename();
+                              }
                             }}
-                            title="Sửa tên chương"
+                            className="h-8 text-xs font-medium py-1 px-2.5 flex-1 bg-background border-primary/50 focus-visible:ring-1"
+                            autoFocus
+                            placeholder="Nhập tên thẻ..."
+                          />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 shrink-0"
+                            onClick={() => saveChapterRename(node.id)}
+                            title="Lưu (Enter)"
                           >
-                            <Edit3 className="w-3.5 h-3.5" />
+                            <Check className="w-4 h-4" />
                           </Button>
                           <Button
-                            variant="ghost"
                             size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                            onClick={() => deleteChapter(ch.id)}
-                            title="Xóa chương"
+                            variant="ghost"
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
+                            onClick={cancelRename}
+                            title="Hủy (Esc)"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <X className="w-4 h-4" />
                           </Button>
                         </div>
-                      </>
+                      ) : (
+                        <>
+                          <Link href={`/editor/${projectId}/${node.id}`} className="flex-1 min-w-0">
+                            <div className="truncate text-sm font-medium text-foreground group-hover:text-primary transition-colors">
+                              {node.title}
+                            </div>
+                            <div className="flex gap-2 items-center mt-0.5">
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
+                                {node.status || 'draft'}
+                              </Badge>
+                              <span className="text-[11px] text-muted-foreground">
+                                {(node.wordCount || 0).toLocaleString()} từ
+                              </span>
+                              {hasChildren && (
+                                <span className="text-[10px] text-primary font-medium">
+                                  ({node.children.length} thẻ con)
+                                </span>
+                              )}
+                            </div>
+                          </Link>
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setAddingChildUnderId(addingChildUnderId === node.id ? null : node.id);
+                                setNewSubtabTitle('');
+                                setExpandedIds(prev => ({ ...prev, [node.id]: true }));
+                              }}
+                              title="Thêm thẻ con"
+                            >
+                              <FolderPlus className="w-3.5 h-3.5 text-primary" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                startRename(node);
+                              }}
+                              title="Sửa tên thẻ"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                              onClick={() => deleteChapter(node.id)}
+                              title="Xóa thẻ"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Inline subtab creation input */}
+                    {isAddingChild && (
+                      <div className="ml-5 pl-2.5 my-1 border-l-2 border-primary/50 flex items-center gap-1.5 py-1">
+                        <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+                        <Input
+                          value={newSubtabTitle}
+                          onChange={(e) => setNewSubtabTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              createSubtab(node.id);
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setAddingChildUnderId(null);
+                            }
+                          }}
+                          placeholder="Tên thẻ con..."
+                          className="h-7 text-xs px-2 py-0.5 bg-background border-primary/50 flex-1"
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => createSubtab(node.id)}
+                        >
+                          Thêm
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-1.5 text-xs text-muted-foreground"
+                          onClick={() => setAddingChildUnderId(null)}
+                        >
+                          Hủy
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Nested child subtabs */}
+                    {hasChildren && isExpanded && (
+                      <div className="ml-5 pl-2.5 border-l-2 border-border/70 hover:border-primary/40 transition-colors space-y-1 my-1">
+                        {node.children.map(child => renderTreeItem(child))}
+                      </div>
                     )}
                   </div>
-                ))
-            )}
+                );
+              };
+
+              return tree
+                .filter(ch => (ch.title || '').toLowerCase().includes(searchChapter.toLowerCase()))
+                .map(root => renderTreeItem(root));
+            })()}
           </div>
 
           <div className="p-3 border-t text-[11px] text-muted-foreground hidden md:block">
-            <p>💡 Click vào chương để mở trình soạn thảo chuyên dụng.</p>
+            <p>💡 Click vào thẻ để mở trình soạn thảo chuyên dụng.</p>
           </div>
         </aside>
 
@@ -735,19 +798,22 @@ export default function ProjectEditorPage() {
             {/* Quick chapter access section */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-sm sm:text-base">Mục lục bản thảo</h3>
-                <span className="text-xs text-muted-foreground">Chọn chương để bắt đầu viết</span>
+                <h3 className="font-semibold text-sm sm:text-base">Các thẻ trong tài liệu</h3>
+                <span className="text-xs text-muted-foreground">Chọn thẻ để bắt đầu viết</span>
               </div>
 
               <div className="grid gap-2">
-                {chapters.map(ch => (
+                {flattenTabTree(buildTabTree(chapters)).map((ch: any) => (
                   <Link
                     key={ch.id}
                     href={`/editor/${projectId}/${ch.id}`}
-                    className="border rounded-xl p-3.5 hover:border-primary/50 hover:bg-accent/40 transition-colors flex justify-between items-center bg-card shadow-2xs"
+                    className={`border rounded-xl p-3.5 hover:border-primary/50 hover:bg-accent/40 transition-colors flex justify-between items-center bg-card shadow-2xs ${ch.parentId ? 'ml-6 border-l-4 border-l-primary/40' : ''}`}
                   >
                     <div className="min-w-0 pr-3">
-                      <div className="font-medium text-sm truncate">{ch.title}</div>
+                      <div className="font-medium text-sm truncate flex items-center gap-1.5">
+                        {ch.parentId ? <span className="text-primary font-bold">↳</span> : null}
+                        <span>{ch.title}</span>
+                      </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {(ch.wordCount || 0).toLocaleString()} từ • {ch.status || 'draft'}
                       </div>

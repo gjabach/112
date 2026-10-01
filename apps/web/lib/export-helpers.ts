@@ -1,7 +1,9 @@
 // Helpers for parsing novel chapter content and generating publication-ready layouts
 
-export function sortChapters<T extends { orderIndex?: number; createdAt?: number; title?: string }>(chaps: T[]): T[] {
-  return [...chaps].sort((a, b) => {
+export function sortChapters<T extends { id?: string; parentId?: string | null; orderIndex?: number; createdAt?: number; title?: string }>(chaps: T[]): T[] {
+  if (!Array.isArray(chaps) || chaps.length === 0) return [];
+
+  const compareSiblings = (a: T, b: T) => {
     const orderA = typeof a.orderIndex === 'number' ? a.orderIndex : 0;
     const orderB = typeof b.orderIndex === 'number' ? b.orderIndex : 0;
     if (orderA !== orderB) return orderA - orderB;
@@ -9,7 +11,39 @@ export function sortChapters<T extends { orderIndex?: number; createdAt?: number
     const timeB = b.createdAt || 0;
     if (timeA !== timeB) return timeA - timeB;
     return String(a.title || '').localeCompare(String(b.title || ''), 'vi', { numeric: true });
-  });
+  };
+
+  const hasHierarchy = chaps.some(c => Boolean(c.parentId));
+  if (!hasHierarchy) {
+    return [...chaps].sort(compareSiblings);
+  }
+
+  const roots = chaps.filter(c => !c.parentId || !chaps.some(other => other.id === c.parentId)).sort(compareSiblings);
+  const result: T[] = [];
+  const visited = new Set<string>();
+
+  const traverse = (item: T) => {
+    if (item.id && visited.has(item.id)) return;
+    if (item.id) visited.add(item.id);
+    result.push(item);
+    const children = chaps.filter(c => c.parentId && c.parentId === item.id).sort(compareSiblings);
+    for (const child of children) {
+      traverse(child);
+    }
+  };
+
+  for (const root of roots) {
+    traverse(root);
+  }
+
+  for (const c of chaps) {
+    if (c.id && !visited.has(c.id)) {
+      result.push(c);
+      visited.add(c.id);
+    }
+  }
+
+  return result;
 }
 
 export function parseChapterParagraphs(rawContent: string): string[] {

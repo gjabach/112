@@ -799,11 +799,12 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       const newChap = {
         id: 'chap_' + now,
         projectId,
-        title: body.title || 'Chương mới',
+        title: body.title || 'Thẻ mới',
         orderIndex,
         content: body.content || '',
-        wordCount: 0,
+        wordCount: countWords(body.content || ''),
         status: body.status || 'draft',
+        parentId: body.parentId || null,
         createdAt: now,
         updatedAt: now
       };
@@ -822,6 +823,31 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
       return { chapter: newChap };
     }
+  }
+
+  // Duplicate Chapter/Tab
+  const dupChapMatch = path.match(/^\/api\/chapters\/([^\/]+)\/duplicate$/);
+  if (dupChapMatch && method === 'POST') {
+    const id = dupChapMatch[1];
+    const chapters = getStorage('novelist_chapters', []);
+    const source = chapters.find((c: any) => c.id === id);
+    if (!source) return { error: 'Không tìm thấy thẻ' };
+    const projChaps = chapters.filter((c: any) => c.projectId === source.projectId);
+    const maxIdx = projChaps.length > 0 ? Math.max(...projChaps.map((c: any) => c.orderIndex || 0)) : 0;
+    const newChap = {
+      ...source,
+      id: 'chap_' + now,
+      title: `${source.title || 'Thẻ'} (Bản sao)`,
+      orderIndex: maxIdx + 1,
+      createdAt: now,
+      updatedAt: now
+    };
+    chapters.push(newChap);
+    setStorage('novelist_chapters', chapters);
+    if (typeof window !== 'undefined') {
+      pushSync().catch(() => {});
+    }
+    return { chapter: newChap };
   }
 
   const chapMatch = path.match(/^\/api\/chapters\/([^\/]+)$/);
@@ -861,9 +887,16 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       return { chapter: updated.find((c: any) => c.id === id) };
     }
     if (method === 'DELETE') {
-      recordTombstone(id);
+      const getAllDescendantIds = (rootId: string): string[] => {
+        const children = chapters.filter((c: any) => c.parentId === rootId);
+        const childIds = children.map((c: any) => c.id);
+        const nestedIds = childIds.flatMap((cid: string) => getAllDescendantIds(cid));
+        return [...childIds, ...nestedIds];
+      };
+      const toDeleteIds = new Set([id, ...getAllDescendantIds(id)]);
+      toDeleteIds.forEach(delId => recordTombstone(delId));
       const targetChap = chapters.find((c: any) => c.id === id);
-      const filtered = chapters.filter((c: any) => c.id !== id);
+      const filtered = chapters.filter((c: any) => !toDeleteIds.has(c.id));
       setStorage('novelist_chapters', filtered);
 
       if (targetChap) {
