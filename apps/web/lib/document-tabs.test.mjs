@@ -150,7 +150,9 @@ function buildHeadingTree(headings) {
 
 function detectHeadingFromText(rawText) {
   if (!rawText) return null;
-  const trimmed = rawText.trim();
+  const normalized = rawText.normalize('NFC');
+  const cleanedText = normalized.replace(/[\u200B-\u200D\uFEFF]/g, '');
+  const trimmed = cleanedText.trim();
   if (!trimmed || trimmed.length > 120) return null;
 
   // 1. Markdown syntax
@@ -160,38 +162,38 @@ function detectHeadingFromText(rawText) {
   }
 
   // 2. Roman Numerals: I, II, III...
-  const romanMatch = trimmed.match(/^([IVXLCDM]+)[\.,\:\-\)]\s*(.*)$/i);
+  const romanMatch = trimmed.match(/^([IVXLCDM]+)[.,:\-)]\s*(.*)$/i);
   if (romanMatch) {
     const isUpper = romanMatch[1] === romanMatch[1].toUpperCase();
     return { level: isUpper ? 1 : 2, text: trimmed };
   }
 
   // 3. Named Structural Titles
-  const namedMajorMatch = trimmed.match(/^(Chương|Hồi|Phần|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[\.,\:\-\s]*(.*)$/i);
+  const namedMajorMatch = trimmed.match(/^(Chương|Hồi|Phần|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu);
   if (namedMajorMatch) {
     return { level: 1, text: trimmed };
   }
 
-  const namedMinorMatch = trimmed.match(/^(Mục|Tiết|Bài|Cảnh|Scene|Section)\s*([0-9IVXLCDM]+|[A-Z])[\.,\:\-\s]*(.*)$/i);
+  const namedMinorMatch = trimmed.match(/^(Mục|Tiết|Bài|Cảnh|Scene|Section)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu);
   if (namedMinorMatch) {
     return { level: 2, text: trimmed };
   }
 
   // 4. Hierarchical Numbers
-  const hierarchicalNumMatch = trimmed.match(/^(\d+\.\d+(\.\d+)?)[\.,\:\-\s]\s*(.+)$/);
+  const hierarchicalNumMatch = trimmed.match(/^(\d+\.\d+(\.\d+)?)[.,:\-\s\xA0]\s*(.+)$/);
   if (hierarchicalNumMatch) {
     const dots = (hierarchicalNumMatch[1].match(/\./g) || []).length;
     return { level: Math.min(3, dots + 1), text: trimmed };
   }
 
   // 5. Numbered Lists/Sections
-  const numMatch = trimmed.match(/^(\d+)[\.,\:\-\)]\s+(.+)$/);
+  const numMatch = trimmed.match(/^(\d+)[.,:\-)]\s+(.+)$/);
   if (numMatch) {
     return { level: 2, text: trimmed };
   }
 
   // 6. Alphabetic Sections
-  const alphaMatch = trimmed.match(/^([A-Z])[\.,\:\-\)]\s+(.+)$/);
+  const alphaMatch = trimmed.match(/^([A-Z])[.,:\-)]\s+(.+)$/);
   if (alphaMatch) {
     return { level: 2, text: trimmed };
   }
@@ -484,6 +486,28 @@ test('Google Docs Automatic Subtabs - Detects hierarchical sub-items like 1, 2 u
   assert.strictEqual(tree[1].text, 'II, nrfnerjf');
   assert.strictEqual(tree[1].children.length, 1, 'II should have 1 nested child');
   assert.strictEqual(tree[1].children[0].text, '1, Chi tiết nhỏ của II');
+});
+
+test('Google Docs Automatic Subtabs - Robustly detects decomposed unicode Vietnamese titles and tricky spacings', () => {
+  const trickyDocumentJson = JSON.stringify({
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'PHẦN I: VŨ TRỤ QUAN'.normalize('NFD') }]
+      },
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: '1.1.' + String.fromCharCode(160) + 'Ba tầng thực tại' }]
+      }
+    ]
+  });
+
+  const extracted = extractHeadingsFromContent(trickyDocumentJson);
+  assert.strictEqual(extracted.length, 2, 'Must extract exactly 2 subtabs even with NFD or non-breaking spaces');
+  assert.strictEqual(extracted[0].text.normalize('NFC'), 'PHẦN I: VŨ TRỤ QUAN');
+  assert.strictEqual(extracted[0].level, 1);
+  assert.strictEqual(extracted[1].level, 2, '1.1. should be level 2');
 });
 
 

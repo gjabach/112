@@ -67,7 +67,11 @@ export interface HeadingTreeNode {
  */
 export function detectHeadingFromText(rawText: string): { level: number; text: string } | null {
   if (!rawText) return null;
-  const trimmed = rawText.trim();
+  // Normalize Unicode to NFC to handle decomposed diacritics (e.g. from MacOS or Unikey)
+  const normalized = rawText.normalize('NFC');
+  // Strip zero-width spaces and other invisible characters that TipTap might insert
+  const cleanedText = normalized.replace(/[\u200B-\u200D\uFEFF]/g, '');
+  const trimmed = cleanedText.trim();
   if (!trimmed || trimmed.length > 120) return null;
 
   // 1. Markdown syntax: # ... (level 1), ## ... (level 2), ### ... (level 3)
@@ -78,38 +82,39 @@ export function detectHeadingFromText(rawText: string): { level: number; text: s
 
   // 2. Roman Numerals: I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII...
   // E.g.: "I, aceererf", "II, nrfnerjf", "I. Khởi đầu", "III - Cao trào", "IV: Kết thúc"
-  const romanMatch = trimmed.match(/^([IVXLCDM]+)[\.,\:\-\)]\s*(.*)$/i);
+  const romanMatch = trimmed.match(/^([IVXLCDM]+)[.,:\-)]\s*(.*)$/i);
   if (romanMatch) {
     const isUpper = romanMatch[1] === romanMatch[1].toUpperCase();
     return { level: isUpper ? 1 : 2, text: trimmed };
   }
 
   // 3. Named Structural Titles: Chương, Hồi, Phần, Quyển, Tập, Mục, Tiết, Bài, Cảnh...
-  const namedMajorMatch = trimmed.match(/^(Chương|Hồi|Phần|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[\.,\:\-\s]*(.*)$/i);
+  // Added 'iu' flags for unicode case insensitivity (matches PHẦN vs Phần correctly)
+  const namedMajorMatch = trimmed.match(/^(Chương|Hồi|Phần|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu);
   if (namedMajorMatch) {
     return { level: 1, text: trimmed };
   }
 
-  const namedMinorMatch = trimmed.match(/^(Mục|Tiết|Bài|Cảnh|Scene|Section)\s*([0-9IVXLCDM]+|[A-Z])[\.,\:\-\s]*(.*)$/i);
+  const namedMinorMatch = trimmed.match(/^(Mục|Tiết|Bài|Cảnh|Scene|Section)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu);
   if (namedMinorMatch) {
     return { level: 2, text: trimmed };
   }
 
   // 4. Hierarchical Numbers: "1.1 ...", "1.2 ...", "2.1 ..."
-  const hierarchicalNumMatch = trimmed.match(/^(\d+\.\d+(\.\d+)?)[\.,\:\-\s]\s*(.+)$/);
+  const hierarchicalNumMatch = trimmed.match(/^(\d+\.\d+(\.\d+)?)[.,:\-\s\xA0]\s*(.+)$/);
   if (hierarchicalNumMatch) {
     const dots = (hierarchicalNumMatch[1].match(/\./g) || []).length;
     return { level: Math.min(3, dots + 1), text: trimmed };
   }
 
   // 5. Numbered Lists/Sections: "1, ...", "1. ...", "1: ...", "1) ..."
-  const numMatch = trimmed.match(/^(\d+)[\.,\:\-\)]\s+(.+)$/);
+  const numMatch = trimmed.match(/^(\d+)[.,:\-)]\s+(.+)$/);
   if (numMatch) {
     return { level: 2, text: trimmed };
   }
 
   // 6. Alphabetic Sections: "A, ...", "A. ...", "B, ...", "B. ..."
-  const alphaMatch = trimmed.match(/^([A-Z])[\.,\:\-\)]\s+(.+)$/);
+  const alphaMatch = trimmed.match(/^([A-Z])[.,:\-)]\s+(.+)$/);
   if (alphaMatch) {
     return { level: 2, text: trimmed };
   }
@@ -445,11 +450,17 @@ export function DocumentTabsSidebar({
     const hasChildren = hNode.children && hNode.children.length > 0;
     const isExpanded = expandedHeadingIds[hNode.id] !== false;
 
-    // Detect if this is Roman numeral (I, II, III...) or Number (1., 2.)
-    const romanMatch = hNode.text.match(/^([IVXLCDM]+)[\.,\:\-\)]/i);
-    const numMatch = hNode.text.match(/^(\d+[\.,\:\-\)])/);
+    // Detect if this is Roman numeral (I, II, III...), Number (1., 2.), or Structural (Chương, Phần...)
+    const normalizedText = hNode.text.normalize('NFC');
+    const romanMatch = normalizedText.match(/^([IVXLCDM]+)[.,:\-)]/i);
+    const numMatch = normalizedText.match(/^(\d+[.,:\-)])/);
+    const structMatch = normalizedText.match(/^(Chương|Hồi|Phần|Quyển|Tập|Mục|Tiết|Bài)/iu);
 
-    const levelBadge = romanMatch ? (
+    const levelBadge = structMatch ? (
+      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400 font-mono shrink-0 uppercase">
+        {structMatch[1]}
+      </span>
+    ) : romanMatch ? (
       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-primary/20 text-primary font-mono shrink-0">
         {romanMatch[1].toUpperCase()}
       </span>
