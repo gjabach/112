@@ -148,6 +148,57 @@ function buildHeadingTree(headings) {
   return roots;
 }
 
+function detectHeadingFromText(rawText) {
+  if (!rawText) return null;
+  const trimmed = rawText.trim();
+  if (!trimmed || trimmed.length > 120) return null;
+
+  // 1. Markdown syntax
+  const mdMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
+  if (mdMatch) {
+    return { level: mdMatch[1].length, text: mdMatch[2].trim() };
+  }
+
+  // 2. Roman Numerals: I, II, III...
+  const romanMatch = trimmed.match(/^([IVXLCDM]+)[\.,\:\-\)]\s*(.*)$/i);
+  if (romanMatch) {
+    const isUpper = romanMatch[1] === romanMatch[1].toUpperCase();
+    return { level: isUpper ? 1 : 2, text: trimmed };
+  }
+
+  // 3. Named Structural Titles
+  const namedMajorMatch = trimmed.match(/^(Chương|Hồi|Phần|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[\.,\:\-\s]*(.*)$/i);
+  if (namedMajorMatch) {
+    return { level: 1, text: trimmed };
+  }
+
+  const namedMinorMatch = trimmed.match(/^(Mục|Tiết|Bài|Cảnh|Scene|Section)\s*([0-9IVXLCDM]+|[A-Z])[\.,\:\-\s]*(.*)$/i);
+  if (namedMinorMatch) {
+    return { level: 2, text: trimmed };
+  }
+
+  // 4. Hierarchical Numbers
+  const hierarchicalNumMatch = trimmed.match(/^(\d+\.\d+(\.\d+)?)[\.,\:\-\s]\s*(.+)$/);
+  if (hierarchicalNumMatch) {
+    const dots = (hierarchicalNumMatch[1].match(/\./g) || []).length;
+    return { level: Math.min(3, dots + 1), text: trimmed };
+  }
+
+  // 5. Numbered Lists/Sections
+  const numMatch = trimmed.match(/^(\d+)[\.,\:\-\)]\s+(.+)$/);
+  if (numMatch) {
+    return { level: 2, text: trimmed };
+  }
+
+  // 6. Alphabetic Sections
+  const alphaMatch = trimmed.match(/^([A-Z])[\.,\:\-\)]\s+(.+)$/);
+  if (alphaMatch) {
+    return { level: 2, text: trimmed };
+  }
+
+  return null;
+}
+
 function extractHeadingsFromContent(rawContent) {
   if (!rawContent) return [];
   const list = [];
@@ -155,6 +206,7 @@ function extractHeadingsFromContent(rawContent) {
   try {
     const json = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
     if (json && typeof json === 'object') {
+      let currentPos = 0;
       const walk = (node) => {
         if (!node) return;
         if (node.type === 'heading') {
@@ -164,10 +216,25 @@ function extractHeadingsFromContent(rawContent) {
             list.push({
               id: `h-${list.length}-${text.slice(0, 15)}`,
               level,
-              text
+              text,
+              pos: currentPos
             });
           }
+        } else if (node.type === 'paragraph') {
+          const text = (node.content || []).map((c) => c.text || '').join('').trim();
+          if (text) {
+            const detected = detectHeadingFromText(text);
+            if (detected) {
+              list.push({
+                id: `p-${list.length}-${text.slice(0, 15)}`,
+                level: detected.level,
+                text,
+                pos: currentPos
+              });
+            }
+          }
         }
+        currentPos += 1;
         if (Array.isArray(node.content)) {
           node.content.forEach(walk);
         }
@@ -177,17 +244,29 @@ function extractHeadingsFromContent(rawContent) {
     }
   } catch {}
 
-  const htmlRegex = /<h([1-3])[^>]*>(.*?)<\/h\1>/gi;
+  const tagRegex = /<(h[1-3]|p)[^>]*>(.*?)<\/\1>/gi;
   let match;
-  while ((match = htmlRegex.exec(rawContent)) !== null) {
-    const level = parseInt(match[1], 10);
+  while ((match = tagRegex.exec(rawContent)) !== null) {
+    const tag = match[1].toLowerCase();
     const text = match[2].replace(/<[^>]+>/g, '').trim();
-    if (text) {
+    if (!text) continue;
+
+    if (tag.startsWith('h')) {
+      const level = parseInt(tag[1], 10);
       list.push({
         id: `h-${list.length}-${text.slice(0, 15)}`,
         level,
         text
       });
+    } else {
+      const detected = detectHeadingFromText(text);
+      if (detected) {
+        list.push({
+          id: `p-${list.length}-${text.slice(0, 15)}`,
+          level: detected.level,
+          text
+        });
+      }
     }
   }
 
@@ -342,5 +421,70 @@ test('Google Docs Document Tabs - Reparenting allows demoting to subtab and prom
   assert.strictEqual(tree[0].children.length, 0);
   assert.strictEqual(tree[1].children.length, 0);
 });
+
+test('Google Docs Automatic Subtabs - Writing "I, aceererf" and "II, nrfnerjf" automatically creates 2 subtabs without H1/H2 formatting', () => {
+  // Plain text / plain paragraphs typed in document without H1/H2 styles
+  const plainDocumentJson = JSON.stringify({
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'I, aceererf' }]
+      },
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'Nội dung đoạn văn thứ nhất bên dưới mục I...' }]
+      },
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'II, nrfnerjf' }]
+      },
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'Nội dung đoạn văn thứ hai bên dưới mục II...' }]
+      }
+    ]
+  });
+
+  const extracted = extractHeadingsFromContent(plainDocumentJson);
+  assert.strictEqual(extracted.length, 2, 'Must extract exactly 2 subtabs automatically');
+  assert.strictEqual(extracted[0].text, 'I, aceererf');
+  assert.strictEqual(extracted[0].level, 1);
+  assert.strictEqual(extracted[1].text, 'II, nrfnerjf');
+  assert.strictEqual(extracted[1].level, 1);
+
+  const subtabTree = buildHeadingTree(extracted);
+  assert.strictEqual(subtabTree.length, 2, 'Should form 2 independent subtab items');
+  assert.strictEqual(subtabTree[0].text, 'I, aceererf');
+  assert.strictEqual(subtabTree[1].text, 'II, nrfnerjf');
+});
+
+test('Google Docs Automatic Subtabs - Detects hierarchical sub-items like 1, 2 under I, II', () => {
+  const documentWithSubItems = JSON.stringify({
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'I, aceererf' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: '1, Chi tiết nhỏ của I' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: '2, Chi tiết nhỏ thứ hai của I' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'II, nrfnerjf' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: '1, Chi tiết nhỏ của II' }] }
+    ]
+  });
+
+  const extracted = extractHeadingsFromContent(documentWithSubItems);
+  assert.strictEqual(extracted.length, 5);
+
+  const tree = buildHeadingTree(extracted);
+  assert.strictEqual(tree.length, 2, 'Should have 2 major subtabs: I and II');
+  assert.strictEqual(tree[0].text, 'I, aceererf');
+  assert.strictEqual(tree[0].children.length, 2, 'I should have 2 nested children');
+  assert.strictEqual(tree[0].children[0].text, '1, Chi tiết nhỏ của I');
+  assert.strictEqual(tree[0].children[1].text, '2, Chi tiết nhỏ thứ hai của I');
+
+  assert.strictEqual(tree[1].text, 'II, nrfnerjf');
+  assert.strictEqual(tree[1].children.length, 1, 'II should have 1 nested child');
+  assert.strictEqual(tree[1].children[0].text, '1, Chi tiết nhỏ của II');
+});
+
 
 

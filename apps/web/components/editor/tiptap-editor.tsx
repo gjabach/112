@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { FindAndReplaceExtension } from './find-replace-extension';
 import { FindReplaceDialog } from './find-replace-dialog';
+import { detectHeadingFromText } from './document-tabs-sidebar';
 
 export interface EditorHeading {
   id: string;
@@ -66,6 +67,19 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
           text,
           pos
         });
+      }
+    } else if (node.type?.name === 'paragraph') {
+      const text = node.textContent?.trim() || '';
+      if (text) {
+        const detected = detectHeadingFromText(text);
+        if (detected) {
+          list.push({
+            id: `detected-${pos}`,
+            level: detected.level,
+            text,
+            pos
+          });
+        }
       }
     }
   });
@@ -195,7 +209,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       // If position might have shifted, fallback to locating heading by matching text
       if (text) {
         editor.state.doc.descendants((node: any, p: number) => {
-          if (node.type?.name === 'heading' && node.textContent?.trim() === text.trim()) {
+          if ((node.type?.name === 'heading' || node.type?.name === 'paragraph') && node.textContent?.trim() === text.trim()) {
             targetPos = p;
             return false;
           }
