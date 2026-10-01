@@ -570,6 +570,19 @@ export default function ChapterEditorPage() {
               <kbd className="hidden 2xl:inline-block text-[9px] font-mono px-1 py-0.2 rounded bg-muted border">Ctrl+Shift+K</kbd>
             </Button>
 
+            {/* Lore Wiki Direct Access */}
+            <Link href={`/wiki/${projectId}`}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 sm:h-8 px-2 text-xs text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/10 flex items-center gap-1"
+                title="Mở Lore Wiki bách khoa thế giới & nhân vật"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Wiki</span>
+              </Button>
+            </Link>
+
             {/* Studio Dock Toggle */}
             <Button
               variant={showInspector ? "secondary" : "ghost"}

@@ -71,13 +71,14 @@ export function WriterStudioDock({
   onOpenSpotlight,
   onInsertText
 }: WriterStudioDockProps) {
-  const [activeTab, setActiveTab] = useState<'stats' | 'outline' | 'characters' | 'world' | 'timeline'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'outline' | 'characters' | 'world' | 'wiki' | 'timeline'>('stats');
 
   // Data states
   const [outlineNodes, setOutlineNodes] = useState<any[]>([]);
   const [characters, setCharacters] = useState<any[]>([]);
   const [entities, setEntities] = useState<any[]>([]);
   const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
+  const [wikiArticles, setWikiArticles] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
   // Search and filter states
@@ -85,7 +86,10 @@ export function WriterStudioDock({
   const [charRoleFilter, setCharRoleFilter] = useState('all');
   const [worldSearch, setWorldSearch] = useState('');
   const [worldTypeFilter, setWorldTypeFilter] = useState('all');
+  const [wikiSearch, setWikiSearch] = useState('');
+  const [wikiCatFilter, setWikiCatFilter] = useState('all');
   const [expandedCharId, setExpandedCharId] = useState<string | null>(null);
+  const [expandedWikiId, setExpandedWikiId] = useState<string | null>(null);
 
   // Quick beat creation in outline tab
   const [newBeatTitle, setNewBeatTitle] = useState('');
@@ -96,16 +100,18 @@ export function WriterStudioDock({
     const fetchDockData = async () => {
       setLoadingData(true);
       try {
-        const [outRes, charRes, entRes, timeRes] = await Promise.all([
+        const [outRes, charRes, entRes, timeRes, wikiRes] = await Promise.all([
           apiFetch(`/api/projects/${projectId}/outline`).catch(() => ({ flat: [] })),
           apiFetch(`/api/projects/${projectId}/characters`).catch(() => ({ characters: [] })),
           apiFetch(`/api/projects/${projectId}/entities`).catch(() => ({ entities: [] })),
-          apiFetch(`/api/projects/${projectId}/timeline`).catch(() => ({ events: [] }))
+          apiFetch(`/api/projects/${projectId}/timeline`).catch(() => ({ events: [] })),
+          apiFetch(`/api/projects/${projectId}/wiki`).catch(() => ({ articles: [] }))
         ]);
         setOutlineNodes(Array.isArray(outRes?.flat) ? outRes.flat : (Array.isArray(outRes?.outline) ? outRes.outline : []));
         setCharacters(Array.isArray(charRes?.characters) ? charRes.characters : []);
         setEntities(Array.isArray(entRes?.entities) ? entRes.entities : (Array.isArray(entRes?.items) ? entRes.items : []));
         setTimelineEvents(Array.isArray(timeRes?.events) ? timeRes.events : []);
+        setWikiArticles(Array.isArray(wikiRes?.articles) ? wikiRes.articles : []);
       } finally {
         setLoadingData(false);
       }
@@ -172,14 +178,24 @@ export function WriterStudioDock({
     return matchSearch && matchType;
   });
 
+  const filteredWiki = wikiArticles.filter(a => {
+    const matchSearch =
+      (a.title || '').toLowerCase().includes(wikiSearch.toLowerCase()) ||
+      (a.content || '').toLowerCase().includes(wikiSearch.toLowerCase()) ||
+      (a.summary || '').toLowerCase().includes(wikiSearch.toLowerCase()) ||
+      (a.tags || []).some((t: string) => t.toLowerCase().includes(wikiSearch.toLowerCase()));
+    const matchCat = wikiCatFilter === 'all' || a.category === wikiCatFilter;
+    return matchSearch && matchCat;
+  });
+
   return (
     <div className="flex flex-col h-full bg-card overflow-hidden text-xs">
       {/* Dock Top Tabs */}
       <div className="border-b bg-muted/40 p-1.5 flex items-center justify-between gap-1 shrink-0">
-        <div className="grid grid-cols-5 gap-1 w-full">
+        <div className="grid grid-cols-6 gap-1 w-full">
           <button
             onClick={() => setActiveTab('stats')}
-            className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-lg transition-all ${
+            className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-lg transition-all ${
               activeTab === 'stats'
                 ? 'bg-background shadow-xs text-primary font-semibold border border-primary/20'
                 : 'text-muted-foreground hover:bg-muted/60'
@@ -187,12 +203,12 @@ export function WriterStudioDock({
             title="Thông số & Trợ lý AI"
           >
             <Sparkles className="w-3.5 h-3.5 mb-0.5" />
-            <span className="text-[10px] leading-tight">AI & Số từ</span>
+            <span className="text-[10px] leading-tight">AI</span>
           </button>
 
           <button
             onClick={() => setActiveTab('outline')}
-            className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-lg transition-all ${
+            className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-lg transition-all ${
               activeTab === 'outline'
                 ? 'bg-background shadow-xs text-primary font-semibold border border-primary/20'
                 : 'text-muted-foreground hover:bg-muted/60'
@@ -205,7 +221,7 @@ export function WriterStudioDock({
 
           <button
             onClick={() => setActiveTab('characters')}
-            className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-lg transition-all ${
+            className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-lg transition-all ${
               activeTab === 'characters'
                 ? 'bg-background shadow-xs text-primary font-semibold border border-primary/20'
                 : 'text-muted-foreground hover:bg-muted/60'
@@ -218,7 +234,7 @@ export function WriterStudioDock({
 
           <button
             onClick={() => setActiveTab('world')}
-            className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-lg transition-all ${
+            className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-lg transition-all ${
               activeTab === 'world'
                 ? 'bg-background shadow-xs text-primary font-semibold border border-primary/20'
                 : 'text-muted-foreground hover:bg-muted/60'
@@ -230,8 +246,21 @@ export function WriterStudioDock({
           </button>
 
           <button
+            onClick={() => setActiveTab('wiki')}
+            className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-lg transition-all ${
+              activeTab === 'wiki'
+                ? 'bg-background shadow-xs text-cyan-600 dark:text-cyan-400 font-semibold border border-cyan-500/20'
+                : 'text-muted-foreground hover:bg-muted/60'
+            }`}
+            title="Lore Wiki bách khoa tự do"
+          >
+            <BookOpen className="w-3.5 h-3.5 mb-0.5 text-cyan-500" />
+            <span className="text-[10px] leading-tight">Wiki</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('timeline')}
-            className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-lg transition-all ${
+            className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-lg transition-all ${
               activeTab === 'timeline'
                 ? 'bg-background shadow-xs text-primary font-semibold border border-primary/20'
                 : 'text-muted-foreground hover:bg-muted/60'
@@ -844,6 +873,142 @@ export function WriterStudioDock({
                       </div>
                     </div>
                   ))
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* TAB 5: LORE WIKI */}
+          {activeTab === 'wiki' && (
+            <motion.div
+              key="wiki"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.15 }}
+              className="p-3 space-y-3"
+            >
+              {/* Header with link to full Wiki page */}
+              <div className="flex items-center justify-between pb-1">
+                <span className="font-semibold text-foreground text-xs flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-cyan-500" /> Bách khoa Lore Wiki
+                </span>
+                <Link
+                  href={`/wiki/${projectId}`}
+                  className="text-[10px] text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1 font-medium"
+                >
+                  Toàn trang Wiki <ExternalLink className="w-2.5 h-2.5" />
+                </Link>
+              </div>
+
+              {/* Search & Category Filter */}
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-2" />
+                  <Input
+                    value={wikiSearch}
+                    onChange={e => setWikiSearch(e.target.value)}
+                    placeholder="Tìm lore, nhân vật, bối cảnh..."
+                    className="h-7 text-xs pl-8 bg-muted/20"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5">
+                  {[
+                    { id: 'all', label: 'Tất cả', icon: '📚' },
+                    { id: 'lore', label: 'Bối cảnh', icon: '🌍' },
+                    { id: 'character', label: 'Nhân vật', icon: '👤' },
+                    { id: 'chapter_note', label: 'Ghi chú', icon: '📖' },
+                    { id: 'world', label: 'Thế giới', icon: '🏰' },
+                    { id: 'free_note', label: 'Tự do', icon: '📝' }
+                  ].map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => setWikiCatFilter(c.id)}
+                      className={`text-[10px] px-2 py-0.5 rounded-full transition-colors shrink-0 flex items-center gap-1 ${
+                        wikiCatFilter === c.id
+                          ? 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-semibold'
+                          : 'bg-muted/40 text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <span>{c.icon}</span>
+                      <span>{c.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Wiki Article List */}
+              <div className="space-y-2">
+                {filteredWiki.length === 0 ? (
+                  <div className="text-center py-6 text-muted-foreground text-[11px] space-y-2">
+                    <p>Chưa có bài viết nào phù hợp.</p>
+                    <Link href={`/wiki/${projectId}`}>
+                      <Button size="sm" variant="outline" className="text-xs h-7">
+                        <Plus className="w-3 h-3 mr-1" /> Tạo bài wiki mới
+                      </Button>
+                    </Link>
+                  </div>
+                ) : (
+                  filteredWiki.map((art: any) => {
+                    const isExpanded = expandedWikiId === art.id;
+                    return (
+                      <div
+                        key={art.id}
+                        className="rounded-xl border border-border/60 bg-card p-2.5 space-y-1.5 hover:shadow-xs transition-all"
+                      >
+                        <div className="flex items-start justify-between gap-1.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm shrink-0">{art.icon || '📝'}</span>
+                              <span className="font-semibold truncate text-foreground text-xs">{art.title}</span>
+                              {art.pinned && <Badge className="text-[8px] px-1 py-0 h-3 bg-amber-500 text-white">Ghim</Badge>}
+                            </div>
+                            {art.summary && (
+                              <p className="text-[10px] text-muted-foreground truncate mt-0.5">{art.summary}</p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-5 px-1.5 text-[9px] text-primary"
+                              onClick={() => insertText(art.title)}
+                              title="Chèn tên bài vào bản thảo"
+                            >
+                              @ Chèn tên
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-5 w-5 p-0"
+                              onClick={() => setExpandedWikiId(isExpanded ? null : art.id)}
+                            >
+                              {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Expanded Full Content */}
+                        {isExpanded && art.content && (
+                          <div className="pt-1.5 border-t border-border/40 text-[11px] text-muted-foreground whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-muted/20 p-2 rounded-lg">
+                            {art.content}
+                            <div className="pt-2 flex justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-5 px-1.5 text-[9px] text-primary"
+                                onClick={() => insertText(art.content)}
+                              >
+                                Chèn toàn bộ nội dung
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </motion.div>
