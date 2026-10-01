@@ -24,7 +24,8 @@ import {
   PanelLeft,
   Download
 } from 'lucide-react';
-import { DocumentTabsSidebar, buildTabTree, flattenTabTree } from '@/components/editor/document-tabs-sidebar';
+import { DocumentTabsSidebar, buildTabTree, flattenTabTree, extractHeadingsFromContent } from '@/components/editor/document-tabs-sidebar';
+import type { EditorHeading } from '@/components/editor/tiptap-editor';
 import { MagicSparkles, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound, playDeleteSound } from '@/lib/sound';
@@ -56,6 +57,7 @@ export default function ChapterEditorPage() {
   const [allChapters, setAllChapters] = useState<any[]>([]);
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
+  const [liveHeadings, setLiveHeadings] = useState<EditorHeading[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
@@ -121,6 +123,7 @@ export default function ChapterEditorPage() {
           const rawContent = res.chapter.content;
           const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
           setContent(safeContent);
+          setLiveHeadings(extractHeadingsFromContent(safeContent));
           isDirtyRef.current = false;
         } else {
           // Background sync refresh:
@@ -135,6 +138,7 @@ export default function ChapterEditorPage() {
             setChapter(res.chapter);
             setTitle(res.chapter.title || 'Thẻ');
             setContent(safeContent);
+            setLiveHeadings(extractHeadingsFromContent(safeContent));
             isDirtyRef.current = false;
             toast.info('Đã tự động cập nhật văn bản mới nhất từ đám mây', { id: 'sync-updated-notice', duration: 2500 });
           } else if (!isDirtyRef.current && !isActivelyTypingNow && contentRef.current === chapterRef.current?.content) {
@@ -144,6 +148,7 @@ export default function ChapterEditorPage() {
               setChapter(res.chapter);
               setTitle(res.chapter.title || 'Thẻ');
               setContent(safeContent);
+              setLiveHeadings(extractHeadingsFromContent(safeContent));
             }
           }
         }
@@ -509,54 +514,6 @@ export default function ChapterEditorPage() {
               <FileText className="w-4 h-4 text-primary" />
             </Button>
 
-            {/* Chapter/Tab Quick Switcher (Following tree order) */}
-            <div className="flex items-center gap-0.5 border-r pr-1.5 mr-0.5 shrink-0">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                disabled={!prevChapter || isSwitching}
-                onClick={() => prevChapter && navigateToChapter(prevChapter.id, 'prev')}
-                title={prevChapter ? `Thẻ trước: ${prevChapter?.title || ''}` : 'Đầu danh sách'}
-              >
-                {isSwitching && switchDirection === 'prev' ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                ) : (
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                )}
-              </Button>
-
-              {orderedChapters.length > 0 && (
-                <select
-                  className="h-7 text-xs border rounded bg-transparent px-1 max-w-[90px] sm:max-w-[140px] md:max-w-[200px] truncate"
-                  value={chapterId}
-                  disabled={isSwitching}
-                  onChange={e => navigateToChapter(e.target.value, 'fade')}
-                >
-                  {orderedChapters.filter(Boolean).map((ch, idx) => (
-                    <option key={ch.id || idx} value={ch.id || ''}>
-                      {ch.parentId ? `  ↳ ${ch.title || 'Thẻ con'}` : `${idx + 1}. ${ch.title || 'Thẻ'}`}
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                disabled={!nextChapter || isSwitching}
-                onClick={() => nextChapter && navigateToChapter(nextChapter.id, 'next')}
-                title={nextChapter ? `Thẻ sau: ${nextChapter?.title || ''}` : 'Cuối danh sách'}
-              >
-                {isSwitching && switchDirection === 'next' ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5" />
-                )}
-              </Button>
-            </div>
-
             {/* Document / Tab Title Input */}
             <Input
               value={title}
@@ -676,9 +633,13 @@ export default function ChapterEditorPage() {
             projectId={projectId}
             currentChapterId={chapterId}
             chapters={allChapters}
+            headings={liveHeadings}
             isOpen={showTabsSidebar}
             onToggle={toggleTabsSidebar}
             onSelectTab={(selectedId) => navigateToChapter(selectedId, 'fade')}
+            onJumpToHeading={(pos, text) => {
+              window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos, text } }));
+            }}
             onCreateTab={handleCreateTab}
             onRenameTab={handleRenameTab}
             onDeleteTab={handleDeleteTab}
@@ -720,6 +681,7 @@ export default function ChapterEditorPage() {
                     pauseAutoSync();
                     setContent(newContent);
                   }}
+                  onHeadingsChange={setLiveHeadings}
                   placeholder="Bắt đầu viết những dòng văn bản đầu tiên cho thẻ này..."
                 />
               </EditorErrorBoundary>
@@ -770,11 +732,16 @@ export default function ChapterEditorPage() {
                     projectId={projectId}
                     currentChapterId={chapterId}
                     chapters={allChapters}
+                    headings={liveHeadings}
                     isOpen={true}
                     onToggle={() => setMobileTabsOpen(false)}
                     onSelectTab={(selectedId) => {
                       setMobileTabsOpen(false);
                       navigateToChapter(selectedId, 'fade');
+                    }}
+                    onJumpToHeading={(pos, text) => {
+                      setMobileTabsOpen(false);
+                      window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos, text } }));
                     }}
                     onCreateTab={handleCreateTab}
                     onRenameTab={handleRenameTab}

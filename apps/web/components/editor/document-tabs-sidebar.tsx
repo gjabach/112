@@ -13,10 +13,9 @@ import {
   ChevronUp, 
   PanelLeftClose, 
   PanelLeft, 
-  FolderPlus,
-  Check,
-  X,
-  Sparkles
+  Check, 
+  X, 
+  Sparkles 
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,13 +40,101 @@ export interface TabTreeNode extends ChapterTab {
   depth: number;
 }
 
+export interface HeadingItem {
+  id: string;
+  level: number;
+  text: string;
+  pos?: number;
+}
+
+export interface HeadingTreeNode {
+  id: string;
+  level: number;
+  text: string;
+  pos?: number;
+  children: HeadingTreeNode[];
+}
+
+export function buildHeadingTree(headings: HeadingItem[]): HeadingTreeNode[] {
+  if (!Array.isArray(headings) || headings.length === 0) return [];
+  const roots: HeadingTreeNode[] = [];
+  const stack: HeadingTreeNode[] = [];
+
+  for (const item of headings) {
+    const node: HeadingTreeNode = { ...item, children: [] };
+
+    // Pop anything from stack that has level >= current level
+    while (stack.length > 0 && stack[stack.length - 1].level >= node.level) {
+      stack.pop();
+    }
+
+    if (stack.length === 0) {
+      roots.push(node);
+    } else {
+      stack[stack.length - 1].children.push(node);
+    }
+
+    stack.push(node);
+  }
+
+  return roots;
+}
+
+export function extractHeadingsFromContent(rawContent?: string): HeadingItem[] {
+  if (!rawContent) return [];
+  const list: HeadingItem[] = [];
+
+  try {
+    const json = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
+    if (json && typeof json === 'object') {
+      const walk = (node: any) => {
+        if (!node) return;
+        if (node.type === 'heading') {
+          const level = Number(node.attrs?.level) || 1;
+          const text = (node.content || []).map((c: any) => c.text || '').join('').trim();
+          if (text) {
+            list.push({
+              id: `h-${list.length}-${text.slice(0, 15)}`,
+              level,
+              text
+            });
+          }
+        }
+        if (Array.isArray(node.content)) {
+          node.content.forEach(walk);
+        }
+      };
+      walk(json);
+      if (list.length > 0) return list;
+    }
+  } catch {}
+
+  const htmlRegex = /<h([1-3])[^>]*>(.*?)<\/h\1>/gi;
+  let match;
+  while ((match = htmlRegex.exec(rawContent)) !== null) {
+    const level = parseInt(match[1], 10);
+    const text = match[2].replace(/<[^>]+>/g, '').trim();
+    if (text) {
+      list.push({
+        id: `h-${list.length}-${text.slice(0, 15)}`,
+        level,
+        text
+      });
+    }
+  }
+
+  return list;
+}
+
 interface DocumentTabsSidebarProps {
   projectId: string;
   currentChapterId: string;
   chapters: ChapterTab[];
+  headings?: HeadingItem[];
   isOpen: boolean;
   onToggle: () => void;
   onSelectTab: (chapterId: string) => void;
+  onJumpToHeading?: (pos?: number, text?: string) => void;
   onCreateTab: (title: string, parentId?: string | null) => Promise<string | void>;
   onRenameTab: (chapterId: string, newTitle: string) => Promise<void>;
   onDeleteTab: (chapterId: string) => Promise<void>;
@@ -118,9 +205,11 @@ export function DocumentTabsSidebar({
   projectId,
   currentChapterId,
   chapters,
+  headings = [],
   isOpen,
   onToggle,
   onSelectTab,
+  onJumpToHeading,
   onCreateTab,
   onRenameTab,
   onDeleteTab,
@@ -137,13 +226,12 @@ export function DocumentTabsSidebar({
     return init;
   });
 
+  // State for expanded headings in the live outline
+  const [expandedHeadingIds, setExpandedHeadingIds] = useState<Record<string, boolean>>({});
+
   // State for inline renaming
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-
-  // State for adding child tab inline
-  const [addingChildUnderId, setAddingChildUnderId] = useState<string | null>(null);
-  const [newSubtabTitle, setNewSubtabTitle] = useState('');
 
   // State for open context menu
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -166,9 +254,24 @@ export function DocumentTabsSidebar({
 
   const tree = buildTabTree(chapters);
 
+  // Active chapter's real-time live heading tree
+  const activeChapter = chapters.find(c => c.id === currentChapterId);
+  const effectiveHeadings = headings && headings.length > 0
+    ? headings
+    : extractHeadingsFromContent(activeChapter?.content);
+  const activeHeadingTree = buildHeadingTree(effectiveHeadings);
+
   const toggleExpand = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setExpandedIds(prev => ({
+      ...prev,
+      [id]: prev[id] === undefined ? false : !prev[id]
+    }));
+  };
+
+  const toggleExpandHeading = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setExpandedHeadingIds(prev => ({
       ...prev,
       [id]: prev[id] === undefined ? false : !prev[id]
     }));
@@ -197,33 +300,6 @@ export function DocumentTabsSidebar({
     }
   };
 
-  const handleStartAddSubtab = (parentTabId: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setAddingChildUnderId(parentTabId);
-    setNewSubtabTitle('');
-    setActiveMenuId(null);
-    setExpandedIds(prev => ({ ...prev, [parentTabId]: true }));
-  };
-
-  const handleConfirmAddSubtab = async (parentTabId: string) => {
-    const trimmed = newSubtabTitle.trim();
-    if (!trimmed) {
-      setAddingChildUnderId(null);
-      return;
-    }
-    setAddingChildUnderId(null);
-    try {
-      const createdId = await onCreateTab(trimmed, parentTabId);
-      playSuccessSound();
-      toast.success(`Đã tạo thẻ con "${trimmed}"`);
-      if (createdId) {
-        onSelectTab(createdId);
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Lỗi tạo thẻ con');
-    }
-  };
-
   const handleCreateRootTab = async () => {
     const rootCount = chapters.filter(c => !c.parentId).length;
     const defaultTitle = `Thẻ ${rootCount + 1}`;
@@ -239,13 +315,83 @@ export function DocumentTabsSidebar({
     }
   };
 
+  // Google Docs live heading node renderer (H1 -> H2 -> H3)
+  const renderHeadingNode = (hNode: HeadingTreeNode) => {
+    const hasChildren = hNode.children && hNode.children.length > 0;
+    const isExpanded = expandedHeadingIds[hNode.id] !== false;
+
+    const levelBadge = hNode.level === 1 ? (
+      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-600 dark:text-purple-400 font-mono shrink-0">H1</span>
+    ) : hNode.level === 2 ? (
+      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-mono shrink-0">H2</span>
+    ) : (
+      <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-mono shrink-0">H3</span>
+    );
+
+    const textStyle = hNode.level === 1 
+      ? 'font-semibold text-foreground text-xs' 
+      : hNode.level === 2 
+        ? 'font-medium text-foreground/90 text-[11.5px]' 
+        : 'font-normal text-muted-foreground text-[11px]';
+
+    return (
+      <div key={hNode.id} className="group/heading flex flex-col">
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onJumpToHeading) {
+              onJumpToHeading(hNode.pos, hNode.text);
+            } else {
+              window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos: hNode.pos, text: hNode.text } }));
+            }
+          }}
+          className={`
+            flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer transition-colors
+            hover:bg-primary/10 hover:text-primary select-none
+            ${textStyle}
+          `}
+          title={`Nhảy tới Tiêu đề ${hNode.level}: ${hNode.text}`}
+        >
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(e) => toggleExpandHeading(hNode.id, e)}
+              className="p-0.5 -ml-1 text-muted-foreground hover:text-foreground rounded transition-colors shrink-0"
+              title={isExpanded ? "Thu gọn mục con" : "Mở rộng mục con"}
+            >
+              {isExpanded ? (
+                <ChevronDown className="w-3 h-3" />
+              ) : (
+                <ChevronRight className="w-3 h-3" />
+              )}
+            </button>
+          ) : (
+            <span className="w-2.5 shrink-0" />
+          )}
+
+          {levelBadge}
+
+          <span className="truncate flex-1">
+            {hNode.text}
+          </span>
+        </div>
+
+        {/* Nested child headings (H2 under H1, or H3 under H2) */}
+        {hasChildren && isExpanded && (
+          <div className="ml-3 pl-2 border-l border-border/60 space-y-0.5 my-0.5">
+            {hNode.children.map(child => renderHeadingNode(child))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Recursive tab renderer
   const renderTabNode = (node: TabTreeNode, isLastChild: boolean) => {
     const isActive = node.id === currentChapterId;
     const hasChildren = node.children && node.children.length > 0;
     const isExpanded = expandedIds[node.id] !== false;
     const isEditing = editingTabId === node.id;
-    const isAddingChild = addingChildUnderId === node.id;
 
     return (
       <div key={node.id} className="relative group/tab flex flex-col">
@@ -362,14 +508,6 @@ export function DocumentTabsSidebar({
               >
                 <button
                   type="button"
-                  onClick={(e) => handleStartAddSubtab(node.id, e)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
-                >
-                  <FolderPlus className="w-3.5 h-3.5 text-primary" />
-                  <span>Thêm thẻ con</span>
-                </button>
-                <button
-                  type="button"
                   onClick={(e) => handleStartRename(node, e)}
                   className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
                 >
@@ -436,46 +574,20 @@ export function DocumentTabsSidebar({
           </div>
         </div>
 
-        {/* Inline Subtab Input when creating a new child */}
-        {isAddingChild && (
-          <div className="ml-5 pl-2.5 my-1 border-l-2 border-primary/50 flex items-center gap-1.5">
-            <FileText className="w-3 h-3 text-primary shrink-0" />
-            <Input
-              value={newSubtabTitle}
-              onChange={(e) => setNewSubtabTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleConfirmAddSubtab(node.id);
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setAddingChildUnderId(null);
-                }
-              }}
-              placeholder="Tên thẻ con..."
-              className="h-6 text-xs px-2 py-0.5 bg-background border-primary/50 flex-1"
-              autoFocus
-            />
-            <button
-              type="button"
-              onClick={() => handleConfirmAddSubtab(node.id)}
-              className="p-1 text-emerald-500 hover:text-emerald-600 rounded shrink-0"
-              title="Tạo (Enter)"
-            >
-              <Check className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setAddingChildUnderId(null)}
-              className="p-1 text-muted-foreground hover:text-foreground rounded shrink-0"
-              title="Hủy (Esc)"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+        {/* Live Automatic Heading Outline for Active Document (Google Docs Real-Time Heading Hierarchy) */}
+        {isActive && (
+          <div className="ml-3.5 pl-2 border-l-2 border-primary/30 space-y-0.5 my-1">
+            {activeHeadingTree.length === 0 ? (
+              <div className="px-2 py-1.5 text-[11px] text-muted-foreground/70 italic bg-muted/20 rounded-md">
+                Chưa có thẻ tiêu đề. Định dạng Tiêu đề 1 (H1), Tiêu đề 2 (H2), Tiêu đề 3 (H3) trong văn bản để tự động tạo thẻ tại đây.
+              </div>
+            ) : (
+              activeHeadingTree.map(hNode => renderHeadingNode(hNode))
+            )}
           </div>
         )}
 
-        {/* Render Nested Children with Google Docs-style Indentation Guide Line */}
+        {/* Render Nested Legacy Children with Google Docs-style Indentation Guide Line */}
         {hasChildren && isExpanded && (
           <div className="ml-4 pl-2.5 border-l-2 border-border/70 hover:border-primary/40 transition-colors my-0.5 space-y-0.5">
             {node.children.map((child, idx) =>

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Download, ChevronUp, ChevronDown, ChevronRight, Search, Check, X, Upload, Image as ImageIcon, BookOpen, FolderPlus } from 'lucide-react';
+import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Download, ChevronUp, ChevronDown, ChevronRight, Search, Check, X, Upload, Image as ImageIcon, BookOpen } from 'lucide-react';
 import { useProjectStore } from '@/lib/store';
 import { BookCoverArt } from '@/components/vfx/book-cover';
 import { fireConfetti } from '@/components/vfx/confetti';
@@ -47,8 +47,6 @@ export default function ProjectEditorPage() {
   const [activeTab, setActiveTab] = useState<'chapters' | 'overview'>('chapters');
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  const [addingChildUnderId, setAddingChildUnderId] = useState<string | null>(null);
-  const [newSubtabTitle, setNewSubtabTitle] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const setCurrentProjectId = useProjectStore(s => s.setCurrentProjectId);
 
@@ -58,35 +56,6 @@ export default function ProjectEditorPage() {
       ...prev,
       [id]: prev[id] === undefined ? false : !prev[id]
     }));
-  };
-
-  const createSubtab = async (parentTabId: string) => {
-    const trimmed = newSubtabTitle.trim();
-    if (!trimmed) {
-      setAddingChildUnderId(null);
-      return;
-    }
-    try {
-      const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
-      await apiFetch(`/api/projects/${projectId}/chapters`, {
-        method: 'POST',
-        body: JSON.stringify({
-          title: trimmed,
-          orderIndex: maxOrder + 1,
-          status: 'draft',
-          parentId: parentTabId
-        })
-      });
-      setNewSubtabTitle('');
-      setAddingChildUnderId(null);
-      setExpandedIds(prev => ({ ...prev, [parentTabId]: true }));
-      playSuccessSound();
-      toast.success(`Đã thêm thẻ con "${trimmed}"`);
-      fetchData();
-      pushSync().catch(() => {});
-    } catch (e: any) {
-      toast.error(e.message || 'Lỗi tạo thẻ con');
-    }
   };
 
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -542,7 +511,6 @@ export default function ProjectEditorPage() {
                 const hasChildren = node.children && node.children.length > 0;
                 const isExpanded = expandedIds[node.id] !== false;
                 const isEditing = editingChapterId === node.id;
-                const isAddingChild = addingChildUnderId === node.id;
 
                 return (
                   <div key={node.id} className="space-y-1">
@@ -629,21 +597,6 @@ export default function ProjectEditorPage() {
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                setAddingChildUnderId(addingChildUnderId === node.id ? null : node.id);
-                                setNewSubtabTitle('');
-                                setExpandedIds(prev => ({ ...prev, [node.id]: true }));
-                              }}
-                              title="Thêm thẻ con"
-                            >
-                              <FolderPlus className="w-3.5 h-3.5 text-primary" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
                                 startRename(node);
                               }}
                               title="Sửa tên thẻ"
@@ -663,44 +616,6 @@ export default function ProjectEditorPage() {
                         </>
                       )}
                     </div>
-
-                    {/* Inline subtab creation input */}
-                    {isAddingChild && (
-                      <div className="ml-5 pl-2.5 my-1 border-l-2 border-primary/50 flex items-center gap-1.5 py-1">
-                        <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
-                        <Input
-                          value={newSubtabTitle}
-                          onChange={(e) => setNewSubtabTitle(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              createSubtab(node.id);
-                            } else if (e.key === 'Escape') {
-                              e.preventDefault();
-                              setAddingChildUnderId(null);
-                            }
-                          }}
-                          placeholder="Tên thẻ con..."
-                          className="h-7 text-xs px-2 py-0.5 bg-background border-primary/50 flex-1"
-                          autoFocus
-                        />
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => createSubtab(node.id)}
-                        >
-                          Thêm
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-1.5 text-xs text-muted-foreground"
-                          onClick={() => setAddingChildUnderId(null)}
-                        >
-                          Hủy
-                        </Button>
-                      </div>
-                    )}
 
                     {/* Nested child subtabs */}
                     {hasChildren && isExpanded && (

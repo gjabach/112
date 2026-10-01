@@ -17,6 +17,7 @@ import {
   Quote,
   Heading1,
   Heading2,
+  Heading3,
   Code,
   Undo,
   Redo,
@@ -27,11 +28,19 @@ import {
 import { FindAndReplaceExtension } from './find-replace-extension';
 import { FindReplaceDialog } from './find-replace-dialog';
 
+export interface EditorHeading {
+  id: string;
+  level: number;
+  text: string;
+  pos?: number;
+}
+
 interface TiptapEditorProps {
   content: string;
   onChange: (content: string) => void;
   placeholder?: string;
   editable?: boolean;
+  onHeadingsChange?: (headings: EditorHeading[]) => void;
 }
 
 function formatPlainTextToHtml(text: string): string {
@@ -43,7 +52,27 @@ function formatPlainTextToHtml(text: string): string {
     .join('');
 }
 
-export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true }: TiptapEditorProps) {
+function extractHeadingsFromEditor(ed: any): EditorHeading[] {
+  if (!ed || !ed.state?.doc) return [];
+  const list: EditorHeading[] = [];
+  ed.state.doc.descendants((node: any, pos: number) => {
+    if (node.type?.name === 'heading') {
+      const level = Number(node.attrs?.level) || 1;
+      const text = node.textContent?.trim() || '';
+      if (text) {
+        list.push({
+          id: `heading-${pos}`,
+          level,
+          text,
+          pos
+        });
+      }
+    }
+  });
+  return list;
+}
+
+export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true, onHeadingsChange }: TiptapEditorProps) {
   const lastEmittedContentRef = useRef<string | null>(null);
   const lastUserTypingTimeRef = useRef<number>(0);
   const [isFindOpen, setIsFindOpen] = useState(false);
@@ -83,6 +112,9 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
         lastEmittedContentRef.current = jsonStr;
         lastUserTypingTimeRef.current = Date.now();
         onChange(jsonStr);
+        if (onHeadingsChange) {
+          onHeadingsChange(extractHeadingsFromEditor(editor));
+        }
       } catch {}
     },
     immediatelyRender: false
@@ -145,6 +177,60 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     }
   }, [content, editor]);
 
+  useEffect(() => {
+    if (editor && onHeadingsChange) {
+      onHeadingsChange(extractHeadingsFromEditor(editor));
+    }
+  }, [editor, onHeadingsChange]);
+
+  // Jump to heading from Document Tabs sidebar
+  useEffect(() => {
+    const handleJumpHeading = (e: Event) => {
+      const custom = e as CustomEvent<{ pos?: number; text?: string }>;
+      if (!editor) return;
+      const { pos, text } = custom.detail || {};
+
+      let targetPos = typeof pos === 'number' && pos >= 0 ? pos : -1;
+
+      // If position might have shifted, fallback to locating heading by matching text
+      if (text) {
+        editor.state.doc.descendants((node: any, p: number) => {
+          if (node.type?.name === 'heading' && node.textContent?.trim() === text.trim()) {
+            targetPos = p;
+            return false;
+          }
+        });
+      }
+
+      if (targetPos >= 0) {
+        try {
+          editor.chain().focus().setTextSelection(targetPos + 1).scrollIntoView().run();
+          const domNode = editor.view.nodeDOM(targetPos);
+          const el = domNode instanceof HTMLElement
+            ? domNode
+            : domNode?.parentElement instanceof HTMLElement
+              ? domNode.parentElement
+              : null;
+
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('bg-primary/20', 'rounded-md', 'transition-all', 'duration-500');
+            setTimeout(() => {
+              el.classList.remove('bg-primary/20');
+            }, 1200);
+          }
+        } catch (err) {
+          console.error('Lỗi cuộn tới tiêu đề:', err);
+        }
+      }
+    };
+
+    window.addEventListener('novelist-jump-heading', handleJumpHeading);
+    return () => {
+      window.removeEventListener('novelist-jump-heading', handleJumpHeading);
+    };
+  }, [editor]);
+
   if (!editor) return <div className="animate-pulse h-64 bg-muted rounded-lg"></div>;
 
   return (
@@ -168,8 +254,9 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
         <Button variant={editor.isActive?.('strike') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleStrike().run()} title="Gạch ngang"><Strikethrough className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('highlight') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleHighlight().run()} title="Đánh dấu highlight"><Highlighter className="w-3.5 h-3.5" /></Button>
         <div className="w-[1px] h-4 bg-border mx-1 shrink-0" />
-        <Button variant={editor.isActive?.('heading', { level: 1 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title="Tiêu đề 1"><Heading1 className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('heading', { level: 2 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="Tiêu đề 2"><Heading2 className="w-3.5 h-3.5" /></Button>
+        <Button variant={editor.isActive?.('heading', { level: 1 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-bold" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title="Tiêu đề 1 (Thẻ cha)"><Heading1 className="w-3.5 h-3.5" /></Button>
+        <Button variant={editor.isActive?.('heading', { level: 2 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-semibold" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="Tiêu đề 2 (Thẻ con)"><Heading2 className="w-3.5 h-3.5" /></Button>
+        <Button variant={editor.isActive?.('heading', { level: 3 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} title="Tiêu đề 3 (Thẻ cháu)"><Heading3 className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('blockquote') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Trích dẫn"><Quote className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('bulletList') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleBulletList().run()} title="Danh sách"><List className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('orderedList') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Danh sách số"><ListOrdered className="w-3.5 h-3.5" /></Button>
