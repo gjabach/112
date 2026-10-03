@@ -175,10 +175,20 @@ export function extractHeadingsFromContent(
 
       if (Array.isArray(json.content)) {
         let docPos = 0;
-        for (const block of json.content) {
+        for (let i = 0; i < json.content.length; i++) {
+          const block = json.content[i];
           if (block.type === 'heading') {
             const level = Number(block.attrs?.level) || 1;
-            const text = (block.content || []).map((c: any) => c.text || '').join('').trim();
+            let text = (block.content || []).map((c: any) => c.text || '').join('').trim();
+            if (text && /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+              const nextBlock = json.content[i + 1];
+              if (nextBlock && nextBlock.type === 'paragraph') {
+                const nextText = (nextBlock.content || []).map((c: any) => c.text || '').join('').trim();
+                if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText, options)) {
+                  text = `${text} ${nextText}`;
+                }
+              }
+            }
             if (text) {
               list.push({
                 id: `h-${list.length}-${text.slice(0, 15)}`,
@@ -192,10 +202,20 @@ export function extractHeadingsFromContent(
             if (text) {
               const detected = detectHeadingFromText(text, options);
               if (detected) {
+                let combinedText = detected.text;
+                if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(combinedText)) {
+                  const nextBlock = json.content[i + 1];
+                  if (nextBlock && nextBlock.type === 'paragraph') {
+                    const nextText = (nextBlock.content || []).map((c: any) => c.text || '').join('').trim();
+                    if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText, options)) {
+                      combinedText = `${combinedText} ${nextText}`;
+                    }
+                  }
+                }
                 list.push({
-                  id: `p-${list.length}-${text.slice(0, 15)}`,
+                  id: `p-${list.length}-${combinedText.slice(0, 15)}`,
                   level: detected.level,
-                  text,
+                  text: combinedText,
                   pos: docPos
                 });
               }
@@ -210,27 +230,38 @@ export function extractHeadingsFromContent(
 
   // HTML fallback
   const tagRegex = /<(h[1-3]|p)[^>]*>(.*?)<\/\1>/gi;
+  const rawMatches: Array<{ tag: string; text: string }> = [];
   let match;
   while ((match = tagRegex.exec(rawContent)) !== null) {
-    const tag = match[1].toLowerCase();
     const text = match[2].replace(/<[^>]+>/g, '').trim();
-    if (!text) continue;
+    if (text) {
+      rawMatches.push({ tag: match[1].toLowerCase(), text });
+    }
+  }
 
-    if (tag.startsWith('h')) {
-      const level = parseInt(tag[1], 10);
-      list.push({
-        id: `h-${list.length}-${text.slice(0, 15)}`,
-        level,
-        text
-      });
+  for (let i = 0; i < rawMatches.length; i++) {
+    const item = rawMatches[i];
+    if (item.tag.startsWith('h')) {
+      const level = parseInt(item.tag[1], 10);
+      let text = item.text;
+      if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+        const next = rawMatches[i + 1];
+        if (next && next.tag === 'p' && next.text.length < 120 && !detectHeadingFromText(next.text, options)) {
+          text = `${text} ${next.text}`;
+        }
+      }
+      list.push({ id: `h-${list.length}-${text.slice(0, 15)}`, level, text });
     } else if (!options?.disableAutoHeadings) {
-      const detected = detectHeadingFromText(text, options);
+      const detected = detectHeadingFromText(item.text, options);
       if (detected) {
-        list.push({
-          id: `p-${list.length}-${text.slice(0, 15)}`,
-          level: detected.level,
-          text
-        });
+        let text = detected.text;
+        if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+          const next = rawMatches[i + 1];
+          if (next && next.tag === 'p' && next.text.length < 120 && !detectHeadingFromText(next.text, options)) {
+            text = `${text} ${next.text}`;
+          }
+        }
+        list.push({ id: `p-${list.length}-${text.slice(0, 15)}`, level: detected.level, text });
       }
     }
   }

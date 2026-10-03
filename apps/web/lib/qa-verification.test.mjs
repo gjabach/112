@@ -1149,7 +1149,7 @@ test('Smart Merge: Merging PC cloud workspace (with Chapter 2) into Mobile (with
   assert.equal(ch1.content, 'Nội dung chương 1 trên PC');
 });
 
-import { mergeWorkspaces, getEmailAliases, getCloudAccountKeys, unwrapWorkspace, appendConflictContent } from './sync-core.ts';
+import { mergeWorkspaces, getEmailAliases, getCloudAccountKeys, unwrapWorkspace, appendConflictContent, deduplicateConflictBlocks } from './sync-core.ts';
 
 test('sync-core: strict account isolation ensures gjabach0508@gmail.com and giabach0508@gmail.com are never aliased or cross-merged', () => {
   const aliases1 = getEmailAliases('gjabach0508@gmail.com');
@@ -1777,9 +1777,8 @@ test('sync-core: Field-level merge preserves mobile 2000-word content when deskt
   assert.equal(mergedReverse.chapters[0].wordCount, 2000);
 });
 
-test('sync-core: Concurrent content edits within 2 minutes preserve both drafts via conflict append', () => {
+test('sync-core: mergeWorkspaces is idempotent and never duplicates/balloons content over multiple sync runs', () => {
   const now = 1790600000000;
-  // Device A wrote paragraph A at 12:00:00
   const stateA = {
     chapters: [
       {
@@ -1792,7 +1791,6 @@ test('sync-core: Concurrent content edits within 2 minutes preserve both drafts 
     ]
   };
 
-  // Device B wrote paragraph B at 12:00:30 (30 seconds later, concurrent edit)
   const stateB = {
     chapters: [
       {
@@ -1805,46 +1803,51 @@ test('sync-core: Concurrent content edits within 2 minutes preserve both drafts 
     ]
   };
 
-  const { merged } = mergeWorkspaces(stateA, stateB);
-  const ch = merged.chapters[0];
+  // Run merge once
+  const { merged: run1 } = mergeWorkspaces(stateA, stateB);
+  const len1 = run1.chapters[0].content.length;
 
-  // Both paragraphs must be present in the content so no text is lost
-  assert.ok(ch.content.includes('Nhân vật chính bước vào hang động'), 'Draft from device A must be preserved');
-  assert.ok(ch.content.includes('Một cơn bão bất ngờ ập đến'), 'Draft from device B must be preserved');
-  assert.ok(ch.content.includes('Nội dung xung đột được lưu lại'), 'Conflict note must inform the user');
+  // Run merge 10 times consecutively (simulating 8-second polling)
+  let currentMerged = run1;
+  for (let i = 0; i < 10; i++) {
+    const { merged } = mergeWorkspaces(currentMerged, stateB);
+    currentMerged = merged;
+  }
+  const len10 = currentMerged.chapters[0].content.length;
+
+  assert.equal(len10, len1, 'Document content length must remain completely idempotent across repeated sync polling');
+  assert.equal(currentMerged.chapters[0].content, stateB.chapters[0].content, 'Newer content must be canonically preserved without recursive duplication');
 });
 
-test('sync-core: Concurrent content edits with identical timestamps (timeDiff === 0) preserve both drafts', () => {
-  const exactTime = 1790600000000;
-  const stateA = {
-    chapters: [
-      {
-        id: 'ch_exact_tie',
-        title: 'Chương Đồng Thời',
-        content: 'Bản thảo A gõ offline đồng thời: Nhân vật chính luyện thành tuyệt kỹ võ công vang danh.',
-        updatedAt: exactTime,
-        contentUpdatedAt: exactTime
-      }
+test('sync-core: deduplicateConflictBlocks restores original document from bloated conflict markers', () => {
+  const originalDoc = {
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'Đoạn văn gốc nguyên bản của tác phẩm.' }] },
+      { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Phần I: Khởi nguyên' }] }
     ]
   };
 
-  const stateB = {
-    chapters: [
-      {
-        id: 'ch_exact_tie',
-        title: 'Chương Đồng Thời',
-        content: 'Bản thảo B gõ offline đồng thời: Nhân vật phản diện trốn thoát vào màn đêm dày đặc.',
-        updatedAt: exactTime,
-        contentUpdatedAt: exactTime
-      }
+  const bloatedDoc = {
+    type: 'doc',
+    content: [
+      ...originalDoc.content,
+      { type: 'paragraph', content: [{ type: 'text', text: '--- [Bản thảo thiết bị cục bộ - Nội dung xung đột được lưu lại] ---' }] },
+      ...originalDoc.content,
+      { type: 'paragraph', content: [{ type: 'text', text: '--- [Bản thảo đám mây - Nội dung xung đột được lưu lại] ---' }] },
+      ...originalDoc.content
     ]
   };
 
-  const { merged } = mergeWorkspaces(stateA, stateB);
-  const ch = merged.chapters[0];
-  assert.ok(ch.content.includes('luyện thành tuyệt kỹ võ công'), 'Draft A must be preserved');
-  assert.ok(ch.content.includes('trốn thoát vào màn đêm'), 'Draft B must be preserved');
-  assert.ok(ch.content.includes('Nội dung xung đột được lưu lại'), 'Conflict note must inform user');
+  const cleaned = deduplicateConflictBlocks(bloatedDoc);
+  assert.equal(cleaned.content.length, 2, 'Must strip all duplicated blocks after conflict marker');
+  assert.equal(cleaned.content[0].content[0].text, 'Đoạn văn gốc nguyên bản của tác phẩm.');
+  assert.equal(cleaned.content[1].content[0].text, 'Phần I: Khởi nguyên');
+
+  // Test with plain string format as well
+  const plainBloated = 'Đoạn gốc ban đầu\n\n--- [Bản thảo thiết bị - Nội dung xung đột được lưu lại] ---\n\nĐoạn copy lặp';
+  const plainCleaned = deduplicateConflictBlocks(plainBloated);
+  assert.equal(plainCleaned, 'Đoạn gốc ban đầu');
 });
 
 test('sync-core: Field-level merge preserves max titleUpdatedAt when title content is identical across devices', () => {

@@ -198,6 +198,51 @@ function extractPureText(node: any): string {
   return '';
 }
 
+/**
+ * Strips out duplicated conflict sections created by previous versions of appendConflictContent.
+ * Removes markers like "--- [Bản thảo... - Nội dung xung đột được lưu lại] ---" and subsequent duplicate copies.
+ */
+export function deduplicateConflictBlocks(rawContent: any): any {
+  if (!rawContent) return rawContent;
+  const isString = typeof rawContent === 'string';
+  if (isString) {
+    try {
+      const json = JSON.parse(rawContent);
+      if (json && typeof json === 'object' && Array.isArray(json.content)) {
+        const markerIdx = json.content.findIndex((b: any) => {
+          const text = (b?.content || []).map((x: any) => x.text || '').join('');
+          return text.includes('Nội dung xung đột được lưu lại');
+        });
+        if (markerIdx !== -1) {
+          const cleanedBlocks = json.content.slice(0, markerIdx);
+          return JSON.stringify({ ...json, content: cleanedBlocks });
+        }
+        return rawContent;
+      }
+    } catch {
+      // Plain text string (not JSON)
+    }
+
+    const markerIdx = rawContent.indexOf('--- [');
+    if (markerIdx !== -1 && rawContent.includes('Nội dung xung đột được lưu lại')) {
+      return rawContent.slice(0, markerIdx).trim();
+    }
+    return rawContent;
+  }
+
+  if (rawContent && typeof rawContent === 'object' && Array.isArray(rawContent.content)) {
+    const markerIdx = rawContent.content.findIndex((b: any) => {
+      const text = (b?.content || []).map((x: any) => x.text || '').join('');
+      return text.includes('Nội dung xung đột được lưu lại');
+    });
+    if (markerIdx !== -1) {
+      return { ...rawContent, content: rawContent.content.slice(0, markerIdx) };
+    }
+  }
+
+  return rawContent;
+}
+
 export function appendConflictContent(mainContent: any, conflictContent: any, conflictSource: string = 'Bản đồng bộ'): string {
   try {
     const mainJson = typeof mainContent === 'string' ? JSON.parse(mainContent) : mainContent;
@@ -423,12 +468,6 @@ export function mergeWorkspaces(
           const remoteHasSubstance = remoteLen > 40;
           const localIsEmpty = localLen <= 10;
 
-          // Check if concurrent edits within 2 minutes with non-overlapping content
-          const timeDiff = Math.abs(remoteContentUpdated - localContentUpdated);
-          const isConcurrent = timeDiff < 120000;
-          const bothSubstantive = localLen > 40 && remoteLen > 40;
-          const neitherContains = !remoteContentStr.includes(localContentStr) && !localContentStr.includes(remoteContentStr);
-
           if (localHasSubstance && remoteIsEmpty && remoteContentUpdated > localContentUpdated) {
             // Guard: Prevent empty/stale remote from wiping substantive local content
             resolvedContent = existing.content;
@@ -439,15 +478,6 @@ export function mergeWorkspaces(
             resolvedContent = rc.content;
             resolvedContentUpdated = remoteContentUpdated;
             hasRemoteChanges = true;
-          } else if (isConcurrent && bothSubstantive && neitherContains) {
-            // Concurrent editing conflict: keep newer as primary and append older with clear conflict header
-            const main = remoteContentUpdated >= localContentUpdated ? rc.content : existing.content;
-            const alt = remoteContentUpdated >= localContentUpdated ? existing.content : rc.content;
-            const source = remoteContentUpdated >= localContentUpdated ? 'Bản thảo thiết bị cục bộ' : 'Bản thảo đám mây';
-            resolvedContent = appendConflictContent(main, alt, source);
-            resolvedContentUpdated = Math.max(remoteContentUpdated, localContentUpdated);
-            hasRemoteChanges = true;
-            hasLocalChanges = true;
           } else if (remoteContentUpdated > localContentUpdated) {
             resolvedContent = rc.content;
             resolvedContentUpdated = remoteContentUpdated;
@@ -461,11 +491,11 @@ export function mergeWorkspaces(
             if (remoteLen >= localLen) {
               resolvedContent = rc.content;
               resolvedContentUpdated = remoteContentUpdated;
-              hasRemoteChanges = true;
+              if (remoteContentStr !== localContentStr) hasRemoteChanges = true;
             } else {
               resolvedContent = existing.content;
               resolvedContentUpdated = localContentUpdated;
-              hasLocalChanges = true;
+              if (remoteContentStr !== localContentStr) hasLocalChanges = true;
             }
           }
         }

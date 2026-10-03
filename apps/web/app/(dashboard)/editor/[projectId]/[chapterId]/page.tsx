@@ -33,7 +33,7 @@ import { playChapterSwitchSound, playSuccessSound, playPopSound, playDeleteSound
 import { SoundToggleButton } from '@/components/layout/sound-provider';
 import { SyncStatusButton } from '@/components/layout/sync-provider';
 import { pushSync, pullSync, triggerAutoPush, pauseAutoSync, resumeAutoSync } from '@/lib/sync';
-import { appendConflictContent } from '@/lib/sync-core';
+import { appendConflictContent, deduplicateConflictBlocks } from '@/lib/sync-core';
 import { MechKeyboardProvider, MechKeyboardToggle } from '@/components/editor/mech-keyboard-provider';
 
 const TiptapEditor = dynamic(
@@ -857,6 +857,34 @@ export default function ChapterEditorPage() {
               </Button>
               <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setAiSuggestion('')}>
                 <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Duplicated Conflict Blocks Cleanup Banner */}
+        {content && content.includes('Nội dung xung đột được lưu lại') && (
+          <div className="bg-sky-500/15 border-b border-sky-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs animate-in slide-in-from-top duration-150">
+            <div className="flex items-center gap-2 flex-1 min-w-[280px]">
+              <Sparkles className="w-4 h-4 text-sky-500 shrink-0" />
+              <span className="text-sky-800 dark:text-sky-200">
+                Phát hiện khối nội dung xung đột bị nhân bản từ lần đồng bộ trước ({countWords(content).toLocaleString()} từ).
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                className="h-7 text-xs bg-sky-600 hover:bg-sky-700 text-white font-medium shadow-xs"
+                onClick={() => {
+                  const cleaned = deduplicateConflictBlocks(contentRef.current);
+                  setContent(cleaned);
+                  isDirtyRef.current = true;
+                  lastContentEditedTimeRef.current = Date.now();
+                  saveChapter(cleaned, undefined, true);
+                  toast.success('Đã dọn dẹp các khối nhân bản và khôi phục văn bản chuẩn');
+                }}
+              >
+                Dọn dẹp & Khôi phục bản gốc
               </Button>
             </div>
           </div>

@@ -57,10 +57,26 @@ function formatPlainTextToHtml(text: string): string {
 function extractHeadingsFromEditor(ed: any): EditorHeading[] {
   if (!ed || !ed.state?.doc) return [];
   const list: EditorHeading[] = [];
-  ed.state.doc.descendants((node: any, pos: number) => {
+  const doc = ed.state.doc;
+  const blocks: Array<{ node: any; pos: number }> = [];
+  doc.forEach((node: any, pos: number) => {
+    blocks.push({ node, pos });
+  });
+
+  for (let i = 0; i < blocks.length; i++) {
+    const { node, pos } = blocks[i];
     if (node.type?.name === 'heading') {
       const level = Number(node.attrs?.level) || 1;
-      const text = node.textContent?.trim() || '';
+      let text = node.textContent?.trim() || '';
+      if (text && /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+        const next = blocks[i + 1]?.node;
+        if (next && next.type?.name === 'paragraph') {
+          const nextText = next.textContent?.trim() || '';
+          if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText)) {
+            text = `${text} ${nextText}`;
+          }
+        }
+      }
       if (text) {
         list.push({
           id: `heading-${pos}`,
@@ -74,16 +90,26 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
       if (text) {
         const detected = detectHeadingFromText(text);
         if (detected) {
+          let combinedText = detected.text;
+          if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(combinedText)) {
+            const next = blocks[i + 1]?.node;
+            if (next && next.type?.name === 'paragraph') {
+              const nextText = next.textContent?.trim() || '';
+              if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText)) {
+                combinedText = `${combinedText} ${nextText}`;
+              }
+            }
+          }
           list.push({
             id: `detected-${pos}`,
             level: detected.level,
-            text,
+            text: combinedText,
             pos
           });
         }
       }
     }
-  });
+  }
   return list;
 }
 

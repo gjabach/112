@@ -7,6 +7,7 @@ import {
   getCloudAccountKeys,
   unwrapWorkspace,
   mergeWorkspaces,
+  deduplicateConflictBlocks,
   type SyncStats,
   type SyncStatus,
   type CloudAccountKeys
@@ -19,6 +20,7 @@ export {
   getCloudAccountKeys,
   unwrapWorkspace,
   mergeWorkspaces,
+  deduplicateConflictBlocks,
   type SyncStats,
   type SyncStatus,
   type CloudAccountKeys
