@@ -22,7 +22,8 @@ import {
   X,
   Loader2,
   PanelLeft,
-  Download
+  Download,
+  AlertCircle
 } from 'lucide-react';
 import { DocumentTabsSidebar, buildTabTree, flattenTabTree, extractHeadingsFromContent, getSubtreeHeight, type TabTreeNode } from '@/components/editor/document-tabs-sidebar';
 import type { EditorHeading } from '@/components/editor/tiptap-editor';
@@ -32,6 +33,7 @@ import { playChapterSwitchSound, playSuccessSound, playPopSound, playDeleteSound
 import { SoundToggleButton } from '@/components/layout/sound-provider';
 import { SyncStatusButton } from '@/components/layout/sync-provider';
 import { pushSync, pullSync, triggerAutoPush, pauseAutoSync, resumeAutoSync } from '@/lib/sync';
+import { appendConflictContent } from '@/lib/sync-core';
 import { MechKeyboardProvider, MechKeyboardToggle } from '@/components/editor/mech-keyboard-provider';
 
 const TiptapEditor = dynamic(
@@ -73,6 +75,9 @@ export default function ChapterEditorPage() {
   const chapterRef = useRef(chapter);
   chapterRef.current = chapter;
   const lastKeystrokeTimeRef = useRef<number>(0);
+  const lastContentEditedTimeRef = useRef<number>(0);
+  const lastTitleEditedTimeRef = useRef<number>(0);
+  const [cloudConflict, setCloudConflict] = useState<any>(null);
 
   // Document Tabs sidebar state (persisted)
   const [showTabsSidebar, setShowTabsSidebar] = useState(() => {
@@ -124,24 +129,44 @@ export default function ChapterEditorPage() {
           const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
           setContent(safeContent);
           setLiveHeadings(extractHeadingsFromContent(safeContent));
+          lastContentEditedTimeRef.current = Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0);
+          lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
           isDirtyRef.current = false;
         } else {
           // Background sync refresh:
           if (savingRef.current) return;
           const incomingUpdated = Number(res.chapter.updatedAt || res.chapter.createdAt || 0);
           const currentLocalUpdated = Number(chapterRef.current?.updatedAt || chapterRef.current?.createdAt || 0);
-          const isActivelyTypingNow = Date.now() - lastKeystrokeTimeRef.current < 5000;
 
-          if (incomingUpdated > currentLocalUpdated && !isActivelyTypingNow) {
+          if (incomingUpdated > currentLocalUpdated) {
             const rawContent = res.chapter.content;
             const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
-            setChapter(res.chapter);
-            setTitle(res.chapter.title || 'Thẻ');
-            setContent(safeContent);
-            setLiveHeadings(extractHeadingsFromContent(safeContent));
-            isDirtyRef.current = false;
-            toast.info('Đã tự động cập nhật văn bản mới nhất từ đám mây', { id: 'sync-updated-notice', duration: 2500 });
-          } else if (!isDirtyRef.current && !isActivelyTypingNow && contentRef.current === chapterRef.current?.content) {
+
+            if (!isDirtyRef.current) {
+              setChapter(res.chapter);
+              setTitle(res.chapter.title || 'Thẻ');
+              setContent(safeContent);
+              setLiveHeadings(extractHeadingsFromContent(safeContent));
+              lastContentEditedTimeRef.current = Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0);
+              lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
+              setCloudConflict(null);
+              toast.info('Đã tự động cập nhật văn bản mới nhất từ đám mây', { id: 'sync-updated-notice', duration: 2500 });
+            } else if (safeContent !== contentRef.current) {
+              // User has active uncommitted typing in content: present conflict merge options
+              setCloudConflict(res.chapter);
+            } else if (res.chapter.title !== titleRef.current) {
+              // Content is identical, but title was changed in cloud
+              const userEditedTitle = titleRef.current !== (chapterRef.current?.title ?? '');
+              if (!userEditedTitle) {
+                // User only edited content, didn't edit title: safe to accept new title without touching editor
+                setTitle(res.chapter.title || 'Thẻ');
+                setChapter((prev: any) => ({ ...prev, title: res.chapter.title, titleUpdatedAt: res.chapter.titleUpdatedAt }));
+                lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
+              } else {
+                setCloudConflict(res.chapter);
+              }
+            }
+          } else if (!isDirtyRef.current && contentRef.current === chapterRef.current?.content) {
             const rawContent = res.chapter.content;
             const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
             if (safeContent !== contentRef.current) {
@@ -149,6 +174,8 @@ export default function ChapterEditorPage() {
               setTitle(res.chapter.title || 'Thẻ');
               setContent(safeContent);
               setLiveHeadings(extractHeadingsFromContent(safeContent));
+              lastContentEditedTimeRef.current = Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0);
+              lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
             }
           }
         }
@@ -170,7 +197,7 @@ export default function ChapterEditorPage() {
       fetchChapterData(true);
       pullSync(true)
         .then(() => {
-          if (!isDirtyRef.current && !savingRef.current && Date.now() - lastKeystrokeTimeRef.current > 5000) {
+          if (!isDirtyRef.current && !savingRef.current) {
             fetchChapterData(true);
           }
         })
@@ -184,7 +211,7 @@ export default function ChapterEditorPage() {
           setAllChapters(listRes.chapters);
         }
       } catch {}
-      if (!isDirtyRef.current && !savingRef.current && Date.now() - lastKeystrokeTimeRef.current > 5000) {
+      if (!savingRef.current) {
         fetchChapterData(false);
       }
     };
@@ -210,18 +237,41 @@ export default function ChapterEditorPage() {
     setSaving(true);
     try {
       const now = Date.now();
+      const contentChanged = contentToSave !== (chapterRef.current?.content ?? '');
+      const titleChanged = titleToSave !== (chapterRef.current?.title ?? '');
+
+      const contentUp = contentChanged
+        ? (lastContentEditedTimeRef.current || now)
+        : Number(chapterRef.current?.contentUpdatedAt || chapterRef.current?.updatedAt || now);
+
+      const titleUp = titleChanged
+        ? (lastTitleEditedTimeRef.current || now)
+        : Number(chapterRef.current?.titleUpdatedAt || chapterRef.current?.updatedAt || now);
+
       await apiFetch(`/api/chapters/${chapterId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           title: titleToSave,
           content: contentToSave,
           contentFormat: 'tiptap-json',
-          updatedAt: now
+          updatedAt: now,
+          contentUpdatedAt: contentUp,
+          titleUpdatedAt: titleUp
         })
       });
       setLastSaved(now);
-      setChapter((prev: any) => ({ ...prev, title: titleToSave, content: contentToSave, updatedAt: now }));
+      lastContentEditedTimeRef.current = contentUp;
+      lastTitleEditedTimeRef.current = titleUp;
+      setChapter((prev: any) => ({
+        ...prev,
+        title: titleToSave,
+        content: contentToSave,
+        updatedAt: now,
+        contentUpdatedAt: contentUp,
+        titleUpdatedAt: titleUp
+      }));
       isDirtyRef.current = false;
+      setCloudConflict(null);
       resumeAutoSync();
       playSuccessSound();
       if (isManual) {
@@ -235,6 +285,35 @@ export default function ChapterEditorPage() {
       setSaving(false);
     }
   }, [chapterId]);
+
+  const handleMergeConflict = () => {
+    if (!cloudConflict) return;
+    const mergedText = appendConflictContent(contentRef.current, cloudConflict.content, 'Bản đám mây');
+    const cloudTitleUpdated = Number(cloudConflict.titleUpdatedAt || cloudConflict.updatedAt || 0);
+    const localTitleUpdated = Number(chapterRef.current?.titleUpdatedAt || chapterRef.current?.updatedAt || 0);
+    const userEditedTitle = titleRef.current !== (chapterRef.current?.title ?? '');
+    const resolvedTitle = (!userEditedTitle && cloudTitleUpdated > localTitleUpdated)
+      ? (cloudConflict.title || titleRef.current)
+      : titleRef.current;
+
+    setContent(mergedText);
+    if (resolvedTitle !== titleRef.current) {
+      setTitle(resolvedTitle);
+    }
+    isDirtyRef.current = true;
+    lastContentEditedTimeRef.current = Date.now();
+    saveChapter(mergedText, resolvedTitle, true);
+    setCloudConflict(null);
+    toast.success('Đã hợp nhất nội dung từ đám mây vào văn bản hiện tại');
+  };
+
+  const handleKeepCurrent = () => {
+    lastContentEditedTimeRef.current = Date.now();
+    lastTitleEditedTimeRef.current = Date.now();
+    saveChapter(contentRef.current, titleRef.current, true);
+    setCloudConflict(null);
+    toast.info('Đã giữ bản thảo hiện tại trên thiết bị này');
+  };
 
   // Responsive auto-save: debounced 700ms after user stops typing
   useEffect(() => {
@@ -675,6 +754,7 @@ export default function ChapterEditorPage() {
               value={title}
               onChange={e => {
                 isDirtyRef.current = true;
+                lastTitleEditedTimeRef.current = Date.now();
                 setTitle(e.target.value);
               }}
               onBlur={() => saveChapter(undefined, title, true)}
@@ -782,6 +862,26 @@ export default function ChapterEditorPage() {
           </div>
         )}
 
+        {/* Cloud Conflict Warning Banner */}
+        {cloudConflict && (
+          <div className="bg-amber-500/15 border-b border-amber-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs animate-in slide-in-from-top duration-150">
+            <div className="flex items-center gap-2 flex-1 min-w-[280px]">
+              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+              <span className="text-amber-800 dark:text-amber-200">
+                <strong>Xung đột chỉnh sửa:</strong> Phát hiện bản cập nhật mới hơn từ đám mây trong khi bạn đang soạn thảo.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button size="sm" variant="default" className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium" onClick={handleMergeConflict}>
+                Xem & Hợp nhất
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs border-amber-500/40 text-amber-800 dark:text-amber-200 hover:bg-amber-500/10" onClick={handleKeepCurrent}>
+                Giữ bản hiện tại
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Main Body Layout */}
         <div className="flex-1 flex overflow-hidden min-h-0 relative">
           {/* Left Sidebar: Google Docs Document Tabs */}
@@ -825,6 +925,7 @@ export default function ChapterEditorPage() {
                 onChange={(newContent) => {
                   isDirtyRef.current = true;
                   lastKeystrokeTimeRef.current = Date.now();
+                  lastContentEditedTimeRef.current = Date.now();
                   pauseAutoSync();
                   setContent(newContent);
                 }}
@@ -836,6 +937,7 @@ export default function ChapterEditorPage() {
                   onChange={(newContent) => {
                     isDirtyRef.current = true;
                     lastKeystrokeTimeRef.current = Date.now();
+                    lastContentEditedTimeRef.current = Date.now();
                     pauseAutoSync();
                     setContent(newContent);
                   }}

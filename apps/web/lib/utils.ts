@@ -920,13 +920,32 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       const updated = chapters.map((c: any) => {
         if (c.id === id) {
           let content = c.content || '';
+          const contentChanged = (body.appendContent !== undefined) || (body.content !== undefined && body.content !== c.content);
+          const titleChanged = body.title !== undefined && body.title !== c.title;
+
+          const contentUpdatedAt = body.contentUpdatedAt
+            ? Number(body.contentUpdatedAt)
+            : (contentChanged ? now : Number(c.contentUpdatedAt || c.updatedAt || now));
+
+          const titleUpdatedAt = body.titleUpdatedAt
+            ? Number(body.titleUpdatedAt)
+            : (titleChanged ? now : Number(c.titleUpdatedAt || c.updatedAt || now));
+
           if (body.appendContent) {
             content = content ? `${content}\n\n${body.appendContent}` : body.appendContent;
           } else if (body.content !== undefined) {
             content = body.content;
           }
           const wordCount = countWords(content);
-          return { ...c, ...body, content, wordCount, updatedAt: now };
+          return {
+            ...c,
+            ...body,
+            content,
+            wordCount,
+            updatedAt: now,
+            contentUpdatedAt,
+            titleUpdatedAt
+          };
         }
         return c;
       });

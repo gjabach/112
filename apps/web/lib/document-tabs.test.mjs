@@ -25,9 +25,24 @@ function buildTabTree(chapters) {
     const node = idMap.get(c.id);
     if (!node) return;
 
-    if (c.parentId && idMap.has(c.parentId)) {
-      const parent = idMap.get(c.parentId);
-      parent.children.push(node);
+    if (c.parentId && c.parentId !== c.id && idMap.has(c.parentId)) {
+      let curr = c.parentId;
+      let hasCycle = false;
+      const visited = new Set([c.id]);
+      while (curr && idMap.has(curr)) {
+        if (visited.has(curr)) {
+          hasCycle = true;
+          break;
+        }
+        visited.add(curr);
+        curr = idMap.get(curr)?.parentId;
+      }
+      if (!hasCycle) {
+        const parent = idMap.get(c.parentId);
+        parent.children.push(node);
+      } else {
+        roots.push(node);
+      }
     } else {
       roots.push(node);
     }
@@ -148,7 +163,7 @@ function buildHeadingTree(headings) {
   return roots;
 }
 
-function detectHeadingFromText(rawText) {
+function detectHeadingFromText(rawText, options) {
   if (!rawText) return null;
   const normalized = rawText.normalize('NFC');
   const cleanedText = normalized.replace(/[\u200B-\u200D\uFEFF]/g, '');
@@ -161,11 +176,11 @@ function detectHeadingFromText(rawText) {
     return { level: mdMatch[1].length, text: mdMatch[2].trim() };
   }
 
-  // 2. Roman Numerals: I, II, III...
-  const romanMatch = trimmed.match(/^([IVXLCDM]+)[.,:\-)]\s*(.*)$/i);
+  // 2. Roman Numerals: I, II, III... up to XLIX (49)
+  // Uppercase only (NO /i flag) and single letters restricted to I, V, X to prevent outline letters (C., D., L., M.) from matching
+  const romanMatch = trimmed.match(/^(X{1,3}(?:IX|IV|V?I{0,3})?|XL(?:IX|IV|V?I{0,3})?|IX|IV|V?I{1,3}|V)(?:[.,:\-)]|\s+[–—-])\s*(.*)$/);
   if (romanMatch) {
-    const isUpper = romanMatch[1] === romanMatch[1].toUpperCase();
-    return { level: isUpper ? 1 : 2, text: trimmed };
+    return { level: 1, text: trimmed };
   }
 
   // 3. Named Structural Titles
@@ -186,22 +201,22 @@ function detectHeadingFromText(rawText) {
     return { level: Math.min(3, dots + 1), text: trimmed };
   }
 
-  // 5. Numbered Lists/Sections
-  const numMatch = trimmed.match(/^(\d+)[.,:\-)]\s+(.+)$/);
+  // 5. Numbered Sections with comma, colon, hyphen: "1, ...", "1: ...", "1 - ..."
+  // NOTE: Plain numbered lists with dot ("1. ") or closing paren ("1) ") are regular ordered lists in prose, NOT headings.
+  // Excluded by default to prevent normal paragraphs like "1. Mua bánh" from spamming subtabs.
+  const numMatch = options?.allowPlainNumberList
+    ? trimmed.match(/^(\d+)[.,:\-)]\s+(.+)$/)
+    : trimmed.match(/^(\d+)[,:\-]\s+(.+)$/);
   if (numMatch) {
     return { level: 2, text: trimmed };
   }
 
-  // 6. Alphabetic Sections
-  const alphaMatch = trimmed.match(/^([A-Z])[.,:\-)]\s+(.+)$/);
-  if (alphaMatch) {
-    return { level: 2, text: trimmed };
-  }
+  // 6. Alphabetic Sections ("A. ", "B. ") removed intentionally to prevent normal bulleted paragraphs like "A. Đi ngủ" from false matching.
 
   return null;
 }
 
-function extractHeadingsFromContent(rawContent) {
+function extractHeadingsFromContent(rawContent, options) {
   if (!rawContent) return [];
   const list = [];
 
@@ -232,10 +247,10 @@ function extractHeadingsFromContent(rawContent) {
                 pos: docPos
               });
             }
-          } else if (block.type === 'paragraph') {
+          } else if (block.type === 'paragraph' && !options?.disableAutoHeadings) {
             const text = (block.content || []).map((c) => c.text || '').join('').trim();
             if (text) {
-              const detected = detectHeadingFromText(text);
+              const detected = detectHeadingFromText(text, options);
               if (detected) {
                 list.push({
                   id: `p-${list.length}-${text.slice(0, 15)}`,
@@ -267,8 +282,8 @@ function extractHeadingsFromContent(rawContent) {
         level,
         text
       });
-    } else {
-      const detected = detectHeadingFromText(text);
+    } else if (!options?.disableAutoHeadings) {
+      const detected = detectHeadingFromText(text, options);
       if (detected) {
         list.push({
           id: `p-${list.length}-${text.slice(0, 15)}`,
@@ -517,6 +532,56 @@ test('Google Docs Automatic Subtabs - Robustly detects decomposed unicode Vietna
   assert.strictEqual(extracted[1].level, 2, '1.1. should be level 2');
 });
 
+test('Google Docs Automatic Subtabs - Does not falsely match normal paragraphs like "c. ", "1. ", "A. "', () => {
+  const normalParagraphs = [
+    'c. Tóm lại là câu chuyện đã kết thúc.',
+    'i. Đây là một đoạn văn bình thường bắt đầu bằng chữ i.',
+    'v. Và đây là đoạn bắt đầu bằng chữ v.',
+    'C. Tóm lại là câu chuyện đã kết thúc.',
+    'D. Kết luận cuộc điều tra.',
+    'M. Thư viện sách cổ.',
+    'L. Ghi chú thêm ở cuối trang.',
+    '1. Mua bánh mì cho bữa sáng',
+    '2. Đi chợ mua rau củ',
+    'A. Đi ngủ sớm vào buổi tối',
+    'B. Thức dậy tập thể dục',
+    '1) Một danh sách số có dấu ngoặc tròn'
+  ];
+
+  for (const text of normalParagraphs) {
+    const detected = detectHeadingFromText(text);
+    assert.strictEqual(detected, null, `"${text}" must NOT be detected as a heading`);
+  }
+
+  // True Roman numerals must still be recognized accurately
+  const validRomanHeadings = [
+    { text: 'I, aceererf', level: 1 },
+    { text: 'II, nrfnerjf', level: 1 },
+    { text: 'III - Cao trào', level: 1 },
+    { text: 'IV: Kết thúc', level: 1 },
+    { text: 'V. Khởi sắc', level: 1 },
+    { text: 'X. Tổng kết', level: 1 },
+    { text: 'XXI. Thế kỷ mới', level: 1 }
+  ];
+
+  for (const item of validRomanHeadings) {
+    const detected = detectHeadingFromText(item.text);
+    assert.ok(detected, `"${item.text}" should be detected as heading`);
+    assert.strictEqual(detected.level, item.level);
+  }
+
+  const docJson = JSON.stringify({
+    type: 'doc',
+    content: normalParagraphs.map(text => ({
+      type: 'paragraph',
+      content: [{ type: 'text', text }]
+    }))
+  });
+
+  const extracted = extractHeadingsFromContent(docJson);
+  assert.strictEqual(extracted.length, 0, 'Must not extract any false subtabs from normal list/text paragraphs');
+});
+
 // =====================================================================
 // Requirement 1: handleMoveTab - sibling-only swap logic
 // =====================================================================
@@ -691,6 +756,19 @@ test('Document Tabs - Cycle detection prevents circular reparenting', () => {
   const grandChildCheck = validateReparenting(chapters, 'A', 'C');
   assert.strictEqual(grandChildCheck.ok, false);
   assert.strictEqual(grandChildCheck.error, 'Quan hệ phân cấp vòng tròn không hợp lệ');
+});
+
+test('Document Tabs - buildTabTree safely handles cyclic parentId without stack overflow', () => {
+  const cyclicChapters = [
+    { id: 'cycle_1', title: 'Thẻ 1', parentId: 'cycle_2', orderIndex: 1 },
+    { id: 'cycle_2', title: 'Thẻ 2', parentId: 'cycle_1', orderIndex: 1 },
+    { id: 'self_cycle', title: 'Thẻ tự lặp', parentId: 'self_cycle', orderIndex: 2 }
+  ];
+
+  // Must not throw RangeError: Maximum call stack size exceeded
+  const tree = buildTabTree(cyclicChapters);
+  assert.ok(Array.isArray(tree));
+  assert.strictEqual(tree.length > 0, true, 'Cyclic nodes should fall back to root tabs');
 });
 
 // =====================================================================

@@ -70,7 +70,7 @@ export interface HeadingTreeNode {
  * - Alphabetic sections: "A, ...", "B, ...", "A. ..."
  * - Markdown headings: "# ...", "## ..."
  */
-export function detectHeadingFromText(rawText: string): { level: number; text: string } | null {
+export function detectHeadingFromText(rawText: string, options?: { allowPlainNumberList?: boolean }): { level: number; text: string } | null {
   if (!rawText) return null;
   // Normalize Unicode to NFC to handle decomposed diacritics (e.g. from MacOS or Unikey)
   const normalized = rawText.normalize('NFC');
@@ -85,12 +85,13 @@ export function detectHeadingFromText(rawText: string): { level: number; text: s
     return { level: mdMatch[1].length, text: mdMatch[2].trim() };
   }
 
-  // 2. Roman Numerals: I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII...
-  // E.g.: "I, aceererf", "II, nrfnerjf", "I. Khởi đầu", "III - Cao trào", "IV: Kết thúc"
-  const romanMatch = trimmed.match(/^([IVXLCDM]+)[.,:\-)]\s*(.*)$/i);
+  // 2. Roman Numerals: I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII... up to XLIX (49)
+  // Strict regex: uppercase valid Roman numeral sequences only.
+  // Note: Standalone single letters 'A'-'Z' (except 'I', 'V', 'X') are excluded because in Vietnamese and English prose
+  // they are outline bullet items (e.g. "A. ", "B. ", "C. ", "D. ", "L. ", "M. ") or abbreviations, NOT headings.
+  const romanMatch = trimmed.match(/^(X{1,3}(?:IX|IV|V?I{0,3})?|XL(?:IX|IV|V?I{0,3})?|IX|IV|V?I{1,3}|V)(?:[.,:\-)]|\s+[–—-])\s*(.*)$/);
   if (romanMatch) {
-    const isUpper = romanMatch[1] === romanMatch[1].toUpperCase();
-    return { level: isUpper ? 1 : 2, text: trimmed };
+    return { level: 1, text: trimmed };
   }
 
   // 3. Named Structural Titles: Chương, Hồi, Phần, Quyển, Tập, Mục, Tiết, Bài, Cảnh...
@@ -112,17 +113,17 @@ export function detectHeadingFromText(rawText: string): { level: number; text: s
     return { level: Math.min(3, dots + 1), text: trimmed };
   }
 
-  // 5. Numbered Lists/Sections: "1, ...", "1. ...", "1: ...", "1) ..."
-  const numMatch = trimmed.match(/^(\d+)[.,:\-)]\s+(.+)$/);
+  // 5. Numbered Sections with comma, colon, hyphen: "1, ...", "1: ...", "1 - ..."
+  // NOTE: Plain numbered lists with dot ("1. ") or closing paren ("1) ") are regular ordered lists in prose, NOT headings.
+  // Excluded by default to prevent normal paragraphs like "1. Mua bánh" from spamming subtabs.
+  const numMatch = options?.allowPlainNumberList
+    ? trimmed.match(/^(\d+)[.,:\-)]\s+(.+)$/)
+    : trimmed.match(/^(\d+)[,:\-]\s+(.+)$/);
   if (numMatch) {
     return { level: 2, text: trimmed };
   }
 
-  // 6. Alphabetic Sections: "A, ...", "A. ...", "B, ...", "B. ..."
-  const alphaMatch = trimmed.match(/^([A-Z])[.,:\-)]\s+(.+)$/);
-  if (alphaMatch) {
-    return { level: 2, text: trimmed };
-  }
+  // 6. Alphabetic Sections ("A. ", "B. ") removed intentionally to prevent normal bulleted paragraphs like "A. Đi ngủ" from false matching.
 
   return null;
 }
@@ -152,7 +153,10 @@ export function buildHeadingTree(headings: HeadingItem[]): HeadingTreeNode[] {
   return roots;
 }
 
-export function extractHeadingsFromContent(rawContent?: string): HeadingItem[] {
+export function extractHeadingsFromContent(
+  rawContent?: string,
+  options?: { allowPlainNumberList?: boolean; disableAutoHeadings?: boolean }
+): HeadingItem[] {
   if (!rawContent) return [];
   const list: HeadingItem[] = [];
 
@@ -183,10 +187,10 @@ export function extractHeadingsFromContent(rawContent?: string): HeadingItem[] {
                 pos: docPos
               });
             }
-          } else if (block.type === 'paragraph') {
+          } else if (block.type === 'paragraph' && !options?.disableAutoHeadings) {
             const text = (block.content || []).map((c: any) => c.text || '').join('').trim();
             if (text) {
-              const detected = detectHeadingFromText(text);
+              const detected = detectHeadingFromText(text, options);
               if (detected) {
                 list.push({
                   id: `p-${list.length}-${text.slice(0, 15)}`,
@@ -219,8 +223,8 @@ export function extractHeadingsFromContent(rawContent?: string): HeadingItem[] {
         level,
         text
       });
-    } else {
-      const detected = detectHeadingFromText(text);
+    } else if (!options?.disableAutoHeadings) {
+      const detected = detectHeadingFromText(text, options);
       if (detected) {
         list.push({
           id: `p-${list.length}-${text.slice(0, 15)}`,
@@ -283,9 +287,25 @@ export function buildTabTree(chapters: ChapterTab[]): TabTreeNode[] {
     const node = idMap.get(c.id);
     if (!node) return;
 
-    if (c.parentId && idMap.has(c.parentId)) {
-      const parent = idMap.get(c.parentId)!;
-      parent.children.push(node);
+    if (c.parentId && c.parentId !== c.id && idMap.has(c.parentId)) {
+      // Cycle detection: ensure c.parentId does not have c.id in its ancestor chain
+      let curr: string | null | undefined = c.parentId;
+      let hasCycle = false;
+      const visited = new Set<string>([c.id]);
+      while (curr && idMap.has(curr)) {
+        if (visited.has(curr)) {
+          hasCycle = true;
+          break;
+        }
+        visited.add(curr);
+        curr = idMap.get(curr)?.parentId;
+      }
+      if (!hasCycle) {
+        const parent = idMap.get(c.parentId)!;
+        parent.children.push(node);
+      } else {
+        roots.push(node);
+      }
     } else {
       roots.push(node);
     }

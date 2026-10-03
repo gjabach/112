@@ -1,6 +1,6 @@
 'use client';
 import { useEditor, EditorContent } from '@tiptap/react';
-import { TextSelection } from '@tiptap/pm/state';
+import { TextSelection, Selection } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import CharacterCount from '@tiptap/extension-character-count';
@@ -172,22 +172,58 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   }, [editor, openFindReplace]);
 
   useEffect(() => {
-    if (!editor || !content) return;
+    if (!editor || content === undefined || content === null) return;
     // Skip if content matches what this editor instance just emitted to avoid circular re-renders
     if (content === lastEmittedContentRef.current) return;
 
-    // Guard: If user was actively typing on this device within the last 5000ms, do not clobber active keystrokes
-    if (Date.now() - lastUserTypingTimeRef.current < 5000) {
-      return;
-    }
-
     try {
-      const parsed = typeof content === 'object' ? content : JSON.parse(content);
-      editor.commands.setContent(parsed);
-      lastEmittedContentRef.current = typeof content === 'string' ? content : JSON.stringify(content);
+      const parsed = typeof content === 'object' ? content : (content ? JSON.parse(content) : '');
+      const incomingJsonStr = typeof content === 'string' ? content : JSON.stringify(content);
+
+      // Deep compare current editor JSON to avoid unnecessary re-renders if document is identical
+      const currentJsonStr = JSON.stringify(editor.getJSON());
+      if (currentJsonStr === incomingJsonStr) {
+        lastEmittedContentRef.current = incomingJsonStr;
+        return;
+      }
+
+      // Preserve selection and focus state to avoid cursor jumping to top
+      const { from, to } = editor.state.selection;
+      const wasFocused = editor.isFocused;
+
+      editor.commands.setContent(parsed, false);
+      lastEmittedContentRef.current = incomingJsonStr;
+
+      // Restore selection to closest valid position in new document
+      const docSize = editor.state.doc.content.size;
+      const targetFrom = Math.max(0, Math.min(from, docSize));
+      const targetTo = Math.max(targetFrom, Math.min(to, docSize));
+
+      try {
+        if (targetFrom > 0 && targetTo > targetFrom) {
+          const $from = editor.state.doc.resolve(targetFrom);
+          const $to = editor.state.doc.resolve(targetTo);
+          const sel = TextSelection.between($from, $to);
+          editor.view.dispatch(editor.state.tr.setSelection(sel));
+        } else {
+          const $pos = editor.state.doc.resolve(targetFrom);
+          const sel = Selection.near($pos);
+          editor.view.dispatch(editor.state.tr.setSelection(sel));
+        }
+        if (wasFocused) {
+          editor.view.focus();
+        }
+      } catch {
+        try {
+          const sel = Selection.atStart(editor.state.doc);
+          editor.view.dispatch(editor.state.tr.setSelection(sel));
+          if (wasFocused) editor.view.focus();
+        } catch {}
+      }
     } catch {
       if (editor.isEmpty && content) {
-        editor.commands.setContent(formatPlainTextToHtml(content));
+        editor.commands.setContent(formatPlainTextToHtml(content), false);
+        lastEmittedContentRef.current = content;
       }
     }
   }, [content, editor]);

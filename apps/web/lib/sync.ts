@@ -160,25 +160,27 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
       finalData = merged;
     }
 
-    // Fix orderIndex collisions: ensure unique sequential orderIndex per project
+    // Fix orderIndex collisions: group chapters by sibling level (projectId + '::' + (parentId || 'root'))
+    // to ensure sequential orderIndex per sibling group, respecting the document tab hierarchy.
     if (Array.isArray(finalData.chapters)) {
-      const byProject = new Map<string, any[]>();
+      const byParentGroup = new Map<string, any[]>();
       for (const ch of finalData.chapters) {
-        const pid = ch.projectId || 'unknown';
-        if (!byProject.has(pid)) byProject.set(pid, []);
-        byProject.get(pid)!.push(ch);
+        const parentKey = ch.parentId ? String(ch.parentId) : 'root';
+        const groupKey = `${ch.projectId || 'unknown'}::${parentKey}`;
+        if (!byParentGroup.has(groupKey)) byParentGroup.set(groupKey, []);
+        byParentGroup.get(groupKey)!.push(ch);
       }
-      for (const [, projectChapters] of byProject) {
-        projectChapters.sort((a: any, b: any) => {
-          const oa = a.orderIndex || 0;
-          const ob = b.orderIndex || 0;
+      for (const [, siblingChapters] of byParentGroup) {
+        siblingChapters.sort((a: any, b: any) => {
+          const oa = typeof a.orderIndex === 'number' ? a.orderIndex : 0;
+          const ob = typeof b.orderIndex === 'number' ? b.orderIndex : 0;
           if (oa !== ob) return oa - ob;
           const ca = a.createdAt || 0;
           const cb = b.createdAt || 0;
           if (ca !== cb) return ca - cb;
           return String(a.id || '').localeCompare(String(b.id || ''));
         });
-        projectChapters.forEach((ch: any, idx: number) => {
+        siblingChapters.forEach((ch: any, idx: number) => {
           ch.orderIndex = idx + 1;
         });
       }

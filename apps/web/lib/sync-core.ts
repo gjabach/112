@@ -165,6 +165,80 @@ export function unwrapWorkspace(data: any): any {
   return data;
 }
 
+export function countWords(text: any): number {
+  if (!text) return 0;
+  if (typeof text !== 'string') {
+    if (typeof text === 'object') {
+      try {
+        const plain = extractPureText(text);
+        return plain.trim().split(/\s+/).filter(Boolean).length;
+      } catch {
+        return 0;
+      }
+    }
+    return 0;
+  }
+  try {
+    const json = JSON.parse(text);
+    if (json && typeof json === 'object') {
+      const plain = extractPureText(json);
+      return plain.trim().split(/\s+/).filter(Boolean).length;
+    }
+  } catch {}
+  return String(text).trim().split(/\s+/).filter(Boolean).length;
+}
+
+function extractPureText(node: any): string {
+  if (!node) return '';
+  if (typeof node === 'string') return node;
+  if (node.text) return String(node.text);
+  if (Array.isArray(node.content)) {
+    return node.content.map(extractPureText).join(' ');
+  }
+  return '';
+}
+
+export function appendConflictContent(mainContent: any, conflictContent: any, conflictSource: string = 'Bản đồng bộ'): string {
+  try {
+    const mainJson = typeof mainContent === 'string' ? JSON.parse(mainContent) : mainContent;
+    const conflictJson = typeof conflictContent === 'string' ? JSON.parse(conflictContent) : conflictContent;
+    if (mainJson && typeof mainJson === 'object' && Array.isArray(mainJson.content)) {
+      const conflictBlocks = (conflictJson && Array.isArray(conflictJson.content))
+        ? conflictJson.content
+        : [{ type: 'paragraph', content: [{ type: 'text', text: typeof conflictContent === 'string' ? conflictContent : JSON.stringify(conflictContent) }] }];
+
+      const mergedContent = [
+        ...mainJson.content,
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: `--- [${conflictSource} - Nội dung xung đột được lưu lại] ---` }]
+        },
+        ...conflictBlocks
+      ];
+      return JSON.stringify({ ...mainJson, content: mergedContent });
+    } else if (conflictJson && typeof conflictJson === 'object' && Array.isArray(conflictJson.content)) {
+      // Main is plain text, but conflict is TipTap JSON: convert main to TipTap document
+      const mainText = typeof mainContent === 'string' ? mainContent : '';
+      const mainBlocks = mainText
+        ? [{ type: 'paragraph', content: [{ type: 'text', text: mainText }] }]
+        : [];
+      const mergedContent = [
+        ...mainBlocks,
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: `--- [${conflictSource} - Nội dung xung đột được lưu lại] ---` }]
+        },
+        ...conflictJson.content
+      ];
+      return JSON.stringify({ type: 'doc', content: mergedContent });
+    }
+  } catch {}
+
+  const mainStr = typeof mainContent === 'string' ? mainContent : JSON.stringify(mainContent);
+  const conflictStr = typeof conflictContent === 'string' ? conflictContent : JSON.stringify(conflictContent);
+  return `${mainStr}\n\n--- [${conflictSource} - Nội dung xung đột được lưu lại] ---\n\n${conflictStr}`;
+}
+
 /**
  * Intelligent bidirectional merge for workspaces based on strict Last-Write-Wins (LWW) with Tombstones.
  * Guarantees that:
@@ -175,7 +249,7 @@ export function unwrapWorkspace(data: any): any {
  * 3. TOMBSTONES DELETIONS: If an entity was deleted on any device (recorded in tombstones with deletedAt timestamp),
  *    it is NEVER resurrected unless a device wrote a genuinely newer version (updatedAt > deletedAt).
  *    Cascade deletion of projects also suppresses all child chapters, characters, and outline items.
- * 4. orderIndex collisions are resolved sequentially per project (1, 2, 3...).
+ * 4. orderIndex collisions are resolved sequentially per sibling group (parentId), respecting the tree hierarchy.
  * 5. Project chapterCount and wordCount are strictly recomputed from the merged chapter list.
  */
 export function mergeWorkspaces(
@@ -285,41 +359,139 @@ export function mergeWorkspaces(
       hasRemoteChanges = true;
     } else {
       const localUpdated = Number(existing.updatedAt || existing.createdAt || 0);
+      const remoteUpdated = Number(rc.updatedAt || rc.createdAt || 0);
+
+      const localContentUpdated = Number(existing.contentUpdatedAt || localUpdated);
+      const remoteContentUpdated = Number(rc.contentUpdatedAt || remoteUpdated);
+
+      const localTitleUpdated = Number(existing.titleUpdatedAt || localUpdated);
+      const remoteTitleUpdated = Number(rc.titleUpdatedAt || remoteUpdated);
+
       const remoteContentStr = typeof rc.content === 'string' ? rc.content : JSON.stringify(rc.content || '');
       const localContentStr = typeof existing.content === 'string' ? existing.content : JSON.stringify(existing.content || '');
-      const isDifferent = 
-        remoteContentStr !== localContentStr || 
-        rc.title !== existing.title ||
-        Number(rc.orderIndex ?? 0) !== Number(existing.orderIndex ?? 0) ||
-        (rc.parentId || null) !== (existing.parentId || null) ||
-        (rc.emoji || null) !== (existing.emoji || null);
+
+      const isContentDifferent = remoteContentStr !== localContentStr;
+      const isTitleDifferent = rc.title !== existing.title;
+      const isOrderDifferent = Number(rc.orderIndex ?? 0) !== Number(existing.orderIndex ?? 0);
+      const isParentDifferent = (rc.parentId || null) !== (existing.parentId || null);
+      const isEmojiDifferent = (rc.emoji || null) !== (existing.emoji || null);
+
+      const isDifferent = isContentDifferent || isTitleDifferent || isOrderDifferent || isParentDifferent || isEmojiDifferent;
 
       if (!isDifferent) {
-        // Content and title are identical: unify with the latest timestamp
+        // Content and metadata are identical: unify with the latest timestamp
         const maxUpdated = Math.max(remoteUpdated, localUpdated);
-        chapterMap.set(rc.id, { ...existing, ...rc, updatedAt: maxUpdated });
-      } else if (remoteUpdated > localUpdated) {
-        // REMOTE IS STRICTLY NEWER -> Remote is canonical (bản chính)
-        chapterMap.set(rc.id, { ...existing, ...rc });
-        hasRemoteChanges = true;
-      } else if (localUpdated > remoteUpdated) {
-        // LOCAL IS STRICTLY NEWER -> Local is canonical (bản chính)
-        chapterMap.set(rc.id, { ...rc, ...existing });
-        hasLocalChanges = true;
+        chapterMap.set(rc.id, {
+          ...existing,
+          ...rc,
+          updatedAt: maxUpdated,
+          contentUpdatedAt: Math.max(localContentUpdated, remoteContentUpdated),
+          titleUpdatedAt: Math.max(localTitleUpdated, remoteTitleUpdated)
+        });
       } else {
-        // Timestamps are exactly equal but content differs (rare tie-break):
-        const remoteHasContent = !!remoteContentStr.trim();
-        const localHasContent = !!localContentStr.trim();
-        if (!localHasContent && remoteHasContent) {
-          chapterMap.set(rc.id, { ...existing, ...rc });
-          hasRemoteChanges = true;
-        } else if (localHasContent && !remoteHasContent) {
-          chapterMap.set(rc.id, { ...rc, ...existing });
-          hasLocalChanges = true;
-        } else {
-          chapterMap.set(rc.id, { ...existing, ...rc });
-          hasRemoteChanges = true;
+        // 1. Field-level merge for Title
+        let resolvedTitle = existing.title;
+        let resolvedTitleUpdated = Math.max(localTitleUpdated, remoteTitleUpdated);
+        if (isTitleDifferent) {
+          if (remoteTitleUpdated > localTitleUpdated) {
+            resolvedTitle = rc.title;
+            resolvedTitleUpdated = remoteTitleUpdated;
+            hasRemoteChanges = true;
+          } else if (localTitleUpdated > remoteTitleUpdated) {
+            resolvedTitle = existing.title;
+            resolvedTitleUpdated = localTitleUpdated;
+            hasLocalChanges = true;
+          } else {
+            resolvedTitle = remoteUpdated >= localUpdated ? rc.title : existing.title;
+            if (remoteUpdated >= localUpdated) hasRemoteChanges = true;
+            else hasLocalChanges = true;
+          }
         }
+
+        // 2. Anti-data loss merge for Content
+        let resolvedContent = existing.content;
+        let resolvedContentUpdated = Math.max(localContentUpdated, remoteContentUpdated);
+        if (isContentDifferent) {
+          const localTrimmed = localContentStr.trim();
+          const remoteTrimmed = remoteContentStr.trim();
+          const localLen = localTrimmed.length;
+          const remoteLen = remoteTrimmed.length;
+
+          // Check if one side has substantive content while the other is empty or placeholder
+          const localHasSubstance = localLen > 40;
+          const remoteIsEmpty = remoteLen <= 10;
+          const remoteHasSubstance = remoteLen > 40;
+          const localIsEmpty = localLen <= 10;
+
+          // Check if concurrent edits within 2 minutes with non-overlapping content
+          const timeDiff = Math.abs(remoteContentUpdated - localContentUpdated);
+          const isConcurrent = timeDiff < 120000;
+          const bothSubstantive = localLen > 40 && remoteLen > 40;
+          const neitherContains = !remoteContentStr.includes(localContentStr) && !localContentStr.includes(remoteContentStr);
+
+          if (localHasSubstance && remoteIsEmpty && remoteContentUpdated > localContentUpdated) {
+            // Guard: Prevent empty/stale remote from wiping substantive local content
+            resolvedContent = existing.content;
+            resolvedContentUpdated = localContentUpdated;
+            hasLocalChanges = true;
+          } else if (remoteHasSubstance && localIsEmpty && localContentUpdated > remoteContentUpdated) {
+            // Guard: Prevent empty/stale local from wiping substantive remote content
+            resolvedContent = rc.content;
+            resolvedContentUpdated = remoteContentUpdated;
+            hasRemoteChanges = true;
+          } else if (isConcurrent && bothSubstantive && neitherContains) {
+            // Concurrent editing conflict: keep newer as primary and append older with clear conflict header
+            const main = remoteContentUpdated >= localContentUpdated ? rc.content : existing.content;
+            const alt = remoteContentUpdated >= localContentUpdated ? existing.content : rc.content;
+            const source = remoteContentUpdated >= localContentUpdated ? 'Bản thảo thiết bị cục bộ' : 'Bản thảo đám mây';
+            resolvedContent = appendConflictContent(main, alt, source);
+            resolvedContentUpdated = Math.max(remoteContentUpdated, localContentUpdated);
+            hasRemoteChanges = true;
+            hasLocalChanges = true;
+          } else if (remoteContentUpdated > localContentUpdated) {
+            resolvedContent = rc.content;
+            resolvedContentUpdated = remoteContentUpdated;
+            hasRemoteChanges = true;
+          } else if (localContentUpdated > remoteContentUpdated) {
+            resolvedContent = existing.content;
+            resolvedContentUpdated = localContentUpdated;
+            hasLocalChanges = true;
+          } else {
+            // Equal timestamps tie-break: longer substantive text wins
+            if (remoteLen >= localLen) {
+              resolvedContent = rc.content;
+              resolvedContentUpdated = remoteContentUpdated;
+              hasRemoteChanges = true;
+            } else {
+              resolvedContent = existing.content;
+              resolvedContentUpdated = localContentUpdated;
+              hasLocalChanges = true;
+            }
+          }
+        }
+
+        // 3. Metadata resolution (orderIndex, parentId, emoji)
+        const newerEntity = remoteUpdated >= localUpdated ? rc : existing;
+        if (remoteUpdated > localUpdated) hasRemoteChanges = true;
+        if (localUpdated > remoteUpdated) hasLocalChanges = true;
+
+        const maxFinalUpdated = Math.max(remoteUpdated, localUpdated, resolvedContentUpdated, resolvedTitleUpdated);
+        const resolvedWords = (resolvedContent === rc.content ? rc.wordCount : existing.wordCount) ?? countWords(resolvedContent);
+
+        const mergedChapter = {
+          ...existing,
+          ...rc,
+          title: resolvedTitle,
+          content: resolvedContent,
+          orderIndex: newerEntity.orderIndex !== undefined ? newerEntity.orderIndex : (existing.orderIndex ?? rc.orderIndex ?? 1),
+          parentId: newerEntity.parentId !== undefined ? newerEntity.parentId : (existing.parentId || null),
+          emoji: newerEntity.emoji !== undefined ? newerEntity.emoji : (existing.emoji || null),
+          updatedAt: maxFinalUpdated,
+          contentUpdatedAt: resolvedContentUpdated,
+          titleUpdatedAt: resolvedTitleUpdated,
+          wordCount: resolvedWords
+        };
+        chapterMap.set(rc.id, mergedChapter);
       }
     }
   }
@@ -334,26 +506,28 @@ export function mergeWorkspaces(
 
   const rawMergedChapters = Array.from(chapterMap.values());
 
-  // Fix orderIndex collisions: ensure unique sequential orderIndex per project
-  const byProject = new Map<string, any[]>();
+  // Fix orderIndex collisions: group chapters by sibling level (projectId + '::' + (parentId || 'root'))
+  // to ensure sequential orderIndex per sibling group, respecting the document tab hierarchy.
+  const byParentGroup = new Map<string, any[]>();
   for (const ch of rawMergedChapters) {
-    const pid = ch.projectId || 'unknown';
-    if (!byProject.has(pid)) byProject.set(pid, []);
-    byProject.get(pid)!.push(ch);
+    const parentKey = ch.parentId ? String(ch.parentId) : 'root';
+    const groupKey = `${ch.projectId || 'unknown'}::${parentKey}`;
+    if (!byParentGroup.has(groupKey)) byParentGroup.set(groupKey, []);
+    byParentGroup.get(groupKey)!.push(ch);
   }
 
   const mergedChapters: any[] = [];
-  for (const [, projectChapters] of byProject) {
-    projectChapters.sort((a: any, b: any) => {
-      const oa = a.orderIndex || 0;
-      const ob = b.orderIndex || 0;
+  for (const [, siblingChapters] of byParentGroup) {
+    siblingChapters.sort((a: any, b: any) => {
+      const oa = typeof a.orderIndex === 'number' ? a.orderIndex : 0;
+      const ob = typeof b.orderIndex === 'number' ? b.orderIndex : 0;
       if (oa !== ob) return oa - ob;
       const ca = a.createdAt || 0;
       const cb = b.createdAt || 0;
       if (ca !== cb) return ca - cb;
       return String(a.id || '').localeCompare(String(b.id || ''));
     });
-    projectChapters.forEach((ch: any, idx: number) => {
+    siblingChapters.forEach((ch: any, idx: number) => {
       ch.orderIndex = idx + 1;
       mergedChapters.push(ch);
     });

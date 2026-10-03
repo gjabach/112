@@ -1149,7 +1149,7 @@ test('Smart Merge: Merging PC cloud workspace (with Chapter 2) into Mobile (with
   assert.equal(ch1.content, 'Nội dung chương 1 trên PC');
 });
 
-import { mergeWorkspaces, getEmailAliases, getCloudAccountKeys, unwrapWorkspace } from './sync-core.ts';
+import { mergeWorkspaces, getEmailAliases, getCloudAccountKeys, unwrapWorkspace, appendConflictContent } from './sync-core.ts';
 
 test('sync-core: strict account isolation ensures gjabach0508@gmail.com and giabach0508@gmail.com are never aliased or cross-merged', () => {
   const aliases1 = getEmailAliases('gjabach0508@gmail.com');
@@ -1676,6 +1676,242 @@ test('sync-core: Genuinely new chapters created on Device B are still safely add
   assert.ok(merged.chapters.some(c => c.id === 'ch_brand_new_on_phone'));
   assert.ok(merged.chapters.some(c => c.id === 'ch_1'));
 });
+
+test('sync-core: Tab hierarchy orderIndex collision resolves per parentId without flattening tree', () => {
+  // Tree structure:
+  // Root 1 (parentId: null, orderIndex: 1)
+  //   Subtab 1.1 (parentId: root_1, orderIndex: 1)
+  //   Subtab 1.2 (parentId: root_1, orderIndex: 1) <- Collision with 1.1!
+  // Root 2 (parentId: null, orderIndex: 1) <- Collision with Root 1!
+  //   Subtab 2.1 (parentId: root_2, orderIndex: 1)
+  const workspaceWithTreeCollisions = {
+    version: 2,
+    projects: [{ id: 'p1', title: 'Cấu trúc cây' }],
+    chapters: [
+      { id: 'root_1', projectId: 'p1', title: 'Tập 1', parentId: null, orderIndex: 1, createdAt: 1000 },
+      { id: 'sub_1_1', projectId: 'p1', title: 'Chương 1.1', parentId: 'root_1', orderIndex: 1, createdAt: 1100 },
+      { id: 'sub_1_2', projectId: 'p1', title: 'Chương 1.2', parentId: 'root_1', orderIndex: 1, createdAt: 1200 },
+      { id: 'root_2', projectId: 'p1', title: 'Tập 2', parentId: null, orderIndex: 1, createdAt: 2000 },
+      { id: 'sub_2_1', projectId: 'p1', title: 'Chương 2.1', parentId: 'root_2', orderIndex: 1, createdAt: 2100 }
+    ]
+  };
+
+  const { merged } = mergeWorkspaces({}, workspaceWithTreeCollisions);
+  assert.equal(merged.chapters.length, 5);
+
+  const root1 = merged.chapters.find(c => c.id === 'root_1');
+  const root2 = merged.chapters.find(c => c.id === 'root_2');
+  const sub11 = merged.chapters.find(c => c.id === 'sub_1_1');
+  const sub12 = merged.chapters.find(c => c.id === 'sub_1_2');
+  const sub21 = merged.chapters.find(c => c.id === 'sub_2_1');
+
+  // Root level siblings: root_1 and root_2 must be orderIndex 1 and 2
+  assert.equal(root1.orderIndex, 1, 'root_1 must have orderIndex 1 among roots');
+  assert.equal(root2.orderIndex, 2, 'root_2 must have orderIndex 2 among roots');
+
+  // root_1 children: sub_1_1 and sub_1_2 must be orderIndex 1 and 2 relative to root_1
+  assert.equal(sub11.orderIndex, 1, 'sub_1_1 must have orderIndex 1 under root_1');
+  assert.equal(sub12.orderIndex, 2, 'sub_1_2 must have orderIndex 2 under root_1');
+
+  // root_2 children: sub_2_1 must have orderIndex 1 relative to root_2
+  assert.equal(sub21.orderIndex, 1, 'sub_2_1 must have orderIndex 1 under root_2');
+});
+
+test('sync-core: Field-level merge preserves mobile 2000-word content when desktop renames title', () => {
+  const baseTime = 1790500000000;
+  // Mobile edited content at 10:00 (baseTime + 10000), wrote 2000 words. Title was untouched.
+  const mobileState = {
+    version: 2,
+    projects: [{ id: 'p1', title: 'Tiểu thuyết' }],
+    chapters: [
+      {
+        id: 'ch_1',
+        projectId: 'p1',
+        title: 'Chương 1',
+        content: 'Nội dung rất dài 2000 từ được viết trên điện thoại khi đang di chuyển trên đường...',
+        wordCount: 2000,
+        orderIndex: 1,
+        createdAt: baseTime,
+        updatedAt: baseTime + 10000,
+        contentUpdatedAt: baseTime + 10000,
+        titleUpdatedAt: baseTime
+      }
+    ]
+  };
+
+  // Desktop edited title at 10:05 (baseTime + 15000), changed title to "Chương 1: Bình Minh Mới". Content was untouched.
+  const desktopState = {
+    version: 2,
+    projects: [{ id: 'p1', title: 'Tiểu thuyết' }],
+    chapters: [
+      {
+        id: 'ch_1',
+        projectId: 'p1',
+        title: 'Chương 1: Bình Minh Mới',
+        content: 'Nội dung cũ ban đầu chỉ có vài từ',
+        wordCount: 8,
+        orderIndex: 1,
+        createdAt: baseTime,
+        updatedAt: baseTime + 15000,
+        contentUpdatedAt: baseTime,
+        titleUpdatedAt: baseTime + 15000
+      }
+    ]
+  };
+
+  // Merge Mobile (local) with Desktop (remote)
+  const { merged } = mergeWorkspaces(mobileState, desktopState);
+  assert.equal(merged.chapters.length, 1);
+  const ch = merged.chapters[0];
+
+  // Must have Desktop's newer title
+  assert.equal(ch.title, 'Chương 1: Bình Minh Mới', 'Title should take the newer desktop rename');
+  // Must NOT lose Mobile's 2000 words!
+  assert.equal(ch.content, 'Nội dung rất dài 2000 từ được viết trên điện thoại khi đang di chuyển trên đường...', 'Content must NOT be lost');
+  assert.equal(ch.wordCount, 2000, 'Word count must be 2000 from mobile draft');
+
+  // Also test reverse merge direction (Desktop local, Mobile remote)
+  const { merged: mergedReverse } = mergeWorkspaces(desktopState, mobileState);
+  assert.equal(mergedReverse.chapters[0].title, 'Chương 1: Bình Minh Mới');
+  assert.equal(mergedReverse.chapters[0].content, 'Nội dung rất dài 2000 từ được viết trên điện thoại khi đang di chuyển trên đường...');
+  assert.equal(mergedReverse.chapters[0].wordCount, 2000);
+});
+
+test('sync-core: Concurrent content edits within 2 minutes preserve both drafts via conflict append', () => {
+  const now = 1790600000000;
+  // Device A wrote paragraph A at 12:00:00
+  const stateA = {
+    chapters: [
+      {
+        id: 'ch_conflict',
+        title: 'Chương Xung Đột',
+        content: 'Bản thảo từ thiết bị A: Nhân vật chính bước vào hang động tối om và phát hiện kho báu ngàn năm bí ẩn.',
+        updatedAt: now,
+        contentUpdatedAt: now
+      }
+    ]
+  };
+
+  // Device B wrote paragraph B at 12:00:30 (30 seconds later, concurrent edit)
+  const stateB = {
+    chapters: [
+      {
+        id: 'ch_conflict',
+        title: 'Chương Xung Đột',
+        content: 'Bản thảo từ thiết bị B: Một cơn bão bất ngờ ập đến ngôi làng ven biển khiến mọi người phải sơ tán khẩn cấp.',
+        updatedAt: now + 30000,
+        contentUpdatedAt: now + 30000
+      }
+    ]
+  };
+
+  const { merged } = mergeWorkspaces(stateA, stateB);
+  const ch = merged.chapters[0];
+
+  // Both paragraphs must be present in the content so no text is lost
+  assert.ok(ch.content.includes('Nhân vật chính bước vào hang động'), 'Draft from device A must be preserved');
+  assert.ok(ch.content.includes('Một cơn bão bất ngờ ập đến'), 'Draft from device B must be preserved');
+  assert.ok(ch.content.includes('Nội dung xung đột được lưu lại'), 'Conflict note must inform the user');
+});
+
+test('sync-core: Concurrent content edits with identical timestamps (timeDiff === 0) preserve both drafts', () => {
+  const exactTime = 1790600000000;
+  const stateA = {
+    chapters: [
+      {
+        id: 'ch_exact_tie',
+        title: 'Chương Đồng Thời',
+        content: 'Bản thảo A gõ offline đồng thời: Nhân vật chính luyện thành tuyệt kỹ võ công vang danh.',
+        updatedAt: exactTime,
+        contentUpdatedAt: exactTime
+      }
+    ]
+  };
+
+  const stateB = {
+    chapters: [
+      {
+        id: 'ch_exact_tie',
+        title: 'Chương Đồng Thời',
+        content: 'Bản thảo B gõ offline đồng thời: Nhân vật phản diện trốn thoát vào màn đêm dày đặc.',
+        updatedAt: exactTime,
+        contentUpdatedAt: exactTime
+      }
+    ]
+  };
+
+  const { merged } = mergeWorkspaces(stateA, stateB);
+  const ch = merged.chapters[0];
+  assert.ok(ch.content.includes('luyện thành tuyệt kỹ võ công'), 'Draft A must be preserved');
+  assert.ok(ch.content.includes('trốn thoát vào màn đêm'), 'Draft B must be preserved');
+  assert.ok(ch.content.includes('Nội dung xung đột được lưu lại'), 'Conflict note must inform user');
+});
+
+test('sync-core: Field-level merge preserves max titleUpdatedAt when title content is identical across devices', () => {
+  const baseTime = 1790600000000;
+  const statePC = {
+    chapters: [
+      {
+        id: 'ch_title_sync',
+        title: 'Chương Cố Định',
+        content: 'Nội dung mới cập nhật trên PC với nhiều chi tiết hấp dẫn hơn nhiều.',
+        updatedAt: baseTime + 10000,
+        contentUpdatedAt: baseTime + 10000,
+        titleUpdatedAt: baseTime + 5000
+      }
+    ]
+  };
+
+  const stateMobile = {
+    chapters: [
+      {
+        id: 'ch_title_sync',
+        title: 'Chương Cố Định',
+        content: 'Nội dung cũ ban đầu.',
+        updatedAt: baseTime + 8000,
+        contentUpdatedAt: baseTime,
+        titleUpdatedAt: baseTime + 8000
+      }
+    ]
+  };
+
+  const { merged } = mergeWorkspaces(statePC, stateMobile);
+  const ch = merged.chapters[0];
+  assert.equal(ch.title, 'Chương Cố Định');
+  assert.equal(ch.titleUpdatedAt, baseTime + 8000, 'Title timestamp must be max across devices when titles match');
+});
+
+test('sync-core: appendConflictContent handles TipTap JSON containing rich nodes without schema corruption', () => {
+  const mainDoc = JSON.stringify({
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'Đoạn văn chính số 1' }] },
+      { type: 'image', attrs: { src: 'https://example.com/art.png', alt: 'Minh họa' } }
+    ]
+  });
+
+  const conflictDoc = JSON.stringify({
+    type: 'doc',
+    content: [
+      { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Tiêu đề xung đột' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'Đoạn văn từ bản đám mây' }] }
+    ]
+  });
+
+  const resultStr = appendConflictContent(mainDoc, conflictDoc, 'Đám mây');
+  const resultJson = JSON.parse(resultStr);
+
+  assert.equal(resultJson.type, 'doc');
+  assert.ok(Array.isArray(resultJson.content));
+  // Must contain main paragraph, main image, separator paragraph, conflict heading, conflict paragraph
+  assert.equal(resultJson.content.length, 5);
+  assert.equal(resultJson.content[1].type, 'image');
+  assert.equal(resultJson.content[1].attrs.src, 'https://example.com/art.png');
+  assert.equal(resultJson.content[2].content[0].text.includes('--- [Đám mây - Nội dung xung đột được lưu lại] ---'), true);
+  assert.equal(resultJson.content[3].type, 'heading');
+  assert.equal(resultJson.content[4].type, 'paragraph');
+});
+
 
 
 
