@@ -1179,3 +1179,143 @@ test('Document Tabs - extractHeadingsFromContent calculates exact ProseMirror bl
   assert.strictEqual(headings[1].text, 'Mục 1.1');
   assert.strictEqual(headings[1].pos, 42, 'Second heading must start at ProseMirror offset 42');
 });
+
+// =====================================================================
+// Bug 1 Verification: Selection-based heading split preserves text before selection
+// =====================================================================
+test('Document Tabs & Editor - Applying H1 to selected segment splits block and preserves preceding text', async () => {
+  const { Schema } = await import('@tiptap/pm/model');
+  const { EditorState, TextSelection } = await import('@tiptap/pm/state');
+
+  const schema = new Schema({
+    nodes: {
+      doc: { content: 'block+' },
+      paragraph: { group: 'block', content: 'text*', toDOM: () => ['p', 0] },
+      heading: {
+        group: 'block',
+        content: 'text*',
+        attrs: { level: { default: 1 } },
+        toDOM: (node) => ['h' + node.attrs.level, 0]
+      },
+      text: { inline: true }
+    }
+  });
+
+  const doc = schema.node('doc', null, [
+    schema.node('paragraph', null, [
+      schema.text('Dòng đằng trước. Đoạn được chọn H1. Dòng đằng sau.')
+    ])
+  ]);
+
+  let state = EditorState.create({ doc, schema });
+
+  // Select 'Đoạn được chọn H1.'
+  // Text breakdown: 'Dòng đằng trước. ' (17 chars, pos 1..18)
+  // 'Đoạn được chọn H1.' (18 chars, pos 18..36)
+  const from = 18;
+  const to = 36;
+  state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
+
+  // Simulate toggleHeadingSafe algorithm
+  let tr = state.tr;
+  const resFrom = tr.doc.resolve(from);
+  const resTo = tr.doc.resolve(to);
+
+  const blockStart = resFrom.start(resFrom.depth);
+  const blockEnd = resTo.end(resTo.depth);
+
+  const hasContentBefore = from > blockStart;
+  const hasContentAfter = to < blockEnd;
+
+  assert.strictEqual(hasContentBefore, true, 'Must detect text preceding selection');
+  assert.strictEqual(hasContentAfter, true, 'Must detect text succeeding selection');
+
+  if (hasContentBefore) {
+    tr = tr.split(from);
+  }
+  const mappedTo = tr.mapping.map(to, -1);
+  const resMappedTo = tr.doc.resolve(mappedTo);
+  if (mappedTo < resMappedTo.end(resMappedTo.depth)) {
+    tr = tr.split(mappedTo);
+  }
+
+  const targetStart = tr.mapping.map(from, 1);
+  const targetEnd = tr.mapping.map(to, -1);
+  tr.setBlockType(targetStart, targetEnd, schema.nodes.heading, { level: 1 });
+
+  state = state.apply(tr);
+
+  const blocks = [];
+  state.doc.forEach((node) => {
+    blocks.push({ type: node.type.name, level: node.attrs?.level, text: node.textContent });
+  });
+
+  assert.strictEqual(blocks.length, 3, 'Document must be split into 3 distinct blocks');
+  // Block 0: The preceding text MUST remain a regular paragraph!
+  assert.strictEqual(blocks[0].type, 'paragraph');
+  assert.strictEqual(blocks[0].text, 'Dòng đằng trước. ');
+  // Block 1: ONLY the selected text becomes H1!
+  assert.strictEqual(blocks[1].type, 'heading');
+  assert.strictEqual(blocks[1].level, 1);
+  assert.strictEqual(blocks[1].text, 'Đoạn được chọn H1.');
+  // Block 2: The succeeding text MUST remain a regular paragraph!
+  assert.strictEqual(blocks[2].type, 'paragraph');
+  assert.strictEqual(blocks[2].text, ' Dòng đằng sau.');
+});
+
+// =====================================================================
+// Bug 2 Verification: Deleting active tab selects adjacent neighbor
+// =====================================================================
+test('Document Tabs - Deleting active tab accurately selects adjacent tab instead of first tab', () => {
+  const orderedTabs = [
+    { id: 'tab_1', title: 'Thẻ 1' },
+    { id: 'tab_2', title: 'Thẻ 2' },
+    { id: 'tab_3', title: 'Thẻ 3' },
+    { id: 'tab_4', title: 'Thẻ 4' }
+  ];
+
+  const getAdjacentTab = (currentId, deletedIds, tabs) => {
+    const currentIdx = tabs.findIndex(c => c.id === currentId);
+    const remaining = tabs.filter(c => !deletedIds.includes(c.id));
+    if (remaining.length === 0) return null;
+    const adjacentIdx = Math.min(currentIdx, remaining.length - 1);
+    return remaining[Math.max(0, adjacentIdx)];
+  };
+
+  // Case 1: Deleting tab_2 (middle tab) -> should select tab_3 (the next adjacent tab, NOT tab_1)
+  const afterDelete2 = getAdjacentTab('tab_2', ['tab_2'], orderedTabs);
+  assert.strictEqual(afterDelete2.id, 'tab_3', 'Deleting tab_2 should navigate to tab_3');
+
+  // Case 2: Deleting tab_4 (last tab) -> should select tab_3 (the preceding adjacent tab)
+  const afterDeleteLast = getAdjacentTab('tab_4', ['tab_4'], orderedTabs);
+  assert.strictEqual(afterDeleteLast.id, 'tab_3', 'Deleting last tab should navigate to tab_3');
+
+  // Case 3: Deleting tab_1 (first tab) -> should select tab_2
+  const afterDeleteFirst = getAdjacentTab('tab_1', ['tab_1'], orderedTabs);
+  assert.strictEqual(afterDeleteFirst.id, 'tab_2', 'Deleting first tab should navigate to tab_2');
+});
+
+// =====================================================================
+// Bug 4 Verification: Title auto-sync heuristic
+// =====================================================================
+test('Document Tabs - Title auto-sync accurately detects default placeholder titles', () => {
+  const isDefaultTitle = (t) => {
+    const clean = (t || '').trim();
+    return !clean || /^Thẻ(\s+\d+|\s+không\s+tên)?$/i.test(clean) || /.*Thẻ con\s+\d+$/i.test(clean);
+  };
+
+  // Default titles that SHOULD be replaced when first heading is typed:
+  assert.strictEqual(isDefaultTitle('Thẻ 1'), true);
+  assert.strictEqual(isDefaultTitle('Thẻ 2'), true);
+  assert.strictEqual(isDefaultTitle('Thẻ'), true);
+  assert.strictEqual(isDefaultTitle('Thẻ không tên'), true);
+  assert.strictEqual(isDefaultTitle('Tập 1 - Thẻ con 1'), true);
+  assert.strictEqual(isDefaultTitle(''), true);
+
+  // Custom user-defined titles that MUST NOT be replaced:
+  assert.strictEqual(isDefaultTitle('Chương 1: Bình Minh'), false);
+  assert.strictEqual(isDefaultTitle('Nhân vật chính'), false);
+  assert.strictEqual(isDefaultTitle('Thế giới ảo'), false);
+  assert.strictEqual(isDefaultTitle('Hương Hỏa'), false);
+});
+

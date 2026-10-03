@@ -248,6 +248,25 @@ export default function ChapterEditorPage() {
     return () => clearTimeout(timer);
   }, [content, title, chapter, saveChapter]);
 
+  // BUG 4 FIX: Auto-sync tab title from the first heading if title is currently default (e.g. "Thẻ 1", "Thẻ", "Thẻ con 1")
+  useEffect(() => {
+    if (!liveHeadings || liveHeadings.length === 0) return;
+    const firstHeading = liveHeadings[0]?.text?.trim();
+    if (!firstHeading) return;
+
+    const isDefault = (t: string) => {
+      const clean = (t || '').trim();
+      return !clean || /^Thẻ(\s+\d+|\s+không\s+tên)?$/i.test(clean) || /.*Thẻ con\s+\d+$/i.test(clean);
+    };
+
+    if (isDefault(titleRef.current) && firstHeading !== titleRef.current) {
+      setTitle(firstHeading);
+      titleRef.current = firstHeading;
+      isDirtyRef.current = true;
+      setAllChapters(prev => prev.map(c => c.id === chapterId ? { ...c, title: firstHeading } : c));
+    }
+  }, [liveHeadings, chapterId]);
+
   // Global Ctrl+S / Cmd+S save shortcut
   useEffect(() => {
     const handleSaveShortcut = (e: KeyboardEvent) => {
@@ -411,19 +430,35 @@ export default function ChapterEditorPage() {
   };
 
   const handleDeleteTab = async (targetId: string) => {
-    if (allChapters.length <= 1) {
+    // BUG 3 FIX: Cascade delete all descendants to prevent orphan tabs
+    const getAllDescendantIds = (rootId: string): string[] => {
+      const children = allChapters.filter(c => c.parentId === rootId);
+      return children.flatMap(c => [c.id, ...getAllDescendantIds(c.id)]);
+    };
+    const descendantIds = getAllDescendantIds(targetId);
+    const allIdsToDelete = [targetId, ...descendantIds];
+
+    if (allChapters.length <= allIdsToDelete.length) {
       toast.error('Tài liệu phải có tối thiểu 1 thẻ');
       return;
     }
     try {
+      // Delete descendants from leaves to root to avoid FK issues
+      for (const id of [...descendantIds].reverse()) {
+        await apiFetch(`/api/chapters/${id}`, { method: 'DELETE' });
+      }
       await apiFetch(`/api/chapters/${targetId}`, { method: 'DELETE' });
       playDeleteSound();
       toast.success('Đã xóa thẻ');
       pushSync().catch(() => {});
-      if (targetId === chapterId) {
-        const remaining = orderedChapters.filter(c => c.id !== targetId);
+      if (targetId === chapterId || allIdsToDelete.includes(chapterId)) {
+        // BUG 2 FIX: Navigate to adjacent tab instead of first tab
+        const currentIdx = orderedChapters.findIndex(c => c.id === chapterId);
+        const remaining = orderedChapters.filter(c => !allIdsToDelete.includes(c.id));
         if (remaining.length > 0) {
-          navigateToChapter(remaining[0].id, 'fade');
+          const adjacentIdx = Math.min(currentIdx, remaining.length - 1);
+          const adjacentTab = remaining[Math.max(0, adjacentIdx)];
+          navigateToChapter(adjacentTab.id, currentIdx < orderedChapters.length - 1 ? 'next' : 'prev');
         } else {
           router.push(`/editor/${projectId}`);
         }

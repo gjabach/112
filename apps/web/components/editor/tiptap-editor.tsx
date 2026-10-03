@@ -1,5 +1,6 @@
 'use client';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { TextSelection } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import CharacterCount from '@tiptap/extension-character-count';
@@ -267,6 +268,68 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     };
   }, [editor]);
 
+  // BUG 1 FIX: When a user selects text (either within a paragraph or across blocks) and clicks H1/H2/H3,
+  // TipTap's default toggleHeading calls ProseMirror's setBlockType on the whole enclosing paragraph,
+  // causing any text BEFORE (or after) the selection in the same block to also become enlarged.
+  // This helper splits the block before/after the selection so ONLY the highlighted text becomes a heading.
+  const toggleHeadingSafe = useCallback((level: 1 | 2 | 3) => {
+    if (!editor) return;
+    const { from, to, empty } = editor.state.selection;
+
+    // If cursor is collapsed (no text selected), use default toggleHeading
+    if (empty || from >= to) {
+      editor.chain().focus().toggleHeading({ level }).run();
+      return;
+    }
+
+    const { tr } = editor.state;
+    const resFrom = tr.doc.resolve(from);
+    const resTo = tr.doc.resolve(to);
+
+    const blockStart = resFrom.start(resFrom.depth);
+    const blockEnd = resTo.end(resTo.depth);
+
+    const hasContentBefore = from > blockStart;
+    const hasContentAfter = to < blockEnd;
+
+    // If the selection covers the entire block from boundary to boundary, standard toggle is fine
+    if (!hasContentBefore && !hasContentAfter && resFrom.depth === resTo.depth) {
+      editor.chain().focus().toggleHeading({ level }).run();
+      return;
+    }
+
+    try {
+      let currentTr = tr;
+      if (hasContentBefore) {
+        currentTr = currentTr.split(from);
+      }
+      const mappedTo = currentTr.mapping.map(to, -1);
+      const resMappedTo = currentTr.doc.resolve(mappedTo);
+      if (mappedTo < resMappedTo.end(resMappedTo.depth)) {
+        currentTr = currentTr.split(mappedTo);
+      }
+
+      const targetStart = currentTr.mapping.map(from, 1);
+      const targetEnd = currentTr.mapping.map(to, -1);
+      const headingType = editor.schema.nodes.heading;
+      const paragraphType = editor.schema.nodes.paragraph;
+
+      if (headingType && paragraphType) {
+        const resTarget = currentTr.doc.resolve(targetStart);
+        const isCurrentHeading = resTarget.parent.type === headingType && resTarget.parent.attrs.level === level;
+        currentTr.setBlockType(targetStart, targetEnd, isCurrentHeading ? paragraphType : headingType, { level });
+        currentTr.setSelection(TextSelection.create(currentTr.doc, targetStart, targetEnd));
+        editor.view.dispatch(currentTr);
+        editor.view.focus();
+        return;
+      }
+    } catch {
+      // Fallback if split fails on complex block structure
+    }
+
+    editor.chain().focus().toggleHeading({ level }).run();
+  }, [editor]);
+
   if (!editor) return <div className="animate-pulse h-64 bg-muted rounded-lg"></div>;
 
   return (
@@ -290,9 +353,9 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
         <Button variant={editor.isActive?.('strike') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleStrike().run()} title="Gạch ngang"><Strikethrough className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('highlight') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleHighlight().run()} title="Đánh dấu highlight"><Highlighter className="w-3.5 h-3.5" /></Button>
         <div className="w-[1px] h-4 bg-border mx-1 shrink-0" />
-        <Button variant={editor.isActive?.('heading', { level: 1 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-bold" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title="Tiêu đề 1 (H1)"><Heading1 className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('heading', { level: 2 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-semibold" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="Tiêu đề 2 (H2)"><Heading2 className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('heading', { level: 3 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} title="Tiêu đề 3 (H3)"><Heading3 className="w-3.5 h-3.5" /></Button>
+        <Button variant={editor.isActive?.('heading', { level: 1 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-bold" onClick={() => toggleHeadingSafe(1)} title="Tiêu đề 1 (H1)"><Heading1 className="w-3.5 h-3.5" /></Button>
+        <Button variant={editor.isActive?.('heading', { level: 2 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-semibold" onClick={() => toggleHeadingSafe(2)} title="Tiêu đề 2 (H2)"><Heading2 className="w-3.5 h-3.5" /></Button>
+        <Button variant={editor.isActive?.('heading', { level: 3 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => toggleHeadingSafe(3)} title="Tiêu đề 3 (H3)"><Heading3 className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('blockquote') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Trích dẫn"><Quote className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('bulletList') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleBulletList().run()} title="Danh sách"><List className="w-3.5 h-3.5" /></Button>
         <Button variant={editor.isActive?.('orderedList') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Danh sách số"><ListOrdered className="w-3.5 h-3.5" /></Button>

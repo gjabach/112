@@ -392,18 +392,26 @@ export function DocumentTabsSidebar({
     setActiveMenuId(null);
   };
 
-  // Close context menu on outside click
+  // Close context menu on outside click or Escape
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setActiveMenuId(null);
       }
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveMenuId(null);
+        setEmojiPickerTabId(null);
+      }
+    };
     if (activeMenuId) {
       document.addEventListener('mousedown', handleClickOutside);
+      window.addEventListener('keydown', handleKeyDown);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [activeMenuId]);
 
@@ -1047,7 +1055,9 @@ export function DocumentTabsSidebar({
                       setActiveMenuId(null);
                       if (onReparentTab) {
                         const parent = chapters.find(c => c.id === node.parentId);
-                        await onReparentTab(node.id, parent?.parentId || null);
+                        const rawGrandParentId = parent?.parentId || null;
+                        const validGrandParentId = rawGrandParentId && chapters.some(c => c.id === rawGrandParentId) ? rawGrandParentId : null;
+                        await onReparentTab(node.id, validGrandParentId);
                       }
                     }}
                     className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
