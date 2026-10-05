@@ -368,6 +368,11 @@ export async function deleteProjectAtomic(c: any, projectId: string, options?: {
 
   await d1.batch(statements);
 
+  const tombstonesRecord: Record<string, number> = { [projectId]: now };
+  for (const chId of chapterIds) {
+    tombstonesRecord[chId] = now;
+  }
+
   return {
     status: 200,
     data: {
@@ -376,6 +381,7 @@ export async function deleteProjectAtomic(c: any, projectId: string, options?: {
       deletedIds: [projectId, ...chapterIds],
       deletedAt: now,
       workspaceRevision: nextRev,
+      tombstones: tombstonesRecord,
       alreadyDeleted: false
     }
   };

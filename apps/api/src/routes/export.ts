@@ -5,6 +5,7 @@ import { generateId, nowTimestamp } from '../lib/auth';
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
 import { generateExport, type ExportOptions, type ExportFormat } from '../lib/export';
+import { getAuthoritativeTombstones } from '../services/lifecycle';
 
 type Variables = { db: any; user: AuthUser };
 const exportRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -51,8 +52,10 @@ async function handleProjectExport(c: any, projectId: string, body: any) {
   });
 
   try {
-    // Get chapters
-    const chapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, projectId));
+    // Get chapters (filter out tombstones)
+    const { chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, user.userId, projectId);
+    const allChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, projectId));
+    const chapters = allChapters.filter((ch: any) => !tombstonedChapters.has(ch.id));
 
     // Build export options
     const exportOptions: ExportOptions = {

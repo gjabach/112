@@ -76,13 +76,12 @@ function mergeSyncSnapshots(existingRaw: any, incomingRaw: any) {
   return {
     ...existing,
     ...incoming,
-    version: 2,
-    projects: mergeList(existing.projects, incoming.projects),
-    chapters: Array.from(chapterMap.values()),
-    characters: mergeList(existing.characters, incoming.characters),
-    entities: mergeList(existing.entities || existing.worldbuilding, incoming.entities || incoming.worldbuilding),
-    timeline: mergeList(existing.timeline || existing.timelineEvents, incoming.timeline || incoming.timelineEvents),
-    outline: mergeList(existing.outline || existing.outlines, incoming.outline || incoming.outlines),
+    projects: mergeList(existing.projects, incoming.projects).filter((p: any) => p?.id && !mergedTombstones[p.id]),
+    chapters: Array.from(chapterMap.values()).filter((c: any) => c?.id && !mergedTombstones[c.id] && !mergedTombstones[c.projectId]),
+    characters: mergeList(existing.characters, incoming.characters).filter((c: any) => c?.id && !mergedTombstones[c.id] && !mergedTombstones[c.projectId]),
+    entities: mergeList(existing.entities || existing.worldbuilding, incoming.entities || incoming.worldbuilding).filter((e: any) => e?.id && !mergedTombstones[e.id] && !mergedTombstones[e.projectId]),
+    timeline: mergeList(existing.timeline || existing.timelineEvents, incoming.timeline || incoming.timelineEvents).filter((t: any) => t?.id && !mergedTombstones[t.id] && !mergedTombstones[t.projectId]),
+    outline: mergeList(existing.outline || existing.outlines, incoming.outline || incoming.outlines).filter((o: any) => o?.id && !mergedTombstones[o.id] && !mergedTombstones[o.projectId]),
     tombstones: mergedTombstones,
     lastModified: Math.max(Number(existing.lastModified || 0), Number(incoming.lastModified || 0), now)
   };

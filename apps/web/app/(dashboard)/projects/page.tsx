@@ -18,6 +18,8 @@ import { BookCoverArt } from '@/components/vfx/book-cover';
 import { fireConfetti } from '@/components/vfx/confetti';
 import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
 
+import { deleteProjectWithSync } from '@/lib/delete-service';
+
 interface Project {
   id: string;
   title: string;
@@ -57,7 +59,21 @@ export default function ProjectsPage() {
   const fetchProjects = async () => {
     try {
       const res = await apiFetch('/api/projects');
-      setProjects(res.projects);
+      const tombstones = typeof window !== 'undefined'
+        ? JSON.parse(localStorage.getItem('novelist_tombstones') || '{}')
+        : {};
+      const chapters = getCachedChapters();
+      const reconciled = (res?.projects || [])
+        .filter((p: any) => p?.id && !tombstones[p.id])
+        .map((p: any) => {
+          const localStats = getProjectChapterStats(chapters, p.id);
+          return {
+            ...p,
+            wordCount: localStats.chapterCount > 0 ? localStats.wordCount : p.wordCount,
+            chapterCount: localStats.chapterCount > 0 ? localStats.chapterCount : p.chapterCount
+          };
+        });
+      setProjects(reconciled);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -74,14 +90,17 @@ export default function ProjectsPage() {
       .catch(() => {});
 
     const handleSyncUpdated = () => fetchProjects();
+    const handleProjectDeleted = () => fetchProjects();
     const handleWorkspaceUpdated = () => {
       const chapters = getCachedChapters();
       setProjects(prev => prev.map(p => ({ ...p, ...getProjectChapterStats(chapters, p.id) })));
     };
     window.addEventListener('novelist-sync-updated', handleSyncUpdated);
+    window.addEventListener('novelist-project-deleted', handleProjectDeleted);
     window.addEventListener('novelist-workspace-updated', handleWorkspaceUpdated);
     return () => {
       window.removeEventListener('novelist-sync-updated', handleSyncUpdated);
+      window.removeEventListener('novelist-project-deleted', handleProjectDeleted);
       window.removeEventListener('novelist-workspace-updated', handleWorkspaceUpdated);
     };
   }, []);
@@ -230,9 +249,13 @@ export default function ProjectsPage() {
   const deleteProject = async (id: string) => {
     if (!confirm('Bạn có chắc muốn xóa dự án này? Thao tác này sẽ xóa tất cả chương và dữ liệu liên quan.')) return;
     try {
-      await apiFetch(`/api/projects/${id}`, { method: 'DELETE' });
-      toast.success('Đã xóa dự án');
-      fetchProjects();
+      const res = await deleteProjectWithSync({ projectId: id });
+      if (res.success) {
+        toast.success('Đã xóa dự án');
+        fetchProjects();
+      } else {
+        toast.error(res.error || 'Lỗi khi xóa dự án');
+      }
     } catch (e: any) {
       toast.error(e.message);
     }

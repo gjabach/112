@@ -131,3 +131,126 @@ export async function deleteChapterWithSync(options: DeleteChapterOptions): Prom
     alreadyDeleted: Boolean(serverRes?.alreadyDeleted)
   };
 }
+
+export interface DeleteProjectOptions {
+  projectId: string;
+  operationId?: string;
+}
+
+export interface DeleteProjectResponse {
+  success: boolean;
+  deletedIds: string[];
+  alreadyDeleted?: boolean;
+  error?: string;
+}
+
+export async function deleteProjectWithSync(options: DeleteProjectOptions): Promise<DeleteProjectResponse> {
+  const { projectId, operationId } = options;
+  if (typeof window === 'undefined') return { success: false, deletedIds: [], error: 'Not in browser' };
+
+  const opId = operationId || `del_proj_${projectId}_${Date.now()}`;
+  const headers: Record<string, string> = {
+    'X-Operation-Id': opId
+  };
+
+  let serverRes: any;
+  try {
+    serverRes = await apiFetch(`/api/projects/${projectId}`, {
+      method: 'DELETE',
+      headers
+    });
+  } catch (err: any) {
+    return { success: false, deletedIds: [], error: err.message || 'Lỗi khi xóa dự án' };
+  }
+
+  if (!serverRes?.success) {
+    return { success: false, deletedIds: [], error: serverRes?.error || 'Lỗi khi xóa dự án' };
+  }
+
+  const deletedIds: string[] = Array.isArray(serverRes?.deletedIds) && serverRes.deletedIds.length > 0
+    ? serverRes.deletedIds
+    : [projectId];
+
+  const now = Number(serverRes?.deletedAt || Date.now());
+
+  try {
+    // 1. Record tombstones
+    const rawTombstones = localStorage.getItem('novelist_tombstones');
+    const tombstones = rawTombstones ? JSON.parse(rawTombstones) : {};
+    tombstones[projectId] = now;
+    for (const delId of deletedIds) {
+      tombstones[delId] = now;
+      unprotectChapterFromSync(delId);
+    }
+    if (serverRes?.tombstones && typeof serverRes.tombstones === 'object') {
+      Object.assign(tombstones, serverRes.tombstones);
+    }
+    localStorage.setItem('novelist_tombstones', JSON.stringify(tombstones));
+
+    // 2. Remove from novelist_projects
+    const rawProjects = localStorage.getItem('novelist_projects');
+    const projects = rawProjects ? JSON.parse(rawProjects) : [];
+    const remainingProjects = Array.isArray(projects) ? projects.filter((p: any) => p.id !== projectId && !tombstones[p.id]) : [];
+    localStorage.setItem('novelist_projects', JSON.stringify(remainingProjects));
+
+    // 3. Remove project's chapters from novelist_chapters
+    const rawChapters = localStorage.getItem('novelist_chapters');
+    const chapters = rawChapters ? JSON.parse(rawChapters) : [];
+    const delSet = new Set([projectId, ...deletedIds]);
+    const remainingChapters = Array.isArray(chapters) ? chapters.filter((c: any) => c.projectId !== projectId && !delSet.has(c.id)) : [];
+    localStorage.setItem('novelist_chapters', JSON.stringify(remainingChapters));
+
+    // 4. Clean pending drafts for those chapters
+    const rawDrafts = localStorage.getItem('novelist_pending_chapter_drafts');
+    const drafts = rawDrafts ? JSON.parse(rawDrafts) : {};
+    for (const delId of deletedIds) {
+      if (drafts[delId]) {
+        archiveDraft(delId, drafts[delId].content, drafts[delId].title, 'project_deleted');
+        delete drafts[delId];
+      }
+    }
+    localStorage.setItem('novelist_pending_chapter_drafts', JSON.stringify(drafts));
+
+    // 5. Clean characters, entities, timeline belonging to projectId
+    for (const storeKey of [
+      'novelist_characters',
+      'novelist_worldbuilding',
+      'novelist_entities',
+      'novelist_timeline',
+      'novelist_timeline_events',
+      'novelist_outline',
+      'novelist_outlines'
+    ]) {
+      const rawList = localStorage.getItem(storeKey);
+      if (rawList) {
+        try {
+          const list = JSON.parse(rawList);
+          if (Array.isArray(list)) {
+            const filtered = list.filter((item: any) => item.projectId !== projectId && !delSet.has(item.id));
+            localStorage.setItem(storeKey, JSON.stringify(filtered));
+          }
+        } catch {}
+      }
+    }
+
+    refreshCachedProjectStats();
+    localStorage.setItem('novelist_last_modified', String(now));
+    notifyWorkspaceChanged();
+
+    // Broadcast event across tabs/windows
+    window.dispatchEvent(new CustomEvent('novelist-project-deleted', {
+      detail: { projectId, deletedIds, deletedAt: now, operationId: opId }
+    }));
+  } catch (e) {
+    console.error('[deleteProjectWithSync] Cache cleanup error:', e);
+  }
+
+  // Propagate tombstones to cloud and peer devices immediately
+  pushSync().catch(() => {});
+
+  return {
+    success: true,
+    deletedIds,
+    alreadyDeleted: Boolean(serverRes?.alreadyDeleted)
+  };
+}

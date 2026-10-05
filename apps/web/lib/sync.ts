@@ -144,12 +144,15 @@ export function exportFullWorkspace() {
     updatedAt: Number(c.updatedAt || c.createdAt || lastModified)
   }));
 
+  const tombstones = getStoredJson('novelist_tombstones', {});
   const rawProjects = getStoredJson('novelist_projects', []);
-  const sanitizedProjects = Array.isArray(rawProjects) ? rawProjects.map((p: any) => ({
-    ...p,
-    ...getProjectChapterStats(sanitizedChapters, p.id),
-    updatedAt: Number(p.updatedAt || p.createdAt || lastModified)
-  })) : [];
+  const sanitizedProjects = Array.isArray(rawProjects) ? rawProjects
+    .filter((p: any) => p?.id && !tombstones[p.id])
+    .map((p: any) => ({
+      ...p,
+      ...getProjectChapterStats(sanitizedChapters, p.id),
+      updatedAt: Number(p.updatedAt || p.createdAt || lastModified)
+    })) : [];
 
   return {
     version: 2,

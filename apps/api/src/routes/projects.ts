@@ -6,7 +6,7 @@ import { createProjectSchema, updateProjectSchema } from '@novelist/shared';
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
 import { countWords } from '../utils/validation';
-import { deleteProjectAtomic } from '../services/lifecycle';
+import { deleteProjectAtomic, getAuthoritativeTombstones } from '../services/lifecycle';
 
 type Variables = {
   db: any;
@@ -26,13 +26,15 @@ projects.get('/', async (c) => {
 
   // Enrich with chapter counts and word counts
   const enriched = await Promise.all(userProjects.map(async (p: any) => {
-    const chapters = await db.select({ wordCount: schema.chapters.wordCount }).from(schema.chapters).where(eq(schema.chapters.projectId, p.id));
-    const totalWords = chapters.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
+    const { chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, user.userId, p.id);
+    const chapters = await db.select({ id: schema.chapters.id, wordCount: schema.chapters.wordCount }).from(schema.chapters).where(eq(schema.chapters.projectId, p.id));
+    const activeChapters = chapters.filter((ch: any) => !tombstonedChapters.has(ch.id));
+    const totalWords = activeChapters.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
     return {
       ...p,
       settings: p.settings ? JSON.parse(p.settings) : null,
       wordCount: totalWords,
-      chapterCount: chapters.length
+      chapterCount: activeChapters.length
     };
   }));
 
@@ -125,7 +127,9 @@ projects.get('/:id', async (c) => {
   if (result.length === 0) return c.json({ error: 'Project not found' }, 404);
 
   const project = result[0];
-  const chapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  const { chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, user.userId, id);
+  const allChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  const chapters = allChapters.filter((ch: any) => !tombstonedChapters.has(ch.id));
   const totalWords = chapters.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
 
   return c.json({
@@ -198,7 +202,9 @@ projects.post('/:id/duplicate', async (c) => {
   });
 
   // Duplicate chapters with preserved parent-child tree mapping
-  const chapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  const { chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, user.userId, id);
+  const allChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  const chapters = allChapters.filter((ch: any) => !tombstonedChapters.has(ch.id));
   const chapterIdMap = new Map<string, string>();
   for (const ch of chapters) {
     chapterIdMap.set(ch.id, generateId());
@@ -242,7 +248,9 @@ projects.get('/:id/stats', async (c) => {
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, id), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Project not found' }, 404);
 
-  const chapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  const { chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, user.userId, id);
+  const allChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, id));
+  const chapters = allChapters.filter((ch: any) => !tombstonedChapters.has(ch.id));
   const characters = await db.select({ id: schema.characters.id }).from(schema.characters).where(eq(schema.characters.projectId, id));
 
   const totalWords = chapters.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);

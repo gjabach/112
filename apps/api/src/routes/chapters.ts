@@ -6,7 +6,7 @@ import { createChapterSchema, updateChapterSchema } from '@novelist/shared';
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
 import { countWords } from '../utils/validation';
-import { deleteChapterAtomic, handleRecoveryCreation } from '../services/lifecycle';
+import { deleteChapterAtomic, handleRecoveryCreation, getAuthoritativeTombstones } from '../services/lifecycle';
 
 type Variables = { db: any; user: AuthUser };
 const chapters = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -85,8 +85,10 @@ chapters.get('/projects/:projectId/chapters', async (c) => {
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Project not found' }, 404);
 
+  const { chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, user.userId, projectId);
   const result = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, projectId)).orderBy(asc(schema.chapters.orderIndex));
-  const enriched = result.map((ch: any) => ({
+  const activeChapters = result.filter((ch: any) => !tombstonedChapters.has(ch.id));
+  const enriched = activeChapters.map((ch: any) => ({
     ...ch,
     charactersPresent: ch.charactersPresent ? JSON.parse(ch.charactersPresent) : []
   }));
