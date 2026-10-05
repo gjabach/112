@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply novelist-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply novelist-db --remote",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "node --test ../web/lib/sync-pc-mobile-integration.test.mjs"
   },
   "dependencies": {
     "@novelist/ai-core": "workspace:*",

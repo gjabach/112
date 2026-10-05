@@ -29,8 +29,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    // 1. Initialize auto-sync across entire application
-    initAutoSync();
+    // 1. Initialize auto-sync across entire application and capture disposer
+    const cleanup = initAutoSync();
 
     // 2. Listen to custom sync status events
     const handleStatus = (e: any) => {
@@ -42,15 +42,19 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    const handleUpdated = () => {
-      setStatus('synced');
-      setLastSynced(Date.now());
+    const handleUpdated = (e: any) => {
+      // Only mark as cloud synced if event originated from verified server ack
+      if (e?.detail?.fromServer || e?.detail?.serverAck) {
+        setStatus('synced');
+        setLastSynced(Date.now());
+      }
     };
 
     window.addEventListener('novelist-sync-status', handleStatus);
     window.addEventListener('novelist-sync-updated', handleUpdated);
 
     return () => {
+      cleanup();
       window.removeEventListener('novelist-sync-status', handleStatus);
       window.removeEventListener('novelist-sync-updated', handleUpdated);
     };
@@ -63,11 +67,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const current = exportFullWorkspace();
       const totalChapters = Array.isArray(current?.chapters) ? current.chapters.length : 0;
 
-      if (res.success) {
+      if (res.success && res.writeAcknowledged) {
         setStatus('synced');
         setLastSynced(Date.now());
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current } }));
+          window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current, fromServer: true, serverAck: true } }));
         }
         toast.success(`Đồng bộ hoàn tất! Hiện có ${totalChapters} chương`);
         return true;
@@ -127,15 +131,17 @@ export function SyncStatusButton({
         size="icon"
         onClick={handleClick}
         disabled={isSpinning}
-        title={isSpinning ? 'Đang đồng bộ đám mây...' : status === 'error' ? 'Lỗi đồng bộ (Bấm để thử lại)' : 'Đồng bộ đám mây (Bấm để cập nhật)'}
+        title={isSpinning ? 'Đang đồng bộ đám mây...' : status === 'error' ? 'Lỗi đồng bộ (Bấm để thử lại)' : status === 'synced' ? 'Đã lưu trên đám mây' : 'Đồng bộ đám mây (Bấm để cập nhật)'}
         className={`h-8 w-8 rounded-lg relative ${className}`}
       >
         {isSpinning ? (
           <Loader2 className="w-4 h-4 animate-spin text-primary" />
         ) : status === 'error' ? (
           <AlertCircle className="w-4 h-4 text-rose-500" />
-        ) : (
+        ) : status === 'synced' ? (
           <Cloud className="w-4 h-4 text-emerald-500 hover:text-emerald-400" />
+        ) : (
+          <Cloud className="w-4 h-4 text-muted-foreground hover:text-foreground" />
         )}
       </Button>
     );
@@ -150,7 +156,9 @@ export function SyncStatusButton({
       className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition-all ${
         status === 'error'
           ? 'border-rose-500/40 text-rose-500 hover:bg-rose-500/10'
-          : 'border-border/70 hover:border-primary/50 text-foreground'
+          : status === 'synced'
+            ? 'border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:border-emerald-500/50'
+            : 'border-border/70 hover:border-primary/50 text-foreground'
       } ${className}`}
       title="Bấm để đồng bộ dữ liệu ngay lập tức giữa PC và Điện thoại"
     >
@@ -164,9 +172,14 @@ export function SyncStatusButton({
           <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
           <span>Thử lại đồng bộ</span>
         </>
-      ) : (
+      ) : status === 'synced' ? (
         <>
           <Cloud className="w-3.5 h-3.5 text-emerald-500" />
+          <span className="hidden sm:inline">Đã đồng bộ</span>
+        </>
+      ) : (
+        <>
+          <Cloud className="w-3.5 h-3.5 text-muted-foreground" />
           <span className="hidden sm:inline">Đồng bộ</span>
         </>
       )}

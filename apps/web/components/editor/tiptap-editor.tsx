@@ -116,6 +116,7 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
 export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true, onHeadingsChange }: TiptapEditorProps) {
   const lastEmittedContentRef = useRef<string | null>(null);
   const lastUserTypingTimeRef = useRef<number>(0);
+  const isApplyingRemoteUpdateRef = useRef<boolean>(false);
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [initialSearchQuery, setInitialSearchQuery] = useState('');
 
@@ -147,6 +148,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     content: initialContent,
     editable,
     onUpdate: ({ editor }) => {
+      if (isApplyingRemoteUpdateRef.current) return;
       try {
         const json = editor.getJSON();
         const jsonStr = JSON.stringify(json);
@@ -225,7 +227,12 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       const { from, to } = editor.state.selection;
       const wasFocused = editor.isFocused;
 
-      editor.commands.setContent(parsed, false);
+      try {
+        isApplyingRemoteUpdateRef.current = true;
+        editor.commands.setContent(parsed, false);
+      } finally {
+        isApplyingRemoteUpdateRef.current = false;
+      }
       lastEmittedContentRef.current = incomingJsonStr;
 
       // Restore selection to closest valid position in new document

@@ -43,8 +43,79 @@ const randomId = () => {
   return `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 };
 
+export type ApiConnectionStatus = 'checking' | 'reachable' | 'available' | 'unconfigured' | 'unreachable' | 'auth-required' | 'server-error';
+
+let cachedConnectionStatus: ApiConnectionStatus = 'checking';
+let lastCapabilityCheckTime = 0;
+
+export async function probeApiCapabilities(force = false): Promise<{ available: boolean; status: ApiConnectionStatus; message?: string }> {
+  if (typeof window === 'undefined') {
+    const hasConfig = Boolean(process.env.API_URL || process.env.NEXT_PUBLIC_API_URL);
+    return { available: hasConfig, status: hasConfig ? 'reachable' : 'unconfigured' };
+  }
+
+  const now = Date.now();
+  if (!force && cachedConnectionStatus !== 'checking' && now - lastCapabilityCheckTime < 10_000) {
+    const isReachable = cachedConnectionStatus === 'reachable' || cachedConnectionStatus === 'available';
+    return { available: isReachable, status: cachedConnectionStatus };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch('/api/capabilities', { signal: controller.signal });
+    clearTimeout(timeoutId);
+    lastCapabilityCheckTime = now;
+
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data.configured && data.available) {
+        cachedConnectionStatus = 'reachable';
+        return { available: true, status: 'reachable' };
+      } else if (!data.configured) {
+        cachedConnectionStatus = 'unconfigured';
+        return { available: false, status: 'unconfigured', message: 'Dịch vụ đồng bộ chưa được cấu hình' };
+      } else {
+        cachedConnectionStatus = 'unreachable';
+        return { available: false, status: 'unreachable', message: 'Không thể kết nối máy chủ' };
+      }
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      cachedConnectionStatus = 'auth-required';
+      return { available: false, status: 'auth-required', message: 'Yêu cầu xác thực tài khoản' };
+    }
+
+    if (res.status === 503) {
+      cachedConnectionStatus = 'unconfigured';
+      return { available: false, status: 'unconfigured', message: 'Dịch vụ đồng bộ chưa sẵn sàng' };
+    }
+
+    if (res.status >= 500) {
+      cachedConnectionStatus = 'server-error';
+      return { available: false, status: 'server-error', message: 'Máy chủ phản hồi lỗi' };
+    }
+  } catch {
+    cachedConnectionStatus = 'unreachable';
+    return { available: false, status: 'unreachable' };
+  }
+
+  cachedConnectionStatus = 'reachable';
+  return { available: true, status: 'reachable' };
+}
+
 export function hasRemoteChapterApi(): boolean {
-  return Boolean(API_URL);
+  if (typeof window === 'undefined') return Boolean(API_URL || process.env.API_URL);
+  if (API_URL) return true;
+  return cachedConnectionStatus !== 'unconfigured';
+}
+
+export function getConnectionStatus(): ApiConnectionStatus {
+  return cachedConnectionStatus;
+}
+
+export function setConnectionStatus(status: ApiConnectionStatus): void {
+  cachedConnectionStatus = status;
 }
 
 export function getDeviceIdentity(): DeviceIdentity {
@@ -94,7 +165,13 @@ export async function releaseChapterLock(chapterId: string, token: string) {
   }).catch(() => undefined);
 }
 
-export function persistLocalChapterDraft(chapterId: string, content: string, title: string, version: Partial<ChapterVersion> = {}) {
+export function persistLocalChapterDraft(
+  chapterId: string,
+  content: string,
+  title: string,
+  version: Partial<ChapterVersion> = {},
+  extra: { localRevision?: number; operationId?: string; projectId?: string } = {}
+): { success: boolean; error?: string } {
   const now = Date.now();
   try {
     const raw = localStorage.getItem('novelist_chapters');
@@ -138,9 +215,42 @@ export function persistLocalChapterDraft(chapterId: string, content: string, tit
       contentUpdatedAt: Number(version.contentUpdatedAt || version.updatedAt || 0),
       titleUpdatedAt: Number(version.titleUpdatedAt || version.updatedAt || 0)
     };
-    pending[chapterId] = { chapterId, content, title, baseVersion, savedLocallyAt: now };
+    pending[chapterId] = {
+      chapterId,
+      content,
+      title,
+      baseVersion,
+      savedLocallyAt: now,
+      localRevision: extra.localRevision ?? 0,
+      operationId: extra.operationId || `op_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      projectId: extra.projectId || (found ? updated.find((c: any) => c.id === chapterId)?.projectId : '')
+    };
     localStorage.setItem(PENDING_DRAFTS_KEY, JSON.stringify(pending));
-  } catch {}
+    return { success: true };
+  } catch (err: any) {
+    console.error('[ChapterLock] Error persisting local draft:', err);
+    return { success: false, error: err?.message || 'Không thể ghi vào bộ nhớ thiết bị' };
+  }
+}
+
+export function exportDraftFromMemory(chapterId: string, content: string, title: string) {
+  if (typeof window === 'undefined') return;
+  const backup = {
+    chapterId,
+    title,
+    content,
+    capturedAt: Date.now(),
+    deviceIdentity: getDeviceIdentity()
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `emergency-draft-${chapterId}-${Date.now()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 export function getPendingChapterDraft(chapterId: string): PendingChapterDraft | null {

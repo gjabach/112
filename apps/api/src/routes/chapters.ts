@@ -10,9 +10,9 @@ import { countWords } from '../utils/validation';
 type Variables = { db: any; user: AuthUser };
 const chapters = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-const CHAPTER_LOCK_TTL_MS = 60_000;
+export const CHAPTER_LOCK_TTL_MS = 60_000;
 
-type ChapterEditLock = {
+export type ChapterEditLock = {
   chapterId: string;
   userId: string;
   sessionId: string;
@@ -25,7 +25,7 @@ type ChapterEditLock = {
   expiresAt: number;
 };
 
-const publicLock = (lock: ChapterEditLock) => ({
+export const publicLock = (lock: ChapterEditLock) => ({
   version: lock.lockVersion,
   deviceLabel: lock.deviceLabel,
   acquiredAt: lock.acquiredAt,
@@ -33,7 +33,7 @@ const publicLock = (lock: ChapterEditLock) => ({
   expiresAt: lock.expiresAt
 });
 
-async function readActiveLock(c: any, chapterId: string): Promise<ChapterEditLock | null> {
+export async function readActiveLock(c: any, chapterId: string): Promise<ChapterEditLock | null> {
   const now = nowTimestamp();
   const row = await c.env.DB.prepare(`
     SELECT chapter_id AS chapterId, user_id AS userId, session_id AS sessionId,
@@ -351,11 +351,13 @@ const getChapterHandler = async (c: any) => {
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
 
+  const activeLock = await readActiveLock(c, id);
   return c.json({
     chapter: {
       ...chapter,
       charactersPresent: chapter.charactersPresent ? JSON.parse(chapter.charactersPresent) : []
-    }
+    },
+    activeLock: activeLock ? publicLock(activeLock) : null
   });
 };
 chapters.get('/chapters/:id', getChapterHandler);
@@ -378,6 +380,7 @@ const patchChapterHandler = async (c: any) => {
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
 
+  const suppliedToken = String(c.req.header('X-Chapter-Lock-Token') || body.lockToken || '');
   const lockedResponse = await rejectIfLockedByAnother(c, id);
   if (lockedResponse) return lockedResponse;
 
@@ -385,6 +388,17 @@ const patchChapterHandler = async (c: any) => {
   const currentTitleUpdatedAt = Number(chapter.titleUpdatedAt || chapter.updatedAt || 0);
   const contentChanged = parsed.data.content !== undefined && parsed.data.content !== (chapter.content || '');
   const titleChanged = parsed.data.title !== undefined && parsed.data.title !== chapter.title;
+  const requireLock = contentChanged || titleChanged;
+
+  if (requireLock) {
+    const activeLock = await readActiveLock(c, id);
+    if (!activeLock || activeLock.lockToken !== suppliedToken) {
+      return c.json({
+        error: 'Yêu cầu quyền chỉnh sửa hợp lệ trước khi cập nhật nội dung',
+        lock: activeLock ? publicLock(activeLock) : null
+      }, 423);
+    }
+  }
 
   if (contentChanged && parsed.data.baseContentUpdatedAt !== undefined && parsed.data.baseContentUpdatedAt !== currentContentUpdatedAt) {
     return c.json({
@@ -399,29 +413,26 @@ const patchChapterHandler = async (c: any) => {
     }, 409);
   }
 
-  const mutationTime = Math.max(nowTimestamp(), Number(chapter.updatedAt || 0) + 1);
-  const updates: any = { updatedAt: mutationTime };
-  if (parsed.data.title !== undefined) {
-    updates.title = parsed.data.title;
-    if (titleChanged) updates.titleUpdatedAt = mutationTime;
-  }
-  if (parsed.data.content !== undefined) {
-    updates.content = parsed.data.content;
-    updates.wordCount = countWords(parsed.data.content);
-    if (contentChanged) updates.contentUpdatedAt = mutationTime;
-  }
-  if (parsed.data.contentFormat !== undefined) updates.contentFormat = parsed.data.contentFormat;
-  if (parsed.data.summary !== undefined) updates.summary = parsed.data.summary;
-  if (parsed.data.status !== undefined) updates.status = parsed.data.status;
-  if (parsed.data.orderIndex !== undefined) updates.orderIndex = parsed.data.orderIndex;
-  if (parsed.data.notes !== undefined) updates.notes = parsed.data.notes;
-  if (parsed.data.pov !== undefined) updates.pov = parsed.data.pov;
-  if (parsed.data.location !== undefined) updates.location = parsed.data.location;
-  if (parsed.data.charactersPresent !== undefined) updates.charactersPresent = JSON.stringify(parsed.data.charactersPresent);
-  if (parsed.data.emoji !== undefined) updates.emoji = parsed.data.emoji;
+  const now = nowTimestamp();
+  const mutationTime = Math.max(now, Number(chapter.updatedAt || 0) + 1);
+  const newContentUpdatedAt = contentChanged ? mutationTime : currentContentUpdatedAt;
+  const newTitleUpdatedAt = titleChanged ? mutationTime : currentTitleUpdatedAt;
+  const newContent = parsed.data.content !== undefined ? parsed.data.content : chapter.content;
+  const newTitle = parsed.data.title !== undefined ? parsed.data.title : chapter.title;
+  const newWordCount = parsed.data.content !== undefined ? countWords(parsed.data.content) : chapter.wordCount;
+  const newFormat = parsed.data.contentFormat !== undefined ? parsed.data.contentFormat : chapter.contentFormat;
+  const newSummary = parsed.data.summary !== undefined ? parsed.data.summary : chapter.summary;
+  const newStatus = parsed.data.status !== undefined ? parsed.data.status : chapter.status;
+  const newOrderIndex = parsed.data.orderIndex !== undefined ? parsed.data.orderIndex : chapter.orderIndex;
+  const newNotes = parsed.data.notes !== undefined ? parsed.data.notes : chapter.notes;
+  const newPov = parsed.data.pov !== undefined ? parsed.data.pov : chapter.pov;
+  const newLocation = parsed.data.location !== undefined ? parsed.data.location : chapter.location;
+  const newCharacters = parsed.data.charactersPresent !== undefined ? JSON.stringify(parsed.data.charactersPresent) : (chapter.charactersPresent || '[]');
+  const newEmoji = parsed.data.emoji !== undefined ? parsed.data.emoji : chapter.emoji;
 
+  let newParentId = chapter.parentId;
   if (parsed.data.parentId !== undefined) {
-    const newParentId = parsed.data.parentId;
+    newParentId = parsed.data.parentId;
     if (newParentId) {
       if (newParentId === id) {
         return c.json({ error: 'Không thể chọn chính thẻ này làm thẻ cha' }, 400);
@@ -461,22 +472,67 @@ const patchChapterHandler = async (c: any) => {
         return c.json({ error: 'Google Docs giới hạn phân cấp tối đa 3 cấp thẻ' }, 400);
       }
     }
-    updates.parentId = newParentId;
   }
 
-  await db.update(schema.chapters).set(updates).where(eq(schema.chapters.id, id));
+  const checkBaseContent = contentChanged && parsed.data.baseContentUpdatedAt !== undefined;
+  const checkBaseTitle = titleChanged && parsed.data.baseTitleUpdatedAt !== undefined;
+
+  // Atomic conditional update in database
+  const updateResult = await c.env.DB.prepare(`
+    UPDATE chapters
+    SET title = ?, content = ?, word_count = ?, content_format = ?, summary = ?,
+        status = ?, order_index = ?, parent_id = ?, notes = ?, pov = ?,
+        location = ?, characters_present = ?, emoji = ?,
+        updated_at = ?, content_updated_at = ?, title_updated_at = ?
+    WHERE id = ?
+      AND (? = 0 OR EXISTS (
+        SELECT 1 FROM chapter_edit_locks
+        WHERE chapter_id = ? AND user_id = ? AND lock_token = ? AND expires_at > ?
+      ))
+      AND (? = 0 OR content_updated_at = ?)
+      AND (? = 0 OR title_updated_at = ?)
+  `).bind(
+    newTitle, newContent, newWordCount, newFormat, newSummary,
+    newStatus, newOrderIndex, newParentId, newNotes, newPov,
+    newLocation, newCharacters, newEmoji,
+    mutationTime, newContentUpdatedAt, newTitleUpdatedAt,
+    id,
+    requireLock ? 1 : 0, id, user.userId, suppliedToken, now,
+    checkBaseContent ? 1 : 0, Number(parsed.data.baseContentUpdatedAt || 0),
+    checkBaseTitle ? 1 : 0, Number(parsed.data.baseTitleUpdatedAt || 0)
+  ).run();
+
+  if (!updateResult.meta.changes) {
+    const current = await c.env.DB.prepare(`
+      SELECT c.id, c.updated_at AS updatedAt, c.content_updated_at AS contentUpdatedAt, c.title_updated_at AS titleUpdatedAt,
+             l.lock_token AS lockToken, l.device_label AS deviceLabel, l.expires_at AS expiresAt
+      FROM chapters c
+      LEFT JOIN chapter_edit_locks l ON l.chapter_id = c.id
+      WHERE c.id = ?
+    `).bind(id).first();
+
+    if (!current) return c.json({ error: 'Chapter not found' }, 404);
+    if (requireLock && (!current.lockToken || current.lockToken !== suppliedToken || Number(current.expiresAt || 0) <= now)) {
+      const active = await readActiveLock(c, id);
+      return c.json({ error: 'Quyền chỉnh sửa đã hết hạn hoặc được chuyển sang thiết bị khác', lock: active ? publicLock(active) : null }, 423);
+    }
+    return c.json({
+      error: 'Xung đột phiên bản: nội dung trên máy chủ đã thay đổi',
+      conflict: { updatedAt: current.updatedAt, contentUpdatedAt: current.contentUpdatedAt, titleUpdatedAt: current.titleUpdatedAt }
+    }, 409);
+  }
 
   // Auto-create revision every 10 minutes or if word count changed significantly
-  const shouldCreateRevision = !chapter.content || Math.abs((updates.wordCount || chapter.wordCount) - chapter.wordCount) > 100 || (nowTimestamp() - chapter.updatedAt > 10 * 60 * 1000);
-  if (shouldCreateRevision && updates.content) {
+  const shouldCreateRevision = !chapter.content || Math.abs((newWordCount || 0) - (chapter.wordCount || 0)) > 100 || (now - chapter.updatedAt > 10 * 60 * 1000);
+  if (shouldCreateRevision && newContent) {
     await db.insert(schema.revisions).values({
       id: generateId(),
       entityType: 'chapter',
       entityId: id,
-      content: updates.content,
-      wordCount: updates.wordCount || chapter.wordCount,
+      content: newContent,
+      wordCount: newWordCount,
       createdBy: user.userId,
-      createdAt: nowTimestamp(),
+      createdAt: now,
       label: 'Auto-save'
     });
   }

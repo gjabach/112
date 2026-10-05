@@ -57,8 +57,10 @@ import {
   hasRemoteChapterApi,
   heartbeatChapterLock,
   persistLocalChapterDraft,
+  probeApiCapabilities,
   releaseChapterLock,
   retryPendingRecoveries,
+  type ApiConnectionStatus,
   type ChapterVersion,
   type DeviceIdentity,
   type OwnedChapterLock,
@@ -93,7 +95,9 @@ export default function ChapterEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ApiConnectionStatus>('checking');
   const [lockState, setLockState] = useState<'acquiring' | 'owned' | 'locked' | 'offline'>('acquiring');
+  const [saveStatus, setSaveStatus] = useState<'clean' | 'dirty' | 'local-saved' | 'uploading' | 'server-acked' | 'conflict' | 'failed'>('clean');
   const [visibleLock, setVisibleLock] = useState<PublicChapterLock | null>(null);
   const [recoveryChapterId, setRecoveryChapterId] = useState<string | null>(null);
 
@@ -114,6 +118,10 @@ export default function ChapterEditorPage() {
   const lastTitleEditedTimeRef = useRef<number>(0);
   const lockStateRef = useRef(lockState);
   lockStateRef.current = lockState;
+  const connectionStatusRef = useRef<ApiConnectionStatus>(connectionStatus);
+  connectionStatusRef.current = connectionStatus;
+  const saveStatusRef = useRef(saveStatus);
+  saveStatusRef.current = saveStatus;
   const ownedLockRef = useRef<OwnedChapterLock | null>(null);
   const identityRef = useRef<DeviceIdentity | null>(null);
   const serverVersionRef = useRef<ChapterVersion>({ updatedAt: 0, contentUpdatedAt: 0, titleUpdatedAt: 0 });
@@ -283,7 +291,9 @@ export default function ChapterEditorPage() {
 
   const tryAcquireLock = useCallback(async (force = false) => {
     if (!chapterId) return;
-    if (!hasRemoteChapterApi()) {
+    const probe = await probeApiCapabilities(force);
+    setConnectionStatus(probe.status);
+    if (!probe.available || !hasRemoteChapterApi()) {
       if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
       transitionLockState('offline');
       protectChapterFromSync(chapterId);
@@ -326,6 +336,7 @@ export default function ChapterEditorPage() {
       serverVersionRef.current = result.chapterVersion;
       offlineBaseVersionRef.current = null;
       setVisibleLock(null);
+      setConnectionStatus('reachable');
       transitionLockState('owned');
       protectChapterFromSync(chapterId);
       if (hasUnsyncedDraftRef.current) {
@@ -335,6 +346,7 @@ export default function ChapterEditorPage() {
       }
     } catch (error: any) {
       if (error instanceof RemoteApiError && error.status === 423) {
+        setConnectionStatus('reachable');
         ownedLockRef.current = null;
         if (hasUnsyncedDraftRef.current || isDirtyRef.current) {
           await handleLockLost(error.data?.lock || null);
@@ -343,7 +355,14 @@ export default function ChapterEditorPage() {
           transitionLockState('locked');
           unprotectChapterFromSync(chapterId);
         }
+      } else if (error instanceof RemoteApiError && (error.status === 401 || error.status === 403)) {
+        setConnectionStatus('auth-required');
+        if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
+        transitionLockState('offline');
+        protectChapterFromSync(chapterId);
       } else {
+        const probeCheck = await probeApiCapabilities(false);
+        setConnectionStatus(probeCheck.status);
         if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
         transitionLockState('offline');
         protectChapterFromSync(chapterId);
@@ -353,6 +372,28 @@ export default function ChapterEditorPage() {
     }
   }, [chapterId, fetchChapterData, handleLockLost, projectId, preserveDraftAsRecovery, router, transitionLockState, visibleLock?.version]);
   tryAcquireLockRef.current = tryAcquireLock;
+
+  const retryConnection = useCallback(async () => {
+    toast.info('Đang kiểm tra kết nối...', { id: 'retry-conn' });
+    const probe = await probeApiCapabilities(true);
+    setConnectionStatus(probe.status);
+    if (probe.status === 'unconfigured') {
+      toast.warning('Dịch vụ đồng bộ chưa được cấu hình (NEXT_PUBLIC_API_URL)');
+      return;
+    }
+    if (probe.status === 'auth-required') {
+      toast.error('Cần đăng nhập lại để tiếp tục đồng bộ');
+      return;
+    }
+    if (!probe.available) {
+      toast.error('Vẫn chưa kết nối được máy chủ');
+      return;
+    }
+    toast.success('Đã kết nối máy chủ!');
+    await retryPendingRecoveries();
+    await fetchChapterData(false);
+    await tryAcquireLockRef.current(false);
+  }, [fetchChapterData]);
 
   useEffect(() => {
     if (!chapterId || !projectId) return;
@@ -456,6 +497,52 @@ export default function ChapterEditorPage() {
     return () => window.clearInterval(timer);
   }, [chapterId, handleLockLost, lockState, transitionLockState]);
 
+  // Active visible polling for viewer mode (lockState === 'locked')
+  useEffect(() => {
+    if (lockState !== 'locked' || !chapterId) return;
+
+    const pollCanonical = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (isDirtyRef.current || savingRef.current || hasUnsyncedDraftRef.current) return;
+      try {
+        const fetcher = hasRemoteChapterApi() ? apiFetchRemote : apiFetch;
+        const res = await fetcher(`/api/chapters/${chapterId}`);
+        if (!res?.chapter) return;
+        const normalized = {
+          ...res.chapter,
+          contentUpdatedAt: Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0),
+          titleUpdatedAt: Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0)
+        };
+        const hasNewerContent = normalized.contentUpdatedAt > serverVersionRef.current.contentUpdatedAt;
+        const hasNewerTitle = normalized.titleUpdatedAt > serverVersionRef.current.titleUpdatedAt;
+        if (hasNewerContent || hasNewerTitle) {
+          const rawContent = normalized.content;
+          const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
+          serverVersionRef.current = {
+            updatedAt: Number(normalized.updatedAt || 0),
+            contentUpdatedAt: normalized.contentUpdatedAt,
+            titleUpdatedAt: normalized.titleUpdatedAt
+          };
+          cacheRemoteChapter(normalized);
+          setChapter(normalized);
+          if (hasNewerTitle) setTitle(normalized.title || 'Thẻ');
+          if (hasNewerContent) {
+            setContent(safeContent);
+            setLiveHeadings(extractHeadingsFromContent(safeContent));
+          }
+        }
+        if (res.activeLock) {
+          setVisibleLock(res.activeLock);
+        }
+      } catch {
+        // Silent background polling error
+      }
+    };
+
+    const timer = window.setInterval(pollCanonical, 8000);
+    return () => window.clearInterval(timer);
+  }, [chapterId, lockState]);
+
   const saveChapter = useCallback(async (newContent?: string, newTitle?: string, isManual = false) => {
     if (lockStateRef.current === 'locked' || lockStateRef.current === 'acquiring') return;
     const contentToSave = newContent !== undefined ? newContent : contentRef.current;
@@ -465,6 +552,7 @@ export default function ChapterEditorPage() {
     persistLocalChapterDraft(chapterId, contentToSave, titleToSave, serverVersionRef.current);
     queuedSaveCountRef.current += 1;
     setSaving(true);
+    setSaveStatus('uploading');
 
     const executeSave = async () => {
       try {
@@ -475,10 +563,14 @@ export default function ChapterEditorPage() {
         if (!hasRemoteChapterApi() || lockStateRef.current === 'offline') {
           if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
           setLastSaved(Date.now());
+          setSaveStatus('local-saved');
           return;
         }
         const activeLock = ownedLockRef.current;
-        if (lockStateRef.current !== 'owned' || !activeLock?.token) return;
+        if (lockStateRef.current !== 'owned' || !activeLock?.token) {
+          setSaveStatus('local-saved');
+          return;
+        }
 
         const response = await apiFetchRemote(`/api/chapters/${chapterId}`, {
           method: 'PATCH',
@@ -511,7 +603,10 @@ export default function ChapterEditorPage() {
           hasUnsyncedDraftRef.current = !stillCurrent;
           if (stillCurrent) {
             clearPendingChapterDraft(chapterId, { content: contentToSave, title: titleToSave });
+            setSaveStatus('server-acked');
             playSuccessSound();
+          } else {
+            setSaveStatus('dirty');
           }
         }
 
@@ -520,6 +615,7 @@ export default function ChapterEditorPage() {
       } catch (error: any) {
         if (activeChapterIdRef.current !== chapterId) return;
         if (error instanceof RemoteApiError && (error.status === 409 || error.status === 423)) {
+          setSaveStatus('conflict');
           if (error.status === 423) await handleLockLost(error.data?.lock || null);
           else {
             transitionLockState('locked');
@@ -530,6 +626,7 @@ export default function ChapterEditorPage() {
         } else {
           if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
           transitionLockState('offline');
+          setSaveStatus('local-saved');
           protectChapterFromSync(chapterId);
           toast.warning('Mất kết nối. Bản nháp đang được lưu trên thiết bị này.', { id: 'editor-offline-save' });
         }
@@ -1018,6 +1115,7 @@ export default function ChapterEditorPage() {
                 if (!canEdit) return;
                 isDirtyRef.current = true;
                 hasUnsyncedDraftRef.current = true;
+                setSaveStatus('dirty');
                 lastTitleEditedTimeRef.current = Date.now();
                 pauseAutoSync(chapterId);
                 setTitle(e.target.value);
@@ -1039,17 +1137,31 @@ export default function ChapterEditorPage() {
                 </div>
               </div>
 
-              {saving ? (
-                <Badge variant="outline" className="animate-pulse text-[10px] sm:text-xs px-1.5 py-0">Đang lưu...</Badge>
+              {saveStatus === 'uploading' || saving ? (
+                <Badge variant="outline" className="animate-pulse text-[10px] sm:text-xs px-1.5 py-0 border-blue-400 text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Đang lưu máy chủ...
+                </Badge>
+              ) : saveStatus === 'server-acked' ? (
+                <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 text-[10px] sm:text-xs hidden sm:flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>Đã đồng bộ {lastSaved ? new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                </Badge>
+              ) : saveStatus === 'local-saved' ? (
+                <Badge variant="outline" className="text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-800 text-[10px] sm:text-xs flex items-center gap-1" title="Bản nháp đã lưu trên thiết bị này, chưa đồng bộ lên máy chủ">
+                  <Save className="w-3 h-3" /> Đã lưu máy này
+                </Badge>
+              ) : saveStatus === 'dirty' ? (
+                <Badge variant="outline" className="text-muted-foreground text-[10px] sm:text-xs">
+                  Chưa lưu
+                </Badge>
+              ) : saveStatus === 'conflict' ? (
+                <Badge variant="outline" className="text-rose-600 border-rose-300 text-[10px] sm:text-xs">
+                  Xung đột
+                </Badge>
               ) : lastSaved ? (
-                <Badge variant="outline" className="text-green-600 dark:text-green-400 text-[10px] sm:text-xs hidden sm:flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> {(() => {
-                    try {
-                      return new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    } catch {
-                      return 'Đã lưu';
-                    }
-                  })()}
+                <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 text-[10px] sm:text-xs hidden sm:flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>Đã lưu {new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 </Badge>
               ) : null}
 
@@ -1128,48 +1240,100 @@ export default function ChapterEditorPage() {
           </div>
         )}
 
-        {/* Chapter edit lock status */}
-        {lockState === 'acquiring' && (
-          <div className="bg-muted/80 border-b px-4 py-2.5 flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="w-4 h-4 animate-spin" /> Đang xin quyền chỉnh sửa chương này...
+        {/* Connection & Lock Status Banners */}
+        {connectionStatus === 'unconfigured' && (
+          <div className="bg-amber-500/15 border-b border-amber-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-200">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 shrink-0" />
+              <span>Chưa cấu hình API đồng bộ đám mây (NEXT_PUBLIC_API_URL). Hệ thống đang hoạt động ở chế độ cục bộ trên thiết bị này.</span>
+            </div>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void retryConnection()}>Kiểm tra lại</Button>
           </div>
         )}
-        {lockState === 'locked' && (
-          <div className="bg-amber-500/15 border-b border-amber-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
+
+        {connectionStatus === 'auth-required' && (
+          <div className="bg-rose-500/15 border-b border-rose-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-800 dark:text-rose-200">
+            <div className="flex items-center gap-2">
               <LockKeyhole className="w-4 h-4 shrink-0" />
-              <span>Chương này đang được sửa trên <strong>{visibleLock?.deviceLabel || 'thiết bị khác'}</strong>. Bạn đang ở chế độ chỉ đọc.</span>
+              <span>Phiên đăng nhập đã hết hạn hoặc chưa đồng nhất giữa PC và điện thoại. Vui lòng đăng nhập lại để tiếp tục đồng bộ.</span>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void tryAcquireLock(false)}>
-                <RefreshCw className="w-3.5 h-3.5 mr-1" /> Thử lại
-              </Button>
-              <Button
-                size="sm"
-                className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
-                onClick={() => {
-                  if (window.confirm('Chuyển quyền sửa sang thiết bị này? Thiết bị cũ sẽ chuyển sang chỉ đọc và phần chưa lưu của nó sẽ được giữ thành thẻ khôi phục.')) {
-                    void tryAcquireLock(true);
-                  }
-                }}
-              >
-                Chuyển quyền sửa
-              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void retryConnection()}>Thử lại</Button>
+              <Link href="/login">
+                <Button size="sm" className="h-7 text-xs bg-rose-600 hover:bg-rose-700 text-white">Đăng nhập</Button>
+              </Link>
             </div>
           </div>
         )}
-        {lockState === 'offline' && (
+
+        {connectionStatus === 'server-error' && (
+          <div className="bg-rose-500/15 border-b border-rose-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-800 dark:text-rose-200">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 shrink-0" />
+              <span>Máy chủ đồng bộ đang gặp sự cố tạm thời (5xx). Bản nháp của bạn an toàn trên thiết bị này.</span>
+            </div>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void retryConnection()}>Thử lại</Button>
+          </div>
+        )}
+
+        {connectionStatus === 'unreachable' && (
           <div className="bg-orange-500/15 border-b border-orange-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-orange-800 dark:text-orange-200">
             <div className="flex items-center gap-2">
               <WifiOff className="w-4 h-4 shrink-0" />
-              <span>Đang viết ngoại tuyến. Bản nháp được giữ trên thiết bị này và chưa được đồng bộ.</span>
+              <span>Không thể kết nối máy chủ đồng bộ. Bản nháp được giữ an toàn trên thiết bị này và sẽ tự đồng bộ khi có mạng.</span>
             </div>
-            {hasRemoteChapterApi() && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void tryAcquireLock(false)}>Kết nối lại</Button>}
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void retryConnection()}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Thử lại
+            </Button>
           </div>
         )}
+
+        {connectionStatus !== 'unconfigured' && connectionStatus !== 'auth-required' && connectionStatus !== 'server-error' && connectionStatus !== 'unreachable' && (
+          <>
+            {lockState === 'acquiring' && (
+              <div className="bg-muted/80 border-b px-4 py-2.5 flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Đang kiểm tra kết nối và quyền chỉnh sửa chương...
+              </div>
+            )}
+            {lockState === 'locked' && (
+              <div className="bg-amber-500/15 border-b border-amber-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
+                  <LockKeyhole className="w-4 h-4 shrink-0" />
+                  <span>Chương này đang được sửa trên <strong>{visibleLock?.deviceLabel || 'thiết bị khác'}</strong>. Bạn đang ở chế độ xem trực tiếp (tự động cập nhật).</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void tryAcquireLock(false)}>
+                    <RefreshCw className="w-3.5 h-3.5 mr-1" /> Thử lại
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                    onClick={() => {
+                      if (window.confirm('Chuyển quyền sửa sang thiết bị này? Thiết bị cũ sẽ chuyển sang chỉ đọc và phần chưa lưu của nó sẽ được giữ thành thẻ khôi phục.')) {
+                        void tryAcquireLock(true);
+                      }
+                    }}
+                  >
+                    Chuyển quyền sửa
+                  </Button>
+                </div>
+              </div>
+            )}
+            {lockState === 'offline' && (
+              <div className="bg-orange-500/15 border-b border-orange-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-orange-800 dark:text-orange-200">
+                <div className="flex items-center gap-2">
+                  <WifiOff className="w-4 h-4 shrink-0" />
+                  <span>Đang viết ngoại tuyến. Bản nháp được giữ trên thiết bị này và chưa được đồng bộ.</span>
+                </div>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void retryConnection()}>Kết nối lại</Button>
+              </div>
+            )}
+          </>
+        )}
+
         {recoveryChapterId && (
           <div className="bg-emerald-500/15 border-b border-emerald-500/30 p-2.5 px-4 flex items-center justify-between gap-3 text-xs text-emerald-800 dark:text-emerald-200">
-            <span>Bản nháp xung đột đã được giữ trong một thẻ khôi phục riêng.</span>
+            <span>Bản nháp ngoại tuyến / xung đột đã được bảo toàn trong một thẻ khôi phục riêng.</span>
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => router.push(`/editor/${projectId}/${recoveryChapterId}`)}>Mở thẻ khôi phục</Button>
           </div>
         )}
@@ -1248,6 +1412,7 @@ export default function ChapterEditorPage() {
                   if (!canEdit) return;
                   isDirtyRef.current = true;
                   hasUnsyncedDraftRef.current = true;
+                  setSaveStatus('dirty');
                   lastKeystrokeTimeRef.current = Date.now();
                   lastContentEditedTimeRef.current = Date.now();
                   pauseAutoSync(chapterId);
@@ -1262,6 +1427,7 @@ export default function ChapterEditorPage() {
                     if (!canEdit) return;
                     isDirtyRef.current = true;
                     hasUnsyncedDraftRef.current = true;
+                    setSaveStatus('dirty');
                     lastKeystrokeTimeRef.current = Date.now();
                     lastContentEditedTimeRef.current = Date.now();
                     pauseAutoSync(chapterId);

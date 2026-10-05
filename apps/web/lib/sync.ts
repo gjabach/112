@@ -512,9 +512,14 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       const local = exportFullWorkspace();
       const hasLocalData = local && ((Array.isArray(local.projects) && local.projects.length > 0) || (Array.isArray(local.chapters) && local.chapters.length > 0));
       if (hasLocalData) {
-        pushSync().catch(() => {});
-        broadcastSyncStatus('synced', 'Đã khởi tạo bản lưu đám mây');
-        return { success: true, updated: false };
+        const pushRes = await pushSync();
+        if (pushRes.success) {
+          broadcastSyncStatus('synced', 'Đã khởi tạo bản lưu đám mây');
+          return { success: true, updated: false };
+        } else {
+          broadcastSyncStatus('error', pushRes.error || 'Chưa thể lưu lên đám mây');
+          return { success: false, updated: false, error: pushRes.error };
+        }
       }
       broadcastSyncStatus('idle');
       return { success: true, updated: false };
@@ -558,14 +563,24 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
   }
 }
 
+export interface BidirectionalSyncResult {
+  success: boolean;
+  readSucceeded: boolean;
+  writeAcknowledged: boolean;
+  pendingWrites: boolean;
+  error?: string;
+}
+
 /**
  * Universal Bidirectional Sync:
- * 1. Flushes active editor draft so pending keystrokes are saved to localStorage with Date.now().
- * 2. Performs strict LWW pull & merge.
- * 3. Pushes canonical result up to cloud.
+ * 1. Flushes active editor draft so pending keystrokes are saved to localStorage.
+ * 2. Performs pull & merge.
+ * 3. Pushes canonical result up to cloud and verifies server ack.
  */
-export async function syncBidirectional(): Promise<{ success: boolean; error?: string }> {
-  if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
+export async function syncBidirectional(): Promise<BidirectionalSyncResult> {
+  if (typeof window === 'undefined') {
+    return { success: false, readSucceeded: false, writeAcknowledged: false, pendingWrites: false, error: 'Not in browser' };
+  }
 
   broadcastSyncStatus('syncing', 'Đang đồng bộ dữ liệu hai chiều...');
 
@@ -575,14 +590,27 @@ export async function syncBidirectional(): Promise<{ success: boolean; error?: s
   const pullRes = await pullSync(true);
   const pushRes = await pushSync();
 
-  const success = pullRes.success || pushRes.success;
+  const readSucceeded = Boolean(pullRes.success);
+  const writeAcknowledged = Boolean(pushRes.success);
+  const pendingWrites = !writeAcknowledged;
+  // A true sync success requires both read and write acknowledgment
+  const success = readSucceeded && writeAcknowledged;
+
   if (success) {
     broadcastSyncStatus('synced', 'Đồng bộ hai chiều hoàn tất');
+  } else if (!writeAcknowledged) {
+    broadcastSyncStatus('error', pushRes.error || 'Chưa thể lưu lên đám mây');
   } else {
-    broadcastSyncStatus('error', pullRes.error || pushRes.error || 'Lỗi đồng bộ');
+    broadcastSyncStatus('error', pullRes.error || 'Chưa thể tải từ đám mây');
   }
 
-  return { success, error: pullRes.error || pushRes.error };
+  return {
+    success,
+    readSucceeded,
+    writeAcknowledged,
+    pendingWrites,
+    error: pushRes.error || pullRes.error
+  };
 }
 
 let debouncePushTimer: any = null;
@@ -596,6 +624,8 @@ export function triggerAutoPush(delayMs: number = 1000) {
 }
 
 let autoSyncInitialized = false;
+let autoSyncIntervalId: any = null;
+let autoSyncCleanups: Array<() => void> = [];
 
 export function pauseAutoSync(chapterId: string = '__legacy__') {
   protectedChapterIds.add(chapterId);
@@ -617,19 +647,29 @@ export function resetAutoSyncState() {
     clearTimeout(debouncePushTimer);
     debouncePushTimer = null;
   }
+  if (autoSyncIntervalId) {
+    clearInterval(autoSyncIntervalId);
+    autoSyncIntervalId = null;
+  }
+  for (const cleanup of autoSyncCleanups) {
+    try { cleanup(); } catch {}
+  }
+  autoSyncCleanups = [];
 }
 
-export function initAutoSync() {
-  if (typeof window === 'undefined' || autoSyncInitialized) return;
+export function initAutoSync(): () => void {
+  if (typeof window === 'undefined' || autoSyncInitialized) return () => {};
   autoSyncInitialized = true;
 
   // 1. Initial pull on load to catch up with changes made on other devices (PC or Phone)
   pullSync().catch(() => {});
 
   // 2. Pull when window gains focus or tab becomes visible
-  window.addEventListener('focus', () => {
+  const handleFocus = () => {
     pullSync().catch(() => {});
-  });
+  };
+  window.addEventListener('focus', handleFocus);
+  autoSyncCleanups.push(() => window.removeEventListener('focus', handleFocus));
 
   const handleMobileHide = () => {
     if (isAutoSyncEnabled()) {
@@ -640,28 +680,35 @@ export function initAutoSync() {
   // Push on pagehide or visibilitychange to hidden (crucial for mobile iOS/Android lifecycle)
   window.addEventListener('pagehide', handleMobileHide);
   window.addEventListener('beforeunload', handleMobileHide);
+  autoSyncCleanups.push(() => window.removeEventListener('pagehide', handleMobileHide));
+  autoSyncCleanups.push(() => window.removeEventListener('beforeunload', handleMobileHide));
 
-  document.addEventListener('visibilitychange', () => {
+  const handleVisibility = () => {
     if (document.visibilityState === 'visible') {
       pullSync().catch(() => {});
     } else if (document.visibilityState === 'hidden') {
       handleMobileHide();
     }
-  });
+  };
+  document.addEventListener('visibilitychange', handleVisibility);
+  autoSyncCleanups.push(() => document.removeEventListener('visibilitychange', handleVisibility));
 
   // 3. Multi-Tab synchronization listener
-  window.addEventListener('storage', (e) => {
+  const handleStorage = (e: StorageEvent) => {
     if (e.key === 'novelist_chapters' || e.key === 'novelist_projects' || e.key === 'novelist_last_modified') {
       const current = exportFullWorkspace();
       window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current, fromStorage: true } }));
     }
-  });
+  };
+  window.addEventListener('storage', handleStorage);
+  autoSyncCleanups.push(() => window.removeEventListener('storage', handleStorage));
 
   // 4. Real-time active polling interval: every 8 seconds when active
-  // Keeps PC and Phone synchronized without saturating API rate limits
-  setInterval(() => {
+  autoSyncIntervalId = setInterval(() => {
     if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
       pullSync().catch(() => {});
     }
   }, 8000);
+
+  return resetAutoSyncState;
 }

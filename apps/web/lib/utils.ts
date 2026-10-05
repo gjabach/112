@@ -1673,8 +1673,8 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     }
   }
 
-  // 2. In browser, try relative path on the same host (e.g. Next.js API routes on Vercel)
-  if (isBrowser && (path.startsWith('/api/ai/') || path.startsWith('/api/sync') || path.startsWith('/api/export'))) {
+  // 2. In browser, try relative path on the same host (Next.js same-origin API routes)
+  if (isBrowser && path.startsWith('/api/')) {
     try {
       const token = localStorage.getItem('token');
       const headers: Record<string, string> = {
@@ -1691,6 +1691,12 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       if (res.ok && ct.includes('application/json')) {
         return await res.json();
       }
+      // If server returned a meaningful client error (400, 401, 403, 409, 423), throw it!
+      // Do NOT silently fall back to local fake user
+      if ([400, 401, 403, 409, 423].includes(res.status)) {
+        const errData = ct.includes('application/json') ? await res.json().catch(() => ({})) : {};
+        throw new Error(errData.error || errData.message || `Lỗi yêu cầu (${res.status})`);
+      }
       if (res.status === 404 || (res.ok && ct.includes('text/html'))) {
         // Fall back to local API handler if the route does not exist or returned SPA index.html
         const localRes = await handleLocalApi(path, options);
@@ -1700,6 +1706,14 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         return localRes;
       }
       const errData = await res.json().catch(() => ({}));
+      if (res.status === 503 && errData?.code === 'UNCONFIGURED') {
+        // Backend unconfigured on server, fall back to local handling
+        const localRes = await handleLocalApi(path, options);
+        if (localRes && typeof localRes === 'object' && localRes.error) {
+          throw new Error(localRes.error);
+        }
+        return localRes;
+      }
       throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
     } catch (e: any) {
       if (e instanceof SyntaxError || e.message?.includes('JSON') || !e.message || e.message.includes('fetch') || e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {

@@ -3,7 +3,7 @@
  * Provides unified online (Cloudflare Worker API) & offline (Local Storage / IndexedDB fallback) handling
  */
 
-import { apiFetch } from './utils';
+import { apiFetch, apiFetchRemote } from './utils';
 import type { 
   Project, 
   User,
@@ -38,6 +38,10 @@ export class NovelistApiClient {
   }
 
   public async request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+    if (this.baseUrl && !path.startsWith('http')) {
+      const fullPath = `${this.baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+      return apiFetchRemote(fullPath, options);
+    }
     return apiFetch(path, options);
   }
 
