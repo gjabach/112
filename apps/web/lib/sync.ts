@@ -8,6 +8,8 @@ import {
   unwrapWorkspace,
   mergeWorkspaces,
   deduplicateConflictBlocks,
+  getActiveChapters,
+  getProjectChapterStats,
   type SyncStats,
   type SyncStatus,
   type CloudAccountKeys
@@ -137,14 +139,15 @@ export function exportFullWorkspace() {
   const lastModified = lastModifiedStr ? parseInt(lastModifiedStr, 10) : Date.now();
 
   const rawChapters = getStoredJson('novelist_chapters', []);
-  const sanitizedChapters = Array.isArray(rawChapters) ? rawChapters.map((c: any) => ({
+  const sanitizedChapters = getActiveChapters(Array.isArray(rawChapters) ? rawChapters : [], getStoredJson('novelist_tombstones', {})).map((c: any) => ({
     ...c,
     updatedAt: Number(c.updatedAt || c.createdAt || lastModified)
-  })) : [];
+  }));
 
   const rawProjects = getStoredJson('novelist_projects', []);
   const sanitizedProjects = Array.isArray(rawProjects) ? rawProjects.map((p: any) => ({
     ...p,
+    ...getProjectChapterStats(sanitizedChapters, p.id),
     updatedAt: Number(p.updatedAt || p.createdAt || lastModified)
   })) : [];
 
@@ -194,7 +197,7 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
 
     // Filter out all deleted chapters and projects
     if (Array.isArray(finalData.chapters)) {
-      finalData.chapters = finalData.chapters.filter((ch: any) => ch?.id && !allTombstones[ch.id] && (!ch.projectId || !allTombstones[ch.projectId]));
+      finalData.chapters = getActiveChapters(finalData.chapters, allTombstones);
     }
     if (Array.isArray(finalData.projects)) {
       finalData.projects = finalData.projects.filter((p: any) => p?.id && !allTombstones[p.id]);
@@ -248,14 +251,12 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
     }
 
     // Recalculate project chapterCount and wordCount accurately
+    if (Array.isArray(finalData.chapters)) finalData.chapters = getActiveChapters(finalData.chapters, allTombstones);
     if (Array.isArray(finalData.projects) && Array.isArray(finalData.chapters)) {
       finalData.projects = finalData.projects.map((p: any) => {
-        const pChapters = finalData.chapters.filter((c: any) => c.projectId === p.id);
-        const totalWords = pChapters.reduce((acc: number, c: any) => acc + (c.wordCount || 0), 0);
         return {
           ...p,
-          chapterCount: pChapters.length,
-          wordCount: totalWords
+          ...getProjectChapterStats(finalData.chapters, p.id)
         };
       });
     }
@@ -734,7 +735,7 @@ export function initAutoSync(): () => void {
 
   // 3. Multi-Tab synchronization listener
   const handleStorage = (e: StorageEvent) => {
-    if (e.key === 'novelist_chapters' || e.key === 'novelist_projects' || e.key === 'novelist_last_modified') {
+    if (e.key === 'novelist_chapters' || e.key === 'novelist_projects' || e.key === 'novelist_last_modified' || e.key === 'novelist_tombstones') {
       const current = exportFullWorkspace();
       window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current, fromStorage: true } }));
     }

@@ -1,6 +1,9 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail, recordTombstone } from './sync';
+import { countWords, getProjectChapterStats } from './sync-core';
+import { cacheChapterApiResponse, getCachedChapters, refreshCachedProjectStats, notifyWorkspaceChanged } from './workspace-cache';
+export { countWords } from './sync-core';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -27,39 +30,6 @@ export function formatRelativeTime(timestamp: number): string {
   if (hours < 24) return `${hours} giờ trước`;
   if (days < 7) return `${days} ngày trước`;
   return formatDate(Number(timestamp));
-}
-
-export function countWords(text: any): number {
-  if (!text) return 0;
-  if (typeof text !== 'string') {
-    if (typeof text === 'object') {
-      try {
-        const plain = extractText(text);
-        return plain.trim().split(/\s+/).filter(Boolean).length;
-      } catch {
-        return 0;
-      }
-    }
-    return 0;
-  }
-  try {
-    const json = JSON.parse(text);
-    if (json && typeof json === 'object') {
-      const plain = extractText(json);
-      return plain.trim().split(/\s+/).filter(Boolean).length;
-    }
-  } catch {}
-  return String(text).trim().split(/\s+/).filter(Boolean).length;
-}
-
-function extractText(node: any): string {
-  if (!node) return '';
-  if (typeof node === 'string') return node;
-  if (node.text) return String(node.text);
-  if (Array.isArray(node.content)) {
-    return node.content.map(extractText).join(' ');
-  }
-  return '';
 }
 
 export function readingTime(words: number): string {
@@ -260,7 +230,7 @@ export async function apiFetchRemote(path: string, options: RequestInit = {}): P
 
   let response: Response;
   try {
-    response = await fetch(`${base}${normalizedPath}`, { ...options, headers });
+    response = await fetch(`${base}${normalizedPath}`, { cache: 'no-store', ...options, headers });
   } catch (error: any) {
     throw new RemoteApiError(error?.message || 'Không thể kết nối máy chủ', 0, { network: true });
   }
@@ -270,7 +240,7 @@ export async function apiFetchRemote(path: string, options: RequestInit = {}): P
   if (!response.ok) {
     throw new RemoteApiError(data?.error || data?.message || `Lỗi máy chủ (${response.status})`, response.status, data);
   }
-  return data;
+  return cacheChapterApiResponse(path, data);
 }
 
 export async function handleLocalApi(path: string, options: RequestInit = {}): Promise<any> {
@@ -297,7 +267,9 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
   const setStorage = (key: string, val: any) => {
     try {
       localStorage.setItem(key, JSON.stringify(val));
+      if (key === 'novelist_chapters' || key === 'novelist_projects') refreshCachedProjectStats();
       localStorage.setItem('novelist_last_modified', String(Date.now()));
+      if (key === 'novelist_chapters' || key === 'novelist_projects') notifyWorkspaceChanged();
       if (typeof window !== 'undefined') {
         import('./sync').then(m => m.triggerAutoPush()).catch(() => {});
       }
@@ -638,8 +610,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     const sanitized = userProjects.map((p: any) => ({
       ...p,
       coverUrl: p.coverUrl || '',
-      wordCount: p.wordCount ?? 0,
-      chapterCount: p.chapterCount ?? 0,
+      ...getProjectChapterStats(getCachedChapters(), p.id),
       status: p.status || 'planning',
       genre: p.genre || 'fantasy',
       updatedAt: p.updatedAt || now,
@@ -677,7 +648,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
     const projects = getStorage('novelist_projects', []);
     if (method === 'GET') {
       const proj = projects.find((p: any) => p.id === id) || { id, title: 'Dự án', createdAt: now };
-      return { project: proj };
+      return { project: { ...proj, ...getProjectChapterStats(getCachedChapters(), id) } };
     }
     if (method === 'PATCH') {
       const updated = projects.map((p: any) => (p.id === id ? { ...p, ...body, updatedAt: now } : p));
@@ -832,7 +803,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
   const projChapMatch = path.match(/^\/api\/projects\/([^\/]+)\/chapters/);
   if (projChapMatch) {
     const projectId = projChapMatch[1];
-    const chapters = getStorage('novelist_chapters', []);
+    const chapters = getCachedChapters();
     if (method === 'GET') {
       const list = chapters
         .filter((c: any) => c.projectId === projectId)
@@ -882,7 +853,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 
       // Update chapter count on project
       const projects = getStorage('novelist_projects', []);
-      const updatedProj = projects.map((p: any) => p.id === projectId ? { ...p, chapterCount: (p.chapterCount || 0) + 1, updatedAt: now } : p);
+      const updatedProj = projects.map((p: any) => p.id === projectId ? { ...p, ...getProjectChapterStats(getCachedChapters(), projectId), updatedAt: now } : p);
       setStorage('novelist_projects', updatedProj);
 
       // Push immediately to cloud so other devices see new chapter instantly
@@ -898,7 +869,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
   const dupChapMatch = path.match(/^\/api\/chapters\/([^\/]+)\/duplicate$/);
   if (dupChapMatch && method === 'POST') {
     const id = dupChapMatch[1];
-    const chapters = getStorage('novelist_chapters', []);
+    const chapters = getCachedChapters();
     const source = chapters.find((c: any) => c.id === id);
     if (!source) return { error: 'Không tìm thấy thẻ' };
     const projChaps = chapters.filter((c: any) => c.projectId === source.projectId);
@@ -954,7 +925,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
   const chapMatch = path.match(/^\/api\/chapters\/([^\/]+)$/);
   if (chapMatch) {
     const id = chapMatch[1];
-    const chapters = getStorage('novelist_chapters', []);
+    const chapters = getCachedChapters();
     if (method === 'GET') {
       const chapter = chapters.find((c: any) => c.id === id) || null;
       return { chapter };
@@ -1036,7 +1007,8 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
         setStorage('novelist_projects', updatedProj);
       }
 
-      return { success: true };
+      return { success: true, deletedIds: [...toDeleteIds], deletedAt: now,
+        tombstones: Object.fromEntries([...toDeleteIds].map(delId => [delId, now])) };
     }
   }
 
@@ -1661,8 +1633,8 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
       const normalizedBase = customApiUrl.replace(/\/+$/, '');
       const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-      const res = await fetch(`${normalizedBase}${normalizedPath}`, { ...options, headers });
-      if (res.ok) return await res.json();
+      const res = await fetch(`${normalizedBase}${normalizedPath}`, { cache: 'no-store', ...options, headers });
+      if (res.ok) return isBrowser ? cacheChapterApiResponse(path, await res.json()) : await res.json();
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
     } catch (e: any) {
@@ -1684,16 +1656,17 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       if (token && !headers['Authorization']) headers['Authorization'] = `Bearer ${token}`;
 
       const res = await fetch(path, {
+        cache: 'no-store',
         ...options,
         headers
       });
       const ct = res.headers.get('content-type') || '';
       if (res.ok && ct.includes('application/json')) {
-        return await res.json();
+        return cacheChapterApiResponse(path, await res.json());
       }
       // If server returned a meaningful client error (400, 401, 403, 409, 423), throw it!
       // Do NOT silently fall back to local fake user
-      if ([400, 401, 403, 409, 423].includes(res.status)) {
+      if ([400, 401, 403, 409, 410, 423].includes(res.status)) {
         const errData = ct.includes('application/json') ? await res.json().catch(() => ({})) : {};
         throw new Error(errData.error || errData.message || `Lỗi yêu cầu (${res.status})`);
       }

@@ -1,4 +1,6 @@
 'use client';
+import { getCachedChapters } from '@/lib/workspace-cache';
+import { getProjectChapterStats } from '@/lib/sync-core';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -72,8 +74,16 @@ export default function ProjectsPage() {
       .catch(() => {});
 
     const handleSyncUpdated = () => fetchProjects();
+    const handleWorkspaceUpdated = () => {
+      const chapters = getCachedChapters();
+      setProjects(prev => prev.map(p => ({ ...p, ...getProjectChapterStats(chapters, p.id) })));
+    };
     window.addEventListener('novelist-sync-updated', handleSyncUpdated);
-    return () => window.removeEventListener('novelist-sync-updated', handleSyncUpdated);
+    window.addEventListener('novelist-workspace-updated', handleWorkspaceUpdated);
+    return () => {
+      window.removeEventListener('novelist-sync-updated', handleSyncUpdated);
+      window.removeEventListener('novelist-workspace-updated', handleWorkspaceUpdated);
+    };
   }, []);
 
   // Edit Project Dialog State

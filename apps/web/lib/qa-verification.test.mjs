@@ -1197,13 +1197,13 @@ test('sync-core: mergeWorkspaces guarantees latest write at timestamp T is immed
   // When merging phone's older draft with PC's newer draft, PC must win!
   const { merged: mergedPCWins, hasLocalChanges, hasRemoteChanges } = mergeWorkspaces(phoneOlderLongerDraft, pcNewerRefactoredDraft);
   assert.equal(mergedPCWins.chapters[0].content, '7719 words edited refined text on PC', 'PC edit made later in time must be canonical');
-  assert.equal(mergedPCWins.chapters[0].wordCount, 7719);
+  assert.equal(mergedPCWins.chapters[0].wordCount, countWords(pcNewerRefactoredDraft.chapters[0].content));
   assert.equal(hasRemoteChanges, true);
 
   // Scenario 2: Reverse merge order - PC as local, Phone as remote
   const { merged: mergedPCWins2 } = mergeWorkspaces(pcNewerRefactoredDraft, phoneOlderLongerDraft);
   assert.equal(mergedPCWins2.chapters[0].content, '7719 words edited refined text on PC');
-  assert.equal(mergedPCWins2.chapters[0].wordCount, 7719);
+  assert.equal(mergedPCWins2.chapters[0].wordCount, countWords(pcNewerRefactoredDraft.chapters[0].content));
 
   // Scenario 3: Later, Phone edits Chapter 1 with new text at 11:00. Phone now becomes canonical!
   const phoneBrandNewEdit = {
@@ -1217,7 +1217,7 @@ test('sync-core: mergeWorkspaces guarantees latest write at timestamp T is immed
 
   const { merged: mergedPhoneWins } = mergeWorkspaces(mergedPCWins, phoneBrandNewEdit);
   assert.equal(mergedPhoneWins.chapters[0].content, 'Nội dung mới nhất vừa sửa trên điện thoại', 'Latest write on phone must immediately become canonical');
-  assert.equal(mergedPhoneWins.chapters[0].wordCount, 8);
+  assert.equal(mergedPhoneWins.chapters[0].wordCount, countWords(phoneBrandNewEdit.chapters[0].content));
 });
 
 test('sync-core: Clicking sync on PC never reverts edited text with stale phone data', () => {
@@ -1277,7 +1277,7 @@ test('sync-core: Concurrent active web on both PC & Phone preserves independent 
   assert.equal(c1.content, 'Nội dung 1 mới tinh từ phone', 'Chapter 1 must take phone newer version');
   assert.equal(c2.content, 'Nội dung 2 mới tinh', 'Chapter 2 must take PC newer version');
   assert.equal(merged.projects[0].chapterCount, 2);
-  assert.equal(merged.projects[0].wordCount, 900);
+  assert.equal(merged.projects[0].wordCount, countWords(c1.content) + countWords(c2.content));
 });
 
 test('sync-core: mergeWorkspaces guarantees PC chapters are never wiped when Mobile pushes fewer chapters', () => {
@@ -1308,14 +1308,14 @@ test('sync-core: mergeWorkspaces guarantees PC chapters are never wiped when Mob
   assert.equal(merged.chapters.length, 2, 'Both Lore and Chapter 1 must be present');
   const ch1 = merged.chapters.find(c => c.id === 'ch_1');
   assert.ok(ch1, 'Chapter 1 from PC must be preserved');
-  assert.equal(ch1.wordCount, 9069);
+  assert.equal(ch1.wordCount, countWords(pcState.chapters[1].content));
 
   const lore = merged.chapters.find(c => c.id === 'ch_lore');
   assert.equal(lore.content, 'Lore chi tiết...', 'Must prefer richer/newer PC content for Lore');
 
   // Verify project counters recomputed correctly
   assert.equal(merged.projects[0].chapterCount, 2);
-  assert.equal(merged.projects[0].wordCount, 1884 + 9069);
+  assert.equal(merged.projects[0].wordCount, countWords(pcState.chapters[0].content) + countWords(pcState.chapters[1].content));
   assert.equal(hasRemoteChanges, true);
 });
 
@@ -1541,7 +1541,7 @@ test('sync-core: Deleting a chapter on PC creates a tombstone and prevents Cloud
   assert.equal(mergedPCWithCloud.chapters[0].id, 'ch_1', 'Only chapter 1 should remain');
   assert.equal(mergedPCWithCloud.tombstones['ch_2'], now - 1000, 'Tombstone for chapter 2 must be preserved');
   assert.equal(mergedPCWithCloud.projects[0].chapterCount, 1, 'Project chapter count must be updated to 1');
-  assert.equal(mergedPCWithCloud.projects[0].wordCount, 3000, 'Project word count must be recomputed accurately');
+  assert.equal(mergedPCWithCloud.projects[0].wordCount, countWords(pcStateAfterDelete.chapters[0].content), 'Project word count must be recomputed from actual content');
 
   // Test commutativity: Cloud merges with PC incoming payload
   const { merged: mergedCloudWithPC } = mergeWorkspaces(cloudOrMobileStaleState, pcStateAfterDelete);
@@ -1770,13 +1770,13 @@ test('sync-core: Field-level merge preserves mobile 2000-word content when deskt
   assert.equal(ch.title, 'Chương 1: Bình Minh Mới', 'Title should take the newer desktop rename');
   // Must NOT lose Mobile's 2000 words!
   assert.equal(ch.content, 'Nội dung rất dài 2000 từ được viết trên điện thoại khi đang di chuyển trên đường...', 'Content must NOT be lost');
-  assert.equal(ch.wordCount, 2000, 'Word count must be 2000 from mobile draft');
+  assert.equal(ch.wordCount, countWords(mobileState.chapters[0].content), 'Word count must reflect the selected mobile draft');
 
   // Also test reverse merge direction (Desktop local, Mobile remote)
   const { merged: mergedReverse } = mergeWorkspaces(desktopState, mobileState);
   assert.equal(mergedReverse.chapters[0].title, 'Chương 1: Bình Minh Mới');
   assert.equal(mergedReverse.chapters[0].content, 'Nội dung rất dài 2000 từ được viết trên điện thoại khi đang di chuyển trên đường...');
-  assert.equal(mergedReverse.chapters[0].wordCount, 2000);
+  assert.equal(mergedReverse.chapters[0].wordCount, countWords(mobileState.chapters[0].content));
 });
 
 test('sync-core: mergeWorkspaces is idempotent and never duplicates/balloons content over multiple sync runs', () => {

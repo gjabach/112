@@ -1,5 +1,6 @@
 import { apiFetch } from './utils';
 import { pushSync, unprotectChapterFromSync } from './sync';
+import { refreshCachedProjectStats, notifyWorkspaceChanged } from './workspace-cache';
 
 export interface DeleteChapterOptions {
   projectId: string;
@@ -41,22 +42,7 @@ export async function deleteChapterWithSync(options: DeleteChapterOptions): Prom
 
   const opId = operationId || `del_cli_${chapterId}_${Date.now()}`;
 
-  // 1. Pre-delete: Unprotect chapter in active sync and stop dirty recovery
-  unprotectChapterFromSync(chapterId);
-
-  // 2. Archive any unsaved pending drafts for this chapter before retiring
-  try {
-    const rawDrafts = localStorage.getItem('novelist_pending_chapter_drafts');
-    const drafts = rawDrafts ? JSON.parse(rawDrafts) : {};
-    if (drafts?.[chapterId]) {
-      const d = drafts[chapterId];
-      archiveDraft(chapterId, d.content, d.title, 'chapter_deleted');
-      delete drafts[chapterId];
-      localStorage.setItem('novelist_pending_chapter_drafts', JSON.stringify(drafts));
-    }
-  } catch {}
-
-  // 3. Send SINGLE atomic DELETE request to server. Server cascades to all descendants!
+  // Send one atomic DELETE request. The API cascades to all descendants.
   const headers: Record<string, string> = {
     'X-Operation-Id': opId
   };
@@ -73,14 +59,17 @@ export async function deleteChapterWithSync(options: DeleteChapterOptions): Prom
   } catch (err: any) {
     return { success: false, deletedIds: [], error: err.message || 'Lỗi khi xóa chương' };
   }
+  if (!serverRes?.success) {
+    return { success: false, deletedIds: [], error: serverRes?.error || 'Lỗi khi xóa chương' };
+  }
 
-  const deletedIds: string[] = Array.isArray(serverRes?.deletedIds)
+  const deletedIds: string[] = Array.isArray(serverRes?.deletedIds) && serverRes.deletedIds.length > 0
     ? serverRes.deletedIds
     : [chapterId];
 
   const now = Number(serverRes?.deletedAt || Date.now());
 
-  // 4. Update local cache & record durable tombstones locally
+  // Update the cache only after deletion has been acknowledged.
   try {
     // Record tombstones
     const rawTombstones = localStorage.getItem('novelist_tombstones');
@@ -94,6 +83,16 @@ export async function deleteChapterWithSync(options: DeleteChapterOptions): Prom
     }
     localStorage.setItem('novelist_tombstones', JSON.stringify(tombstones));
 
+    // Retire drafts only after deletion succeeds, including the entire subtree.
+    const rawDrafts = localStorage.getItem('novelist_pending_chapter_drafts');
+    const drafts = rawDrafts ? JSON.parse(rawDrafts) : {};
+    for (const delId of deletedIds) {
+      if (!drafts[delId]) continue;
+      archiveDraft(delId, drafts[delId].content, drafts[delId].title, 'chapter_deleted');
+      delete drafts[delId];
+    }
+    localStorage.setItem('novelist_pending_chapter_drafts', JSON.stringify(drafts));
+
     // Remove from novelist_chapters
     const rawChapters = localStorage.getItem('novelist_chapters');
     const chapters = rawChapters ? JSON.parse(rawChapters) : [];
@@ -105,16 +104,15 @@ export async function deleteChapterWithSync(options: DeleteChapterOptions): Prom
     const rawProjects = localStorage.getItem('novelist_projects');
     const projects = rawProjects ? JSON.parse(rawProjects) : [];
     if (Array.isArray(projects)) {
-      const projChapters = remainingChapters.filter((c: any) => c.projectId === projectId);
-      const totalWords = projChapters.reduce((sum: number, c: any) => sum + (c.wordCount || 0), 0);
       const updatedProjects = projects.map((p: any) => p.id === projectId ? {
         ...p,
-        chapterCount: projChapters.length,
-        wordCount: totalWords,
         updatedAt: now
       } : p);
       localStorage.setItem('novelist_projects', JSON.stringify(updatedProjects));
     }
+    refreshCachedProjectStats();
+    localStorage.setItem('novelist_last_modified', String(now));
+    notifyWorkspaceChanged();
 
     // Broadcast event across tabs/windows
     window.dispatchEvent(new CustomEvent('novelist-chapters-deleted', {
@@ -124,7 +122,7 @@ export async function deleteChapterWithSync(options: DeleteChapterOptions): Prom
     console.error('[deleteChapterWithSync] Cache cleanup error:', e);
   }
 
-  // 5. Trigger cloud sync push to propagate tombstones to cloud and peer devices
+  // Propagate tombstones to cloud and peer devices.
   pushSync().catch(() => {});
 
   return {

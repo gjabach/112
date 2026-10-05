@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch, apiFetchRemote, countWords, RemoteApiError } from '@/lib/utils';
+import { getCachedChapters, readWorkspaceCache } from '@/lib/workspace-cache';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
 import {
@@ -45,7 +46,7 @@ import {
   registerSyncFlushHandler
 } from '@/lib/sync';
 import { deduplicateConflictBlocks } from '@/lib/sync-core';
-import { deleteChapterWithSync } from '@/lib/delete-service';
+import { deleteChapterWithSync, archiveDraft } from '@/lib/delete-service';
 import {
   CHAPTER_LOCK_HEARTBEAT_MS,
   acquireChapterLock,
@@ -104,6 +105,8 @@ export default function ChapterEditorPage() {
 
   // Protection refs against sync race conditions and text reversions
   const isDirtyRef = useRef(false);
+  const isDeletingRef = useRef(false);
+  const selfDeletedChapterRef = useRef<string | null>(null);
   const savingRef = useRef(false);
   savingRef.current = saving;
   const contentRef = useRef(content);
@@ -194,6 +197,8 @@ export default function ChapterEditorPage() {
         }
       }
       if (activeChapterIdRef.current !== chapterId) return;
+      const tombstones = readWorkspaceCache('novelist_tombstones', {});
+      if (tombstones[chapterId] || tombstones[projectId]) return;
       if (!res?.chapter) {
         isDirtyRef.current = false;
         toast.error('Thẻ này đã bị xóa hoặc không còn tồn tại', { id: 'chapter-deleted-error' });
@@ -236,7 +241,7 @@ export default function ChapterEditorPage() {
           };
         }
       }
-      setAllChapters(Array.isArray(listRes?.chapters) ? listRes.chapters : []);
+      setAllChapters(getCachedChapters(projectId));
     } catch (e: any) {
       toast.error(e.message || 'Lỗi tải thẻ');
     } finally {
@@ -434,11 +439,34 @@ export default function ChapterEditorPage() {
       try {
         const fetcher = hasRemoteChapterApi() ? apiFetchRemote : apiFetch;
         const listRes = await fetcher(`/api/projects/${projectId}/chapters`);
-        if (Array.isArray(listRes?.chapters)) setAllChapters(listRes.chapters);
+        if (activeChapterIdRef.current === chapterId && Array.isArray(listRes?.chapters)) {
+          setAllChapters(getCachedChapters(projectId));
+        }
       } catch {}
       if (lockStateRef.current === 'locked' && !isDirtyRef.current && !savingRef.current) {
         await fetchChapterData(false);
       }
+    };
+    const handleWorkspace = () => {
+      if (activeChapterIdRef.current !== chapterId) return;
+      const active = getCachedChapters(projectId);
+      setAllChapters(active);
+      const tombstones = readWorkspaceCache('novelist_tombstones', {});
+      if (!tombstones[chapterId] && !tombstones[projectId]) return;
+      if (isDirtyRef.current || hasUnsyncedDraftRef.current) {
+        archiveDraft(chapterId, contentRef.current, titleRef.current, 'chapter_deleted');
+      }
+      isDirtyRef.current = false;
+      hasUnsyncedDraftRef.current = false;
+      clearPendingChapterDraft(chapterId);
+      unprotectChapterFromSync(chapterId);
+      ownedLockRef.current = null;
+      if (isDeletingRef.current || selfDeletedChapterRef.current === chapterId) return;
+      router.replace(`/editor/${projectId}`);
+    };
+    const handleSyncUpdate = () => {
+      handleWorkspace();
+      if (!readWorkspaceCache('novelist_tombstones', {})[chapterId]) void handleSync();
     };
     const handleOnline = async () => {
       await retryPendingRecoveries();
@@ -448,11 +476,15 @@ export default function ChapterEditorPage() {
       if ((lockStateRef.current !== 'owned' && lockStateRef.current !== 'offline') || (!isDirtyRef.current && !hasUnsyncedDraftRef.current)) return;
       return saveChapterRef.current(contentRef.current, titleRef.current, true);
     });
-    window.addEventListener('novelist-sync-updated', handleSync);
+    window.addEventListener('novelist-sync-updated', handleSyncUpdate);
+    window.addEventListener('novelist-workspace-updated', handleWorkspace);
+    window.addEventListener('novelist-chapters-deleted', handleWorkspace);
     window.addEventListener('online', handleOnline);
     return () => {
       unregisterFlush();
-      window.removeEventListener('novelist-sync-updated', handleSync);
+      window.removeEventListener('novelist-sync-updated', handleSyncUpdate);
+      window.removeEventListener('novelist-workspace-updated', handleWorkspace);
+      window.removeEventListener('novelist-chapters-deleted', handleWorkspace);
       window.removeEventListener('online', handleOnline);
       const token = ownedLockRef.current?.token;
       if (isDirtyRef.current || hasUnsyncedDraftRef.current) {
@@ -557,6 +589,8 @@ export default function ChapterEditorPage() {
 
     const executeSave = async () => {
       try {
+        const tombstones = readWorkspaceCache('novelist_tombstones', {});
+        if (tombstones[chapterId] || tombstones[projectId]) return;
         // Coalesce snapshots which have not started yet. An in-flight older
         // request is still followed by the latest snapshot in this same queue.
         if (revision < latestSaveRevisionRef.current && !isManual) return;
@@ -854,6 +888,7 @@ export default function ChapterEditorPage() {
       return;
     }
     try {
+      isDeletingRef.current = true;
       const lockToken = targetId === chapterId ? ownedLockRef.current?.token : undefined;
       const res = await deleteChapterWithSync({
         projectId: projectId as string,
@@ -869,6 +904,7 @@ export default function ChapterEditorPage() {
 
       const deletedSet = new Set(res.deletedIds);
       if (deletedSet.has(chapterId)) {
+        selfDeletedChapterRef.current = chapterId;
         // Navigate to adjacent tab without triggering save on the deleted chapter
         const currentIdx = orderedChapters.findIndex(c => c.id === chapterId);
         const remaining = orderedChapters.filter(c => !deletedSet.has(c.id));
@@ -884,6 +920,8 @@ export default function ChapterEditorPage() {
       }
     } catch (e: any) {
       toast.error(e.message || 'Lỗi xóa thẻ');
+    } finally {
+      isDeletingRef.current = false;
     }
   };
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { API_URL, apiFetchRemote, countWords } from './utils';
+import { refreshCachedProjectStats, notifyWorkspaceChanged, readWorkspaceCache } from './workspace-cache';
 
 export const CHAPTER_LOCK_HEARTBEAT_MS = 20_000;
 
@@ -174,6 +175,10 @@ export function persistLocalChapterDraft(
 ): { success: boolean; error?: string } {
   const now = Date.now();
   try {
+    const tombstones = readWorkspaceCache('novelist_tombstones', {});
+    if (tombstones[chapterId] || (extra.projectId && tombstones[extra.projectId])) {
+      return { success: false, error: 'Chương đã bị xóa' };
+    }
     const raw = localStorage.getItem('novelist_chapters');
     const parsedChapters = raw ? JSON.parse(raw) : [];
     const chapters = Array.isArray(parsedChapters) ? parsedChapters : [];
@@ -226,6 +231,8 @@ export function persistLocalChapterDraft(
       projectId: extra.projectId || (found ? updated.find((c: any) => c.id === chapterId)?.projectId : '')
     };
     localStorage.setItem(PENDING_DRAFTS_KEY, JSON.stringify(pending));
+    refreshCachedProjectStats();
+    notifyWorkspaceChanged();
     return { success: true };
   } catch (err: any) {
     console.error('[ChapterLock] Error persisting local draft:', err);
@@ -282,7 +289,10 @@ export function cacheRemoteChapter(chapter: any) {
     // Tombstone gate: do NOT cache if chapter has already been deleted
     const rawTombstones = localStorage.getItem('novelist_tombstones');
     const tombstones = rawTombstones ? JSON.parse(rawTombstones) : {};
-    if (tombstones?.[chapter.id]) return;
+    if (tombstones?.[chapter.id] || tombstones?.[chapter.projectId]) return;
+
+    const pending = getPendingChapterDraft(chapter.id);
+    if (pending && (pending.content !== chapter.content || pending.title !== chapter.title)) return;
 
     const raw = localStorage.getItem('novelist_chapters');
     const chapters = raw ? JSON.parse(raw) : [];
@@ -296,6 +306,8 @@ export function cacheRemoteChapter(chapter: any) {
     if (index >= 0) chapters[index] = normalized;
     else chapters.push(normalized);
     localStorage.setItem('novelist_chapters', JSON.stringify(chapters));
+    refreshCachedProjectStats();
+    notifyWorkspaceChanged();
   } catch {}
 }
 

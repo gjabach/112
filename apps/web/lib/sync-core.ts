@@ -193,9 +193,26 @@ function extractPureText(node: any): string {
   if (typeof node === 'string') return node;
   if (node.text) return String(node.text);
   if (Array.isArray(node.content)) {
-    return node.content.map(extractPureText).join(' ');
+    const separator = ['paragraph', 'heading', 'text'].includes(node.type) ? '' : ' ';
+    return node.content.map(extractPureText).join(separator);
   }
+  if (node.type === 'hardBreak') return ' ';
   return '';
+}
+
+/** Derive statistics from the same active chapter list used by document tabs. */
+export function getActiveChapters(chapters: any[], tombstones: Record<string, number> = {}): any[] {
+  return chapters.filter(c => c?.id && !tombstones[c.id] && !tombstones[c.projectId])
+    .map(c => ({ ...c, wordCount: c.content !== undefined && c.content !== null
+      ? countWords(c.content) : Math.max(0, Number(c.wordCount) || 0) }));
+}
+
+export function getProjectChapterStats(chapters: any[], projectId: string) {
+  const projectChapters = chapters.filter(c => c.projectId === projectId);
+  return {
+    chapterCount: projectChapters.length,
+    wordCount: projectChapters.reduce((sum, c) => sum + Number(c.wordCount || 0), 0)
+  };
 }
 
 /**
@@ -528,7 +545,7 @@ export function mergeWorkspaces(
     }
   }
 
-  const rawMergedChapters = Array.from(chapterMap.values());
+  const rawMergedChapters = getActiveChapters(Array.from(chapterMap.values()), mergedTombstones);
 
   // Fix orderIndex collisions: group chapters by sibling level (projectId + '::' + (parentId || 'root'))
   // to ensure sequential orderIndex per sibling group, respecting the document tab hierarchy.
@@ -605,15 +622,15 @@ export function mergeWorkspaces(
   const activeUser = unwrappedRemote.user || unwrappedLocal.user || null;
   const currentUserId = activeUser?.id;
 
-  const hasAnyChapters = localChapters.length > 0 || remoteChapters.length > 0;
+  const hasChapterSnapshot = Array.isArray(unwrappedLocal.chapters) || Array.isArray(unwrappedRemote.chapters);
   const mergedProjects = Array.from(projectMap.values()).map(p => {
     const pChapters = mergedChapters.filter(c => c.projectId === p.id);
     const calculatedWords = pChapters.reduce((acc, c) => acc + (c.wordCount || 0), 0);
     return {
       ...p,
       userId: p.userId || currentUserId || 'usr_default',
-      chapterCount: hasAnyChapters ? pChapters.length : (p.chapterCount || 0),
-      wordCount: hasAnyChapters ? calculatedWords : (p.wordCount || 0)
+      chapterCount: hasChapterSnapshot ? pChapters.length : (p.chapterCount || 0),
+      wordCount: hasChapterSnapshot ? calculatedWords : (p.wordCount || 0)
     };
   });
 

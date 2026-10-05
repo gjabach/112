@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/utils';
+import { getProjectChapterStats } from '@/lib/sync-core';
+import { getCachedChapters } from '@/lib/workspace-cache';
 import { toast } from 'sonner';
 import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Download, ChevronUp, ChevronDown, ChevronRight, Search, Check, X, Upload, Image as ImageIcon, BookOpen } from 'lucide-react';
 import { useProjectStore } from '@/lib/store';
@@ -234,28 +236,32 @@ export default function ProjectEditorPage() {
     const handleChapterDeleted = () => {
       fetchData();
     };
+    const handleWorkspace = () => {
+      const active = getCachedChapters(projectId);
+      setChapters(active);
+      setProject((prev: any) => prev ? { ...prev, ...getProjectChapterStats(active, projectId) } : prev);
+    };
     window.addEventListener('novelist-sync-updated', handleSync);
     window.addEventListener('novelist-chapters-deleted', handleChapterDeleted);
+    window.addEventListener('novelist-workspace-updated', handleWorkspace);
     return () => {
       window.removeEventListener('novelist-sync-updated', handleSync);
       window.removeEventListener('novelist-chapters-deleted', handleChapterDeleted);
+      window.removeEventListener('novelist-workspace-updated', handleWorkspace);
     };
   }, [projectId]);
 
   const fetchData = async () => {
     const gen = ++fetchGenerationRef.current;
     try {
-      const [projRes, chapRes] = await Promise.all([
+      const [projRes] = await Promise.all([
         apiFetch(`/api/projects/${projectId}`),
         apiFetch(`/api/projects/${projectId}/chapters`)
       ]);
       if (gen !== fetchGenerationRef.current) return;
 
-      const rawTombstones = typeof window !== 'undefined' ? localStorage.getItem('novelist_tombstones') : null;
-      const tombstones = rawTombstones ? JSON.parse(rawTombstones) : {};
-
-      setProject(projRes.project);
-      const activeChapters = (chapRes.chapters || []).filter((c: any) => !tombstones[c.id]);
+      const activeChapters = getCachedChapters(projectId);
+      setProject({ ...projRes.project, ...getProjectChapterStats(activeChapters, projectId) });
       setChapters(activeChapters);
     } catch (e: any) {
       if (gen === fetchGenerationRef.current) {

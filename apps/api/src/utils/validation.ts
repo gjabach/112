@@ -42,7 +42,9 @@ function extractTextFromTiptap(node: any): string {
   if (typeof node === 'string') return node;
   if (node.text) return node.text;
   if (Array.isArray(node.content)) {
-    return node.content.map(extractTextFromTiptap).join(' ');
+    const separator = ['paragraph', 'heading', 'text'].includes(node.type) ? '' : ' ';
+    return node.content.map(extractTextFromTiptap).join(separator);
   }
+  if (node.type === 'hardBreak') return ' ';
   return '';
 }

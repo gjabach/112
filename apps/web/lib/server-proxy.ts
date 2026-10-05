@@ -27,6 +27,7 @@ export async function proxyToWorker(req: NextRequest, targetPath: string): Promi
     'authorization',
     'content-type',
     'x-chapter-lock-token',
+    'x-operation-id',
     'if-match',
     'x-request-id',
     'accept',
@@ -51,6 +52,7 @@ export async function proxyToWorker(req: NextRequest, targetPath: string): Promi
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const workerRes = await fetch(targetUrl, {
+      cache: 'no-store',
       method: req.method,
       headers,
       body,
