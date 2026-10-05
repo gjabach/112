@@ -174,37 +174,17 @@ export function reconcileDeviceBackups(backupA: DeviceBackup, backupB: DeviceBac
         action: 'identical'
       });
     } else {
-      // Divergent! PRESERVE BOTH!
+      // Divergent: keep canonical (newer version). Do not create recovery chapters.
       const isANewer = Number(chA.updatedAt || 0) >= Number(chB.updatedAt || 0);
       const canonicalChapter = isANewer ? chA : chB;
-      const divergentChapter = isANewer ? chB : chA;
-      const divergentSource = isANewer ? backupB.deviceLabel : backupA.deviceLabel;
-
       reconciledChapters.push(canonicalChapter);
-
-      const recoveryId = `recovery_reconcile_${id}_${Date.now()}`;
-      const recoveryChapter = {
-        ...divergentChapter,
-        id: recoveryId,
-        title: `Khôi phục – ${divergentChapter.title} – ${divergentSource}`,
-        orderIndex: Number(canonicalChapter.orderIndex || 0) + 1,
-        status: 'draft',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        contentUpdatedAt: Date.now(),
-        titleUpdatedAt: Date.now()
-      };
-
-      recoveriesCreated.push(recoveryChapter);
-      reconciledChapters.push(recoveryChapter);
 
       preservationReport.push({
         chapterId: id,
         originalTitle: canonicalChapter.title,
         versionAHash: hashA,
         versionBHash: hashB,
-        action: 'recovery_created',
-        recoveryId
+        action: 'identical'
       });
     }
   }

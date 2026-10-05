@@ -311,68 +311,10 @@ const postSyncHandler = async (c: any) => {
         const lockHeldByOther = activeLock && (!suppliedLockToken || activeLock.lockToken !== suppliedLockToken);
 
         if (lockHeldByOther) {
-          // Idempotent recovery creation for lock conflicts
-          const payloadHash = sha256(user.userId + '::' + chapter.id + '::' + (chapter.content || ''));
-          const recoveryId = `recovery_sync_${payloadHash.slice(0, 32)}`;
-
-          if (authoritativeTombstones.chapters.has(recoveryId)) {
-            rejectedEntities.push({ id: recoveryId, type: 'chapter', reason: 'RECOVERY_DELETED' });
-            continue;
-          }
-
-          const existingOps = await db.select().from(schema.recoveryOperations)
-            .where(and(
-              eq(schema.recoveryOperations.userId, user.userId),
-              eq(schema.recoveryOperations.recoveryChapterId, recoveryId)
-            )).limit(1);
-
-          if (existingOps.length > 0 && existingOps[0].state === 'deleted') {
-            rejectedEntities.push({ id: recoveryId, type: 'chapter', reason: 'RECOVERY_DELETED' });
-            continue;
-          }
-
-          const alreadyInD1 = existingChapterMap.has(recoveryId);
-          if (!alreadyInD1) {
-            const recoveryTitle = `Khôi phục – ${chapter.title || existingD1.title} – Bản đồng bộ ngoại tuyến`.slice(0, 200);
-            const recovered = {
-              id: recoveryId,
-              projectId: targetProjectId,
-              title: recoveryTitle,
-              content: chapter.content || '',
-              contentFormat: chapter.contentFormat || 'tiptap-json',
-              summary: chapter.summary || null,
-              wordCount: countWords(chapter.content || ''),
-              orderIndex: Number(existingD1.orderIndex || 0) + 1,
-              status: 'draft',
-              parentId: existingD1.parentId || null,
-              charactersPresent: existingD1.charactersPresent || '[]',
-              emoji: existingD1.emoji || null,
-              notes: null,
-              pov: null,
-              location: null,
-              createdAt: now,
-              updatedAt: now,
-              contentUpdatedAt: now,
-              titleUpdatedAt: now
-            };
-            try {
-              await db.insert(schema.chapters).values(recovered);
-              await db.insert(schema.recoveryOperations).values({
-                userId: user.userId,
-                operationKey: `${user.userId}::${chapter.id}::${recoveryId}`,
-                sourceChapterId: chapter.id,
-                payloadHash,
-                recoveryChapterId: recoveryId,
-                state: 'created',
-                createdAt: now,
-                deletedAt: null
-              });
-              existingChapterMap.set(recoveryId, recovered);
-              hasMutations = true;
-            } catch (err: any) {
-              rejectedEntities.push({ id: recoveryId, type: 'chapter', reason: err.message });
-            }
-          }
+          // Edit lock is held by another device. Only 1 device writes at a time.
+          // Do not create recovery cards.
+          rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: 'LOCKED_BY_ANOTHER_DEVICE' });
+          continue;
         } else {
           // Caller holds lock or no active lock -> apply update if newer
           const incomingContentUpdated = Number(chapter.contentUpdatedAt || chapter.updatedAt || 0);

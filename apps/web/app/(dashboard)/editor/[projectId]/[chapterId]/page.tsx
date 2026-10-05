@@ -52,8 +52,6 @@ import {
   acquireChapterLock,
   cacheRemoteChapter,
   clearPendingChapterDraft,
-  createRecoveryChapter,
-  createRecoveryId,
   getDeviceIdentity,
   getPendingChapterDraft,
   hasRemoteChapterApi,
@@ -101,7 +99,6 @@ export default function ChapterEditorPage() {
   const [lockState, setLockState] = useState<'acquiring' | 'owned' | 'locked' | 'offline'>('acquiring');
   const [saveStatus, setSaveStatus] = useState<'clean' | 'dirty' | 'local-saved' | 'uploading' | 'server-acked' | 'conflict' | 'failed'>('clean');
   const [visibleLock, setVisibleLock] = useState<PublicChapterLock | null>(null);
-  const [recoveryChapterId, setRecoveryChapterId] = useState<string | null>(null);
 
   // Protection refs against sync race conditions and text reversions
   const isDirtyRef = useRef(false);
@@ -134,7 +131,6 @@ export default function ChapterEditorPage() {
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const latestSaveRevisionRef = useRef(0);
   const queuedSaveCountRef = useRef(0);
-  const pendingRecoveryRef = useRef<{ recoveryId: string; capturedAt: number } | null>(null);
   const lockAcquireInFlightRef = useRef(false);
   const saveChapterRef = useRef<(newContent?: string, newTitle?: string, isManual?: boolean) => Promise<void>>(async () => {});
   const tryAcquireLockRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
@@ -253,47 +249,16 @@ export default function ChapterEditorPage() {
     }
   }, [chapterId, projectId, router, transitionLockState]);
 
-  const preserveDraftAsRecovery = useCallback(async () => {
-    if (!hasUnsyncedDraftRef.current && !isDirtyRef.current) return null;
-    const identity = identityRef.current || getDeviceIdentity();
-    const capturedAt = Date.now();
-    const pending = pendingRecoveryRef.current || {
-      capturedAt,
-      recoveryId: `${createRecoveryId(identity.sessionId, chapterId)}_${capturedAt}`.slice(0, 158)
-    };
-    pendingRecoveryRef.current = pending;
-    try {
-      const result = await createRecoveryChapter({
-        recoveryId: pending.recoveryId,
-        chapterId,
-        content: contentRef.current,
-        title: titleRef.current,
-        deviceLabel: identity.deviceLabel,
-        capturedAt: pending.capturedAt
-      });
-      pendingRecoveryRef.current = null;
-      clearPendingChapterDraft(chapterId);
-      hasUnsyncedDraftRef.current = false;
-      isDirtyRef.current = false;
-      setRecoveryChapterId(result?.chapter?.id || pending.recoveryId);
-      toast.warning('Bản ngoại tuyến đã được giữ thành một thẻ khôi phục riêng', { id: 'offline-recovery-created' });
-      return result?.chapter?.id || pending.recoveryId;
-    } catch {
-      toast.error('Chưa thể tạo thẻ khôi phục. Bản nháp vẫn được giữ trên thiết bị này.', { id: 'offline-recovery-pending' });
-      return null;
-    }
-  }, [chapterId]);
-
   const handleLockLost = useCallback(async (lock: PublicChapterLock | null) => {
     ownedLockRef.current = null;
     setVisibleLock(lock);
     transitionLockState('locked');
-    const recoveryId = await preserveDraftAsRecovery();
-    if (recoveryId) {
-      unprotectChapterFromSync(chapterId);
-      await fetchChapterData(false);
-    }
-  }, [chapterId, fetchChapterData, preserveDraftAsRecovery, transitionLockState]);
+    isDirtyRef.current = false;
+    hasUnsyncedDraftRef.current = false;
+    clearPendingChapterDraft(chapterId);
+    unprotectChapterFromSync(chapterId);
+    await fetchChapterData(false);
+  }, [chapterId, fetchChapterData, transitionLockState]);
 
   const tryAcquireLock = useCallback(async (force = false) => {
     if (!chapterId) return;
@@ -322,21 +287,6 @@ export default function ChapterEditorPage() {
       const serverChangedWhileOffline = offlineBaseVersionRef.current
         && (result.chapterVersion.contentUpdatedAt !== offlineBaseVersionRef.current.contentUpdatedAt
           || result.chapterVersion.titleUpdatedAt !== offlineBaseVersionRef.current.titleUpdatedAt);
-
-      if (serverChangedWhileOffline && hasUnsyncedDraftRef.current) {
-        transitionLockState('locked');
-        const recoveryId = await preserveDraftAsRecovery();
-        await releaseChapterLock(chapterId, result.lock.token);
-        ownedLockRef.current = null;
-        offlineBaseVersionRef.current = null;
-        if (recoveryId) {
-          unprotectChapterFromSync(chapterId);
-          router.push(`/editor/${projectId}/${recoveryId}`);
-        } else {
-          transitionLockState('locked');
-        }
-        return;
-      }
 
       ownedLockRef.current = result.lock;
       serverVersionRef.current = result.chapterVersion;
@@ -376,7 +326,7 @@ export default function ChapterEditorPage() {
     } finally {
       lockAcquireInFlightRef.current = false;
     }
-  }, [chapterId, fetchChapterData, handleLockLost, projectId, preserveDraftAsRecovery, router, transitionLockState, visibleLock?.version]);
+  }, [chapterId, fetchChapterData, handleLockLost, transitionLockState, visibleLock?.version]);
   tryAcquireLockRef.current = tryAcquireLock;
 
   const retryConnection = useCallback(async () => {
@@ -396,7 +346,6 @@ export default function ChapterEditorPage() {
       return;
     }
     toast.success('Đã kết nối máy chủ!');
-    await retryPendingRecoveries();
     await fetchChapterData(false);
     await tryAcquireLockRef.current(false);
   }, [fetchChapterData]);
@@ -409,7 +358,6 @@ export default function ChapterEditorPage() {
     isDirtyRef.current = Boolean(pendingDraft);
     hasUnsyncedDraftRef.current = Boolean(pendingDraft);
     offlineBaseVersionRef.current = pendingDraft?.baseVersion || null;
-    pendingRecoveryRef.current = null;
     if (pendingDraft) {
       const restoredChapter = {
         id: chapterId,
@@ -429,7 +377,6 @@ export default function ChapterEditorPage() {
     }
     transitionLockState('acquiring');
     setVisibleLock(null);
-    setRecoveryChapterId(null);
     if (navigator.onLine && hasRemoteChapterApi()) void retryPendingRecoveries();
     void fetchChapterData(true);
     void tryAcquireLockRef.current(false);
@@ -469,7 +416,6 @@ export default function ChapterEditorPage() {
       if (!readWorkspaceCache('novelist_tombstones', {})[chapterId]) void handleSync();
     };
     const handleOnline = async () => {
-      await retryPendingRecoveries();
       if (lockStateRef.current === 'offline') await tryAcquireLockRef.current(false);
     };
     const unregisterFlush = registerSyncFlushHandler(chapterId, () => {
@@ -654,7 +600,9 @@ export default function ChapterEditorPage() {
           if (error.status === 423) await handleLockLost(error.data?.lock || null);
           else {
             transitionLockState('locked');
-            await preserveDraftAsRecovery();
+            isDirtyRef.current = false;
+            hasUnsyncedDraftRef.current = false;
+            clearPendingChapterDraft(chapterId);
             unprotectChapterFromSync(chapterId);
             await fetchChapterData(false);
           }
@@ -674,7 +622,7 @@ export default function ChapterEditorPage() {
     const queued = saveChainRef.current.then(executeSave, executeSave);
     saveChainRef.current = queued;
     await queued;
-  }, [chapterId, fetchChapterData, handleLockLost, preserveDraftAsRecovery, transitionLockState]);
+  }, [chapterId, fetchChapterData, handleLockLost, transitionLockState]);
   saveChapterRef.current = saveChapter;
 
   // Responsive auto-save: debounced 700ms after user stops typing
@@ -1336,7 +1284,7 @@ export default function ChapterEditorPage() {
                     size="sm"
                     className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
                     onClick={() => {
-                      if (window.confirm('Chuyển quyền sửa sang thiết bị này? Thiết bị cũ sẽ chuyển sang chỉ đọc và phần chưa lưu của nó sẽ được giữ thành thẻ khôi phục.')) {
+                      if (window.confirm('Chuyển quyền sửa sang thiết bị này? Thiết bị cũ sẽ chuyển sang chế độ xem.')) {
                         void tryAcquireLock(true);
                       }
                     }}
@@ -1356,13 +1304,6 @@ export default function ChapterEditorPage() {
               </div>
             )}
           </>
-        )}
-
-        {recoveryChapterId && (
-          <div className="bg-emerald-500/15 border-b border-emerald-500/30 p-2.5 px-4 flex items-center justify-between gap-3 text-xs text-emerald-800 dark:text-emerald-200">
-            <span>Bản nháp ngoại tuyến / xung đột đã được bảo toàn trong một thẻ khôi phục riêng.</span>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => router.push(`/editor/${projectId}/${recoveryChapterId}`)}>Mở thẻ khôi phục</Button>
-          </div>
         )}
 
         {/* Duplicated Conflict Blocks Cleanup Banner */}

@@ -324,13 +324,7 @@ const PENDING_RECOVERIES_KEY = 'novelist_pending_recoveries';
 const recoveryRequests = new Map<string, Promise<any>>();
 
 export function savePendingRecovery(draft: PendingRecovery) {
-  try {
-    const raw = localStorage.getItem(PENDING_RECOVERIES_KEY);
-    const items: PendingRecovery[] = raw ? JSON.parse(raw) : [];
-    const next = Array.isArray(items) ? items.filter(item => item.recoveryId !== draft.recoveryId) : [];
-    next.push(draft);
-    localStorage.setItem(PENDING_RECOVERIES_KEY, JSON.stringify(next));
-  } catch {}
+  // Disabled: Recovery cards are deprecated and removed.
 }
 
 export function removePendingRecovery(recoveryId: string) {
@@ -342,54 +336,17 @@ export function removePendingRecovery(recoveryId: string) {
 }
 
 export async function createRecoveryChapter(draft: PendingRecovery) {
-  const existingRequest = recoveryRequests.get(draft.recoveryId);
-  if (existingRequest) return existingRequest;
-  const request = (async () => {
-    savePendingRecovery(draft);
-    try {
-      const response = await apiFetchRemote(`/api/chapters/${draft.chapterId}/recoveries`, {
-        method: 'POST',
-        body: JSON.stringify(draft)
-      });
-      removePendingRecovery(draft.recoveryId);
-      clearPendingChapterDraft(draft.chapterId, { content: draft.content, title: draft.title });
-      if (response?.chapter) cacheRemoteChapter(response.chapter);
-      return response;
-    } catch (err: any) {
-      const msg = String(err?.message || '');
-      // If server rejected with 410 Gone (RECOVERY_DELETED or SOURCE_DELETED) or 409 Conflict, TERMINATE retry
-      if (msg.includes('410') || msg.includes('RECOVERY_DELETED') || msg.includes('SOURCE_DELETED') || msg.includes('409') || msg.includes('OPERATION_PAYLOAD_MISMATCH')) {
-        removePendingRecovery(draft.recoveryId);
-        clearPendingChapterDraft(draft.chapterId, { content: draft.content, title: draft.title });
-      }
-      throw err;
-    }
-  })();
-  recoveryRequests.set(draft.recoveryId, request);
-  try {
-    return await request;
-  } finally {
-    recoveryRequests.delete(draft.recoveryId);
-  }
+  // Disabled: Recovery cards are deprecated and removed.
+  removePendingRecovery(draft.recoveryId);
+  clearPendingChapterDraft(draft.chapterId, { content: draft.content, title: draft.title });
+  return { success: false, disabled: true };
 }
 
 export async function retryPendingRecoveries(): Promise<number> {
-  let items: PendingRecovery[] = [];
   try {
-    const raw = localStorage.getItem(PENDING_RECOVERIES_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    items = Array.isArray(parsed) ? parsed : [];
+    localStorage.removeItem(PENDING_RECOVERIES_KEY);
   } catch {}
-  let completed = 0;
-  for (const draft of items) {
-    try {
-      await createRecoveryChapter(draft);
-      completed += 1;
-    } catch {
-      // Keep the draft for the next online event.
-    }
-  }
-  return completed;
+  return 0;
 }
 
 export function createRecoveryId(sessionId: string, chapterId: string) {

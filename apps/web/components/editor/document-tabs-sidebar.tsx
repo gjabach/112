@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   FileText, 
   Plus, 
@@ -430,6 +430,12 @@ export function DocumentTabsSidebar({
       return {};
     }
   });
+
+  const recoveryTabs = useMemo(() => 
+    chapters.filter(c => c.id.startsWith('recovery_') || c.title.toLowerCase().startsWith('khôi phục')),
+    [chapters]
+  );
+  const [cleaningUp, setCleaningUp] = useState(false);
 
   const toggleOutlineVisibility = (tabId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -1284,6 +1290,39 @@ export function DocumentTabsSidebar({
               <PanelLeftClose className="w-4 h-4" />
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* Recovery Cards Quick Cleanup Bar */}
+      {recoveryTabs.length > 0 && (
+        <div className="mx-2.5 mt-2.5 p-2 rounded-lg bg-destructive/10 border border-destructive/20 text-xs flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 text-destructive font-medium text-[11px] min-w-0">
+            <Trash2 className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Có {recoveryTabs.length} thẻ khôi phục</span>
+          </div>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={cleaningUp}
+            className="h-6 text-[11px] px-2 py-0 shrink-0 font-medium cursor-pointer"
+            onClick={async () => {
+              if (window.confirm(`Xóa toàn bộ ${recoveryTabs.length} thẻ khôi phục cũ này?`)) {
+                setCleaningUp(true);
+                try {
+                  for (const tab of recoveryTabs) {
+                    await onDeleteTab(tab.id);
+                  }
+                  toast.success(`Đã xóa ${recoveryTabs.length} thẻ khôi phục`);
+                } catch {
+                  toast.error('Có lỗi xảy ra khi dọn dẹp');
+                } finally {
+                  setCleaningUp(false);
+                }
+              }
+            }}
+          >
+            {cleaningUp ? 'Đang xóa...' : 'Dọn dẹp'}
+          </Button>
         </div>
       )}
 
