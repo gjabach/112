@@ -7,39 +7,22 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "novelist-db"
-database_id = "novelist-db-local"
+database_id = "e4b70ce9-bc09-4448-bc05-f7bfa2f7c69c"
 migrations_dir = "src/db/migrations"
 
-# R2 Bucket - Lưu file, ảnh bìa, export
-[[r2_buckets]]
-binding = "R2"
-bucket_name = "novelist-storage"
+# R2 Bucket - Tùy chọn (Bật sau khi kích hoạt R2 trên dashboard nếu cần)
+# [[r2_buckets]]
+# binding = "R2"
+# bucket_name = "novelist-storage"
 
 # KV Namespace - Cache, session, rate limiting
 [[kv_namespaces]]
 binding = "KV"
-id = "novelist-kv-local"
-preview_id = "novelist-kv-preview"
+id = "356e7dae6d344dc1ae81e1e9c6bc035c"
 
 [vars]
-ENVIRONMENT = "development"
-JWT_SECRET = "dev-jwt-secret-change-in-production-use-64-chars-random-string"
-ENCRYPTION_KEY = "dev-encryption-key-32-chars-long!!"
-FRONTEND_URL = "http://localhost:3000"
+ENVIRONMENT = "production"
+JWT_SECRET = "novelist-jwt-secret-9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e"
+ENCRYPTION_KEY = "novelist-key-32-chars-long-prod!"
+FRONTEND_URL = "https://vercel.app"
 
-# Production overrides - sẽ cấu hình khi deploy
-# [env.production.vars]
-# FRONTEND_URL = "https://novelist.pages.dev"
-
-# [env.production.d1_databases]
-# binding = "DB"
-# database_name = "novelist-db-prod"
-# database_id = "your-prod-db-id"
-
-# [env.production.r2_buckets]
-# binding = "R2"
-# bucket_name = "novelist-storage-prod"
-
-# [env.production.kv_namespaces]
-# binding = "KV"
-# id = "your-prod-kv-id"
