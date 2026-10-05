@@ -10,6 +10,7 @@ interface Props {
   content: string;
   onChange: (content: string) => void;
   placeholder?: string;
+  editable?: boolean;
 }
 
 interface State {
@@ -88,6 +89,7 @@ export class EditorErrorBoundary extends Component<Props, State> {
             <textarea
               className="w-full max-w-3xl mx-auto block min-h-[60vh] bg-transparent resize-none border-0 focus:outline-none focus:ring-0 text-base sm:text-lg leading-relaxed text-foreground font-serif selection:bg-primary/20 placeholder:text-muted-foreground/60"
               value={rawText}
+              readOnly={this.props.editable === false}
               placeholder={this.props.placeholder || 'Bắt đầu viết chương này...'}
               onChange={(e) => {
                 const val = e.target.value;
@@ -105,7 +107,7 @@ export class EditorErrorBoundary extends Component<Props, State> {
                 this.props.onChange(jsonDoc);
               }}
               rows={20}
-              autoFocus
+              autoFocus={this.props.editable !== false}
             />
           </div>
         </div>

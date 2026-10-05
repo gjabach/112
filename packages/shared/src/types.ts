@@ -68,6 +68,8 @@ export interface Chapter {
   emoji?: string | null;
   createdAt: number;
   updatedAt: number;
+  contentUpdatedAt: number;
+  titleUpdatedAt: number;
 }
 
 export interface Character {

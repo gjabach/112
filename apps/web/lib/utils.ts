@@ -230,6 +230,49 @@ export const OUTLINE_TEMPLATES: Record<string, { name: string; nameVi: string; d
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
+export class RemoteApiError extends Error {
+  status: number;
+  data: any;
+
+  constructor(message: string, status: number = 0, data: any = null) {
+    super(message);
+    this.name = 'RemoteApiError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
+/**
+ * Fetches the configured API without silently falling back to localStorage.
+ * The editor uses this for locks and saves so a network failure can never look
+ * like a successful response containing an older local snapshot.
+ */
+export async function apiFetchRemote(path: string, options: RequestInit = {}): Promise<any> {
+  if (typeof window === 'undefined') throw new RemoteApiError('Không có kết nối trình duyệt');
+  const base = API_URL ? API_URL.replace(/\/+$/, '') : '';
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> || {})
+  };
+  if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`;
+
+  let response: Response;
+  try {
+    response = await fetch(`${base}${normalizedPath}`, { ...options, headers });
+  } catch (error: any) {
+    throw new RemoteApiError(error?.message || 'Không thể kết nối máy chủ', 0, { network: true });
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const data = contentType.includes('application/json') ? await response.json().catch(() => ({})) : {};
+  if (!response.ok) {
+    throw new RemoteApiError(data?.error || data?.message || `Lỗi máy chủ (${response.status})`, response.status, data);
+  }
+  return data;
+}
+
 export async function handleLocalApi(path: string, options: RequestInit = {}): Promise<any> {
   if (typeof window === 'undefined') return {};
   const method = (options.method || 'GET').toUpperCase();

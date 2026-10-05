@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test": "node --test lib/qa-verification.test.mjs lib/creative-suite.test.mjs lib/document-tabs.test.mjs",
+    "test": "node --test lib/qa-verification.test.mjs lib/creative-suite.test.mjs lib/document-tabs.test.mjs lib/chapter-lock.test.mjs",
     "deploy": "pnpm build && wrangler pages deploy .next --project-name=novelist-web"
   },
   "dependencies": {

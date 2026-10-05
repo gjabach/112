@@ -10,6 +10,68 @@ import { countWords } from '../utils/validation';
 type Variables = { db: any; user: AuthUser };
 const chapters = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+const CHAPTER_LOCK_TTL_MS = 60_000;
+
+type ChapterEditLock = {
+  chapterId: string;
+  userId: string;
+  sessionId: string;
+  deviceId: string;
+  deviceLabel: string;
+  lockToken: string;
+  lockVersion: string;
+  acquiredAt: number;
+  heartbeatAt: number;
+  expiresAt: number;
+};
+
+const publicLock = (lock: ChapterEditLock) => ({
+  version: lock.lockVersion,
+  deviceLabel: lock.deviceLabel,
+  acquiredAt: lock.acquiredAt,
+  heartbeatAt: lock.heartbeatAt,
+  expiresAt: lock.expiresAt
+});
+
+async function readActiveLock(c: any, chapterId: string): Promise<ChapterEditLock | null> {
+  const now = nowTimestamp();
+  const row = await c.env.DB.prepare(`
+    SELECT chapter_id AS chapterId, user_id AS userId, session_id AS sessionId,
+           device_id AS deviceId, device_label AS deviceLabel, lock_token AS lockToken,
+           lock_version AS lockVersion, acquired_at AS acquiredAt,
+           heartbeat_at AS heartbeatAt, expires_at AS expiresAt
+    FROM chapter_edit_locks
+    WHERE chapter_id = ? AND expires_at > ?
+  `).bind(chapterId, now).first();
+  return (row as ChapterEditLock | null) || null;
+}
+
+async function getOwnedChapter(c: any, chapterId: string) {
+  const db = c.get('db');
+  const user = c.get('user');
+  const rows = await db.select().from(schema.chapters).where(eq(schema.chapters.id, chapterId)).limit(1);
+  if (rows.length === 0) return null;
+  const chapter = rows[0];
+  const projects = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
+  return projects.length > 0 ? chapter : null;
+}
+
+async function rejectIfLockedByAnother(c: any, chapterId: string) {
+  const active = await readActiveLock(c, chapterId);
+  if (!active) return null;
+  const suppliedToken = c.req.header('X-Chapter-Lock-Token') || '';
+  if (suppliedToken && suppliedToken === active.lockToken) return null;
+  return c.json({ error: 'Chương đang được chỉnh sửa trên thiết bị khác', lock: publicLock(active) }, 423);
+}
+
+async function rejectIfAnyChangedChapterIsLocked(c: any, chapterIds: string[]) {
+  for (const chapterId of [...new Set(chapterIds)]) {
+    const response = await rejectIfLockedByAnother(c, chapterId);
+    if (response) return response;
+  }
+  return null;
+}
+
 chapters.use('*', authMiddleware);
 
 // GET /api/projects/:projectId/chapters
@@ -88,7 +150,9 @@ chapters.post('/projects/:projectId/chapters', async (c) => {
     charactersPresent: JSON.stringify(parsed.data.charactersPresent || []),
     emoji: parsed.data.emoji || null,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    contentUpdatedAt: now,
+    titleUpdatedAt: now
   };
   await db.insert(schema.chapters).values(newChapter);
 
@@ -107,6 +171,148 @@ chapters.post('/projects/:projectId/chapters', async (c) => {
   return c.json({ id, chapter: { ...newChapter, charactersPresent: parsed.data.charactersPresent || [] } }, 201);
 });
 
+// POST /api/chapters/:id/lock - atomically acquire or explicitly take over an edit lock
+chapters.post('/chapters/:id/lock', async (c) => {
+  const user = c.get('user');
+  const chapterId = c.req.param('id');
+  const chapter = await getOwnedChapter(c, chapterId);
+  if (!chapter) return c.json({ error: 'Chapter not found' }, 404);
+
+  const body = await c.req.json().catch(() => ({}));
+  const sessionId = String(body.sessionId || '').slice(0, 160);
+  const deviceId = String(body.deviceId || '').slice(0, 160);
+  const deviceLabel = String(body.deviceLabel || 'Thiết bị khác').slice(0, 120);
+  const force = body.force === true;
+  const expectedLockVersion = String(body.expectedLockVersion || '');
+  if (!sessionId || !deviceId) return c.json({ error: 'Thiếu thông tin phiên chỉnh sửa' }, 400);
+
+  const now = nowTimestamp();
+  const expiresAt = now + CHAPTER_LOCK_TTL_MS;
+  const lockToken = crypto.randomUUID();
+  const lockVersion = crypto.randomUUID();
+
+  await c.env.DB.prepare(`
+    INSERT INTO chapter_edit_locks (
+      chapter_id, user_id, session_id, device_id, device_label,
+      lock_token, lock_version, acquired_at, heartbeat_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(chapter_id) DO UPDATE SET
+      user_id = excluded.user_id,
+      session_id = excluded.session_id,
+      device_id = excluded.device_id,
+      device_label = excluded.device_label,
+      lock_token = excluded.lock_token,
+      lock_version = excluded.lock_version,
+      acquired_at = excluded.acquired_at,
+      heartbeat_at = excluded.heartbeat_at,
+      expires_at = excluded.expires_at
+    WHERE chapter_edit_locks.expires_at <= ?
+       OR chapter_edit_locks.session_id = ?
+       OR (? = 1 AND chapter_edit_locks.lock_version = ?)
+  `).bind(
+    chapterId, user.userId, sessionId, deviceId, deviceLabel,
+    lockToken, lockVersion, now, now, expiresAt,
+    now, sessionId, force ? 1 : 0, expectedLockVersion
+  ).run();
+
+  const current = await readActiveLock(c, chapterId);
+  if (!current || current.lockToken !== lockToken) {
+    return c.json({ error: 'Chương đang được chỉnh sửa trên thiết bị khác', lock: current ? publicLock(current) : null }, 423);
+  }
+
+  return c.json({
+    success: true,
+    lock: { ...publicLock(current), token: current.lockToken },
+    chapterVersion: {
+      updatedAt: Number(chapter.updatedAt || 0),
+      contentUpdatedAt: Number(chapter.contentUpdatedAt || chapter.updatedAt || 0),
+      titleUpdatedAt: Number(chapter.titleUpdatedAt || chapter.updatedAt || 0)
+    }
+  });
+});
+
+// PATCH /api/chapters/:id/lock - heartbeat
+chapters.patch('/chapters/:id/lock', async (c) => {
+  const user = c.get('user');
+  const chapterId = c.req.param('id');
+  if (!await getOwnedChapter(c, chapterId)) return c.json({ error: 'Chapter not found' }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  const token = String(body.lockToken || c.req.header('X-Chapter-Lock-Token') || '');
+  const now = nowTimestamp();
+  const expiresAt = now + CHAPTER_LOCK_TTL_MS;
+  const result = await c.env.DB.prepare(`
+    UPDATE chapter_edit_locks
+    SET heartbeat_at = ?, expires_at = ?
+    WHERE chapter_id = ? AND user_id = ? AND lock_token = ? AND expires_at > ?
+  `).bind(now, expiresAt, chapterId, user.userId, token, now).run();
+  if (!result.meta.changes) {
+    const current = await readActiveLock(c, chapterId);
+    return c.json({ error: 'Quyền chỉnh sửa đã hết hạn hoặc được chuyển sang thiết bị khác', lock: current ? publicLock(current) : null }, 423);
+  }
+  return c.json({ success: true, expiresAt });
+});
+
+// DELETE /api/chapters/:id/lock - best-effort release
+chapters.delete('/chapters/:id/lock', async (c) => {
+  const user = c.get('user');
+  const chapterId = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const token = String(body.lockToken || c.req.header('X-Chapter-Lock-Token') || '');
+  await c.env.DB.prepare('DELETE FROM chapter_edit_locks WHERE chapter_id = ? AND user_id = ? AND lock_token = ?')
+    .bind(chapterId, user.userId, token).run();
+  return c.json({ success: true });
+});
+
+// POST /api/chapters/:id/recoveries - idempotently preserve an offline/conflicting draft
+chapters.post('/chapters/:id/recoveries', async (c) => {
+  const db = c.get('db');
+  const user = c.get('user');
+  const sourceId = c.req.param('id');
+  const source = await getOwnedChapter(c, sourceId);
+  if (!source) return c.json({ error: 'Chapter not found' }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  const recoveryId = String(body.recoveryId || '').slice(0, 160);
+  const content = typeof body.content === 'string' ? body.content : '';
+  if (!/^recovery_[a-zA-Z0-9_-]+$/.test(recoveryId)) return c.json({ error: 'Mã bản khôi phục không hợp lệ' }, 400);
+
+  const existing = await db.select().from(schema.chapters).where(eq(schema.chapters.id, recoveryId)).limit(1);
+  if (existing.length > 0) return c.json({ success: true, chapter: existing[0], existed: true });
+
+  const allChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, source.projectId));
+  if (allChapters.length >= 100) return c.json({ error: 'Tài liệu đã đạt giới hạn tối đa 100 thẻ' }, 400);
+  const now = nowTimestamp();
+  const desiredOrder = Number(source.orderIndex || 0) + 1;
+  const siblings = allChapters.filter((item: any) => (item.parentId || null) === (source.parentId || null) && Number(item.orderIndex || 0) >= desiredOrder);
+  for (const sibling of siblings) {
+    await db.update(schema.chapters).set({ orderIndex: Number(sibling.orderIndex || 0) + 1, updatedAt: now }).where(eq(schema.chapters.id, sibling.id));
+  }
+
+  const capturedAt = Number(body.capturedAt || now);
+  const deviceLabel = String(body.deviceLabel || 'Thiết bị ngoại tuyến').slice(0, 60);
+  const timestampLabel = new Date(capturedAt).toLocaleString('vi-VN', { timeZone: 'Asia/Bangkok', hour12: false });
+  const title = `Khôi phục – ${source.title} – ${deviceLabel} – ${timestampLabel}`.slice(0, 200);
+  const recovered = {
+    ...source,
+    id: recoveryId,
+    title,
+    content,
+    wordCount: countWords(content),
+    orderIndex: desiredOrder,
+    charactersPresent: source.charactersPresent || '[]',
+    createdAt: now,
+    updatedAt: now,
+    contentUpdatedAt: now,
+    titleUpdatedAt: now
+  };
+  await db.insert(schema.chapters).values(recovered);
+  await db.insert(schema.revisions).values({
+    id: generateId(), entityType: 'chapter', entityId: recoveryId, content,
+    wordCount: recovered.wordCount, createdBy: user.userId, createdAt: now,
+    label: 'Offline conflict recovery'
+  });
+  return c.json({ success: true, chapter: { ...recovered, charactersPresent: JSON.parse(recovered.charactersPresent || '[]') } }, 201);
+});
+
 // POST /api/projects/:projectId/chapters/reorder - Contiguous reorder by array of chapterIds
 chapters.post('/projects/:projectId/chapters/reorder', async (c) => {
   const db = c.get('db');
@@ -117,6 +323,12 @@ chapters.post('/projects/:projectId/chapters/reorder', async (c) => {
 
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
+
+  const currentChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, projectId));
+  const currentOrder = new Map(currentChapters.map((chapter: any) => [chapter.id, Number(chapter.orderIndex || 0)]));
+  const changedIds = chapterIds.filter((chapterId, index) => currentOrder.get(chapterId) !== index);
+  const lockedResponse = await rejectIfAnyChangedChapterIsLocked(c, changedIds);
+  if (lockedResponse) return lockedResponse;
 
   const now = nowTimestamp();
   for (let i = 0; i < chapterIds.length; i++) {
@@ -166,11 +378,37 @@ const patchChapterHandler = async (c: any) => {
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
 
-  const updates: any = { updatedAt: nowTimestamp() };
-  if (parsed.data.title !== undefined) updates.title = parsed.data.title;
+  const lockedResponse = await rejectIfLockedByAnother(c, id);
+  if (lockedResponse) return lockedResponse;
+
+  const currentContentUpdatedAt = Number(chapter.contentUpdatedAt || chapter.updatedAt || 0);
+  const currentTitleUpdatedAt = Number(chapter.titleUpdatedAt || chapter.updatedAt || 0);
+  const contentChanged = parsed.data.content !== undefined && parsed.data.content !== (chapter.content || '');
+  const titleChanged = parsed.data.title !== undefined && parsed.data.title !== chapter.title;
+
+  if (contentChanged && parsed.data.baseContentUpdatedAt !== undefined && parsed.data.baseContentUpdatedAt !== currentContentUpdatedAt) {
+    return c.json({
+      error: 'Nội dung trên máy chủ đã thay đổi',
+      conflict: { updatedAt: chapter.updatedAt, contentUpdatedAt: currentContentUpdatedAt, titleUpdatedAt: currentTitleUpdatedAt }
+    }, 409);
+  }
+  if (titleChanged && parsed.data.baseTitleUpdatedAt !== undefined && parsed.data.baseTitleUpdatedAt !== currentTitleUpdatedAt) {
+    return c.json({
+      error: 'Tiêu đề trên máy chủ đã thay đổi',
+      conflict: { updatedAt: chapter.updatedAt, contentUpdatedAt: currentContentUpdatedAt, titleUpdatedAt: currentTitleUpdatedAt }
+    }, 409);
+  }
+
+  const mutationTime = Math.max(nowTimestamp(), Number(chapter.updatedAt || 0) + 1);
+  const updates: any = { updatedAt: mutationTime };
+  if (parsed.data.title !== undefined) {
+    updates.title = parsed.data.title;
+    if (titleChanged) updates.titleUpdatedAt = mutationTime;
+  }
   if (parsed.data.content !== undefined) {
     updates.content = parsed.data.content;
     updates.wordCount = countWords(parsed.data.content);
+    if (contentChanged) updates.contentUpdatedAt = mutationTime;
   }
   if (parsed.data.contentFormat !== undefined) updates.contentFormat = parsed.data.contentFormat;
   if (parsed.data.summary !== undefined) updates.summary = parsed.data.summary;
@@ -243,7 +481,15 @@ const patchChapterHandler = async (c: any) => {
     });
   }
 
-  return c.json({ success: true });
+  const savedRows = await db.select().from(schema.chapters).where(eq(schema.chapters.id, id)).limit(1);
+  const saved = savedRows[0];
+  return c.json({
+    success: true,
+    chapter: saved ? {
+      ...saved,
+      charactersPresent: saved.charactersPresent ? JSON.parse(saved.charactersPresent) : []
+    } : null
+  });
 };
 chapters.patch('/chapters/:id', patchChapterHandler);
 chapters.patch('/:id', patchChapterHandler);
@@ -276,6 +522,9 @@ const deleteChapterHandler = async (c: any) => {
   if (toDeleteIds.length >= allProjectChapters.length) {
     return c.json({ error: 'Tài liệu phải có tối thiểu 1 thẻ' }, 400);
   }
+
+  const lockedResponse = await rejectIfAnyChangedChapterIsLocked(c, toDeleteIds);
+  if (lockedResponse) return lockedResponse;
 
   for (const delId of toDeleteIds) {
     await db.delete(schema.scenes).where(eq(schema.scenes.chapterId, delId));
@@ -337,7 +586,9 @@ const duplicateChapterHandler = async (c: any) => {
     title: `${chapter.title} (Bản sao)`,
     orderIndex: maxOrder + 1,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    contentUpdatedAt: now,
+    titleUpdatedAt: now
   };
   await db.insert(schema.chapters).values(newRootChapter);
 
@@ -351,7 +602,9 @@ const duplicateChapterHandler = async (c: any) => {
       orderIndex: maxOrder + 2 + i,
       parentId: newParentId,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      contentUpdatedAt: now,
+      titleUpdatedAt: now
     });
   }
 
@@ -381,6 +634,10 @@ const reorderSingleChapterHandler = async (c: any) => {
   const filtered = allChapters.filter((ch: any) => ch.id !== id);
   const targetIndex = Math.max(0, Math.min(typeof newIndex === 'number' ? newIndex : 0, filtered.length));
   filtered.splice(targetIndex, 0, chapter);
+
+  const changedIds = filtered.filter((ch: any, index: number) => Number(ch.orderIndex || 0) !== index).map((ch: any) => ch.id);
+  const lockedResponse = await rejectIfAnyChangedChapterIsLocked(c, changedIds);
+  if (lockedResponse) return lockedResponse;
 
   const now = nowTimestamp();
   for (let i = 0; i < filtered.length; i++) {

@@ -88,7 +88,9 @@ projects.post('/', async (c) => {
         orderIndex: i,
         status: 'outline',
         createdAt: now + i,
-        updatedAt: now + i
+        updatedAt: now + i,
+        contentUpdatedAt: now + i,
+        titleUpdatedAt: now + i
       });
     }
   } else {
@@ -103,7 +105,9 @@ projects.post('/', async (c) => {
       orderIndex: 0,
       status: 'outline',
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      contentUpdatedAt: now,
+      titleUpdatedAt: now
     });
   }
 
@@ -226,7 +230,9 @@ projects.post('/:id/duplicate', async (c) => {
       projectId: newId,
       parentId: newParentId,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      contentUpdatedAt: now,
+      titleUpdatedAt: now
     });
   }
 

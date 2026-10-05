@@ -63,10 +63,29 @@ export const chapters = sqliteTable('chapters', {
   charactersPresent: text('characters_present'), // JSON array
   emoji: text('emoji'),
   createdAt: integer('created_at').notNull(),
-  updatedAt: integer('updated_at').notNull()
+  updatedAt: integer('updated_at').notNull(),
+  contentUpdatedAt: integer('content_updated_at').notNull(),
+  titleUpdatedAt: integer('title_updated_at').notNull()
 }, (table) => ({
   projectIdIdx: index('chapters_project_id_idx').on(table.projectId),
   orderIdx: index('chapters_order_idx').on(table.orderIndex)
+}));
+
+// EDIT LOCKS - one active editing session per chapter
+export const chapterEditLocks = sqliteTable('chapter_edit_locks', {
+  chapterId: text('chapter_id').primaryKey().references(() => chapters.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sessionId: text('session_id').notNull(),
+  deviceId: text('device_id').notNull(),
+  deviceLabel: text('device_label').notNull(),
+  lockToken: text('lock_token').notNull(),
+  lockVersion: text('lock_version').notNull(),
+  acquiredAt: integer('acquired_at').notNull(),
+  heartbeatAt: integer('heartbeat_at').notNull(),
+  expiresAt: integer('expires_at').notNull()
+}, (table) => ({
+  userIdIdx: index('chapter_edit_locks_user_id_idx').on(table.userId),
+  expiresAtIdx: index('chapter_edit_locks_expires_at_idx').on(table.expiresAt)
 }));
 
 // SCENES

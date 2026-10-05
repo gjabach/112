@@ -28,6 +28,28 @@ export {
 
 // Cross-tab broadcast channel for immediate multi-tab synchronization on the same device
 let crossTabChannel: BroadcastChannel | null = null;
+const protectedChapterIds = new Set<string>();
+const syncFlushHandlers = new Map<string, () => Promise<void> | void>();
+
+export function protectChapterFromSync(chapterId: string): void {
+  if (chapterId) protectedChapterIds.add(chapterId);
+}
+
+export function unprotectChapterFromSync(chapterId: string): void {
+  if (chapterId) protectedChapterIds.delete(chapterId);
+}
+
+export function registerSyncFlushHandler(chapterId: string, handler: () => Promise<void> | void): () => void {
+  syncFlushHandlers.set(chapterId, handler);
+  return () => {
+    if (syncFlushHandlers.get(chapterId) === handler) syncFlushHandlers.delete(chapterId);
+  };
+}
+
+export async function flushPendingEditors(): Promise<void> {
+  const pending = Array.from(syncFlushHandlers.values()).map(handler => Promise.resolve(handler()).catch(() => undefined));
+  await Promise.all(pending);
+}
 if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
   try {
     crossTabChannel = new BroadcastChannel('novelist_sync_channel');
@@ -151,15 +173,28 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
   if (typeof window === 'undefined' || !data || typeof data !== 'object') return false;
 
   try {
-    // Flush active editor content trước khi ghi đè localStorage
-    // để đảm bảo những phím gõ mới nhất được lưu trước
-    window.dispatchEvent(new CustomEvent('novelist-flush-save'));
-
     let finalData = data;
     if (merge) {
       const local = exportFullWorkspace();
       const { merged } = mergeWorkspaces(local, data);
       finalData = merged;
+    }
+
+    // Never let a background response replace a chapter currently owned,
+    // dirty, saving, or being edited offline in this tab.
+    if (protectedChapterIds.size > 0 && Array.isArray(finalData.chapters)) {
+      const localChapters = getStoredJson('novelist_chapters', []);
+      const localById = new Map((Array.isArray(localChapters) ? localChapters : []).map((chapter: any) => [chapter.id, chapter]));
+      const seen = new Set<string>();
+      finalData = { ...finalData };
+      finalData.chapters = finalData.chapters.map((chapter: any) => {
+        seen.add(chapter.id);
+        if (protectedChapterIds.has(chapter.id) && localById.has(chapter.id)) return localById.get(chapter.id);
+        return chapter;
+      });
+      for (const chapterId of protectedChapterIds) {
+        if (!seen.has(chapterId) && localById.has(chapterId)) finalData.chapters.push(localById.get(chapterId));
+      }
     }
 
     // Fix orderIndex collisions: group chapters by sibling level (projectId + '::' + (parentId || 'root'))
@@ -293,8 +328,8 @@ let isPushing = false;
  * Push workspace to cloud.
  * CRITICAL ARCHITECTURAL SAFETY (Strict LWW):
  * 1. Exports current workspace where every item has its true updatedAt.
- * 2. Multi-tier transport: Same-origin /api/sync (primary) + direct KVDB (backup).
- * 3. Absorbs any server-side canonical merged changes safely.
+ * 2. Sends all writes through the authenticated merge endpoint.
+ * 3. Absorbs the server-side canonical merged result safely.
  */
 export async function pushSync(): Promise<{ success: boolean; stats?: any; error?: string }> {
   if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
@@ -312,7 +347,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
 
     const token = getAuthToken();
     const tokenIdentifier = token ? token.replace(/^Bearer\s+/i, '').replace(/^token_/, '').slice(-32) : undefined;
-    const { dataKey, legacyKey, rawLegacyKey, candidateKeys } = getCloudAccountKeys(email, tokenIdentifier);
+    const { dataKey } = getCloudAccountKeys(email, tokenIdentifier);
 
     broadcastSyncStatus('syncing', 'Đang lưu lên đám mây...');
 
@@ -320,7 +355,6 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     const chapterCount = Array.isArray(workspace.chapters) ? workspace.chapters.length : 0;
     const projectCount = Array.isArray(workspace.projects) ? workspace.projects.length : 0;
 
-    const workspaceJson = JSON.stringify(workspace);
     let anySuccess = false;
 
     // 1. PRIMARY: Push to same-origin /api/sync
@@ -352,7 +386,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
           anySuccess = true;
           if (json.data && Array.isArray(json.data.chapters)) {
             // Absorb any canonical updates that server unified
-            importFullWorkspace(json.data, false);
+            importFullWorkspace(json.data, true);
           }
         }
       }
@@ -360,28 +394,8 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
       console.warn('[Sync Push] Same-origin /api/sync failed:', e);
     }
 
-    // 2. SECONDARY: Direct KVDB backup
-    if (email && email.includes('@')) {
-      const keysToPersist = Array.from(new Set([dataKey, legacyKey].filter(Boolean)));
-      const pushPromises = keysToPersist.map(k => {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
-        return fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: workspaceJson,
-          signal: controller.signal
-        }).then(r => {
-          clearTimeout(timeoutId);
-          if (r.ok) anySuccess = true;
-          return r.ok;
-        }).catch(err => {
-          clearTimeout(timeoutId);
-          return false;
-        });
-      });
-      await Promise.allSettled(pushPromises);
-    }
+    // Cloud writes intentionally go through the authenticated merge endpoint.
+    // Direct snapshot PUTs bypass edit locks and can overwrite a canonical merge.
 
     if (anySuccess) {
       localStorage.setItem('novelist_last_synced', String(Date.now()));
@@ -555,9 +569,8 @@ export async function syncBidirectional(): Promise<{ success: boolean; error?: s
 
   broadcastSyncStatus('syncing', 'Đang đồng bộ dữ liệu hai chiều...');
 
-  // Flush active editor if currently editing
-  window.dispatchEvent(new CustomEvent('novelist-flush-save'));
-  await new Promise(r => setTimeout(r, 60));
+  // Await registered editor save barriers instead of relying on a fixed delay.
+  await flushPendingEditors();
 
   const pullRes = await pullSync(true);
   const pushRes = await pushSync();
@@ -583,23 +596,23 @@ export function triggerAutoPush(delayMs: number = 1000) {
 }
 
 let autoSyncInitialized = false;
-let autoSyncPaused = false;
 
-export function pauseAutoSync() {
-  autoSyncPaused = true;
+export function pauseAutoSync(chapterId: string = '__legacy__') {
+  protectedChapterIds.add(chapterId);
 }
 
-export function resumeAutoSync() {
-  autoSyncPaused = false;
+export function resumeAutoSync(chapterId: string = '__legacy__') {
+  protectedChapterIds.delete(chapterId);
 }
 
 export function isAutoSyncPaused(): boolean {
-  return autoSyncPaused;
+  return protectedChapterIds.size > 0;
 }
 
 export function resetAutoSyncState() {
   autoSyncInitialized = false;
-  autoSyncPaused = false;
+  protectedChapterIds.clear();
+  syncFlushHandlers.clear();
   if (debouncePushTimer) {
     clearTimeout(debouncePushTimer);
     debouncePushTimer = null;
@@ -615,15 +628,12 @@ export function initAutoSync() {
 
   // 2. Pull when window gains focus or tab becomes visible
   window.addEventListener('focus', () => {
-    if (!autoSyncPaused) {
-      pullSync().catch(() => {});
-    }
+    pullSync().catch(() => {});
   });
 
   const handleMobileHide = () => {
     if (isAutoSyncEnabled()) {
-      window.dispatchEvent(new CustomEvent('novelist-flush-save'));
-      pushSync().catch(() => {});
+      void flushPendingEditors().finally(() => pushSync().catch(() => {}));
     }
   };
 
@@ -633,9 +643,7 @@ export function initAutoSync() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      if (!autoSyncPaused) {
-        pullSync().catch(() => {});
-      }
+      pullSync().catch(() => {});
     } else if (document.visibilityState === 'hidden') {
       handleMobileHide();
     }
@@ -652,7 +660,7 @@ export function initAutoSync() {
   // 4. Real-time active polling interval: every 8 seconds when active
   // Keeps PC and Phone synchronized without saturating API rate limits
   setInterval(() => {
-    if (document.visibilityState === 'visible' && isAutoSyncEnabled() && !autoSyncPaused) {
+    if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
       pullSync().catch(() => {});
     }
   }, 8000);

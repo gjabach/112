@@ -42,7 +42,10 @@ export const createChapterSchema = z.object({
   emoji: z.string().max(30).optional().nullable()
 });
 
-export const updateChapterSchema = createChapterSchema.partial();
+export const updateChapterSchema = createChapterSchema.partial().extend({
+  baseContentUpdatedAt: z.number().int().nonnegative().optional(),
+  baseTitleUpdatedAt: z.number().int().nonnegative().optional()
+});
 
 export const createCharacterSchema = z.object({
   name: z.string().min(1, 'Tên nhân vật không được để trống').max(100),

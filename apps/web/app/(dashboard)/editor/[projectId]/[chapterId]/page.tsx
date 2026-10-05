@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { apiFetch, countWords } from '@/lib/utils';
+import { apiFetch, apiFetchRemote, countWords, RemoteApiError } from '@/lib/utils';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
 import {
@@ -23,7 +23,9 @@ import {
   Loader2,
   PanelLeft,
   Download,
-  AlertCircle
+  LockKeyhole,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
 import { DocumentTabsSidebar, buildTabTree, flattenTabTree, extractHeadingsFromContent, getSubtreeHeight, type TabTreeNode } from '@/components/editor/document-tabs-sidebar';
 import type { EditorHeading } from '@/components/editor/tiptap-editor';
@@ -32,8 +34,36 @@ import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
 import { playChapterSwitchSound, playSuccessSound, playPopSound, playDeleteSound } from '@/lib/sound';
 import { SoundToggleButton } from '@/components/layout/sound-provider';
 import { SyncStatusButton } from '@/components/layout/sync-provider';
-import { pushSync, pullSync, triggerAutoPush, pauseAutoSync, resumeAutoSync } from '@/lib/sync';
-import { appendConflictContent, deduplicateConflictBlocks } from '@/lib/sync-core';
+import {
+  pushSync,
+  pullSync,
+  triggerAutoPush,
+  pauseAutoSync,
+  resumeAutoSync,
+  protectChapterFromSync,
+  unprotectChapterFromSync,
+  registerSyncFlushHandler
+} from '@/lib/sync';
+import { deduplicateConflictBlocks } from '@/lib/sync-core';
+import {
+  CHAPTER_LOCK_HEARTBEAT_MS,
+  acquireChapterLock,
+  cacheRemoteChapter,
+  clearPendingChapterDraft,
+  createRecoveryChapter,
+  createRecoveryId,
+  getDeviceIdentity,
+  getPendingChapterDraft,
+  hasRemoteChapterApi,
+  heartbeatChapterLock,
+  persistLocalChapterDraft,
+  releaseChapterLock,
+  retryPendingRecoveries,
+  type ChapterVersion,
+  type DeviceIdentity,
+  type OwnedChapterLock,
+  type PublicChapterLock
+} from '@/lib/chapter-lock';
 import { MechKeyboardProvider, MechKeyboardToggle } from '@/components/editor/mech-keyboard-provider';
 
 const TiptapEditor = dynamic(
@@ -63,6 +93,9 @@ export default function ChapterEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
+  const [lockState, setLockState] = useState<'acquiring' | 'owned' | 'locked' | 'offline'>('acquiring');
+  const [visibleLock, setVisibleLock] = useState<PublicChapterLock | null>(null);
+  const [recoveryChapterId, setRecoveryChapterId] = useState<string | null>(null);
 
   // Protection refs against sync race conditions and text reversions
   const isDirtyRef = useRef(false);
@@ -74,10 +107,29 @@ export default function ChapterEditorPage() {
   titleRef.current = title;
   const chapterRef = useRef(chapter);
   chapterRef.current = chapter;
+  const activeChapterIdRef = useRef(chapterId);
+  activeChapterIdRef.current = chapterId;
   const lastKeystrokeTimeRef = useRef<number>(0);
   const lastContentEditedTimeRef = useRef<number>(0);
   const lastTitleEditedTimeRef = useRef<number>(0);
-  const [cloudConflict, setCloudConflict] = useState<any>(null);
+  const lockStateRef = useRef(lockState);
+  lockStateRef.current = lockState;
+  const ownedLockRef = useRef<OwnedChapterLock | null>(null);
+  const identityRef = useRef<DeviceIdentity | null>(null);
+  const serverVersionRef = useRef<ChapterVersion>({ updatedAt: 0, contentUpdatedAt: 0, titleUpdatedAt: 0 });
+  const offlineBaseVersionRef = useRef<ChapterVersion | null>(null);
+  const hasUnsyncedDraftRef = useRef(false);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const latestSaveRevisionRef = useRef(0);
+  const queuedSaveCountRef = useRef(0);
+  const pendingRecoveryRef = useRef<{ recoveryId: string; capturedAt: number } | null>(null);
+  const lockAcquireInFlightRef = useRef(false);
+  const saveChapterRef = useRef<(newContent?: string, newTitle?: string, isManual?: boolean) => Promise<void>>(async () => {});
+  const tryAcquireLockRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
+  const transitionLockState = useCallback((next: 'acquiring' | 'owned' | 'locked' | 'offline') => {
+    lockStateRef.current = next;
+    setLockState(next);
+  }, []);
 
   // Document Tabs sidebar state (persisted)
   const [showTabsSidebar, setShowTabsSidebar] = useState(() => {
@@ -108,13 +160,31 @@ export default function ChapterEditorPage() {
   const [switchDirection, setSwitchDirection] = useState<'next' | 'prev' | 'fade'>('fade');
   const [targetChapterInfo, setTargetChapterInfo] = useState<{ title: string; orderIndex?: number } | null>(null);
 
-  const fetchChapterData = async (isInitial = true) => {
+  const fetchChapterData = useCallback(async (isInitial = true) => {
     if (!chapterId || !projectId) return;
     try {
-      const [res, listRes] = await Promise.all([
-        apiFetch(`/api/chapters/${chapterId}`),
-        apiFetch(`/api/projects/${projectId}/chapters`)
-      ]);
+      let res: any;
+      let listRes: any;
+      try {
+        const fetcher = hasRemoteChapterApi() ? apiFetchRemote : apiFetch;
+        [res, listRes] = await Promise.all([
+          fetcher(`/api/chapters/${chapterId}`),
+          fetcher(`/api/projects/${projectId}/chapters`)
+        ]);
+      } catch (error) {
+        if (!isInitial) throw error;
+        // Initial offline load may use the cached chapter, but background
+        // refreshes must never silently substitute stale local data.
+        [res, listRes] = await Promise.all([
+          apiFetch(`/api/chapters/${chapterId}`),
+          apiFetch(`/api/projects/${projectId}/chapters`)
+        ]);
+        if (hasRemoteChapterApi()) {
+          transitionLockState('offline');
+          protectChapterFromSync(chapterId);
+        }
+      }
+      if (activeChapterIdRef.current !== chapterId) return;
       if (!res?.chapter) {
         isDirtyRef.current = false;
         toast.error('Thẻ này đã bị xóa hoặc không còn tồn tại', { id: 'chapter-deleted-error' });
@@ -122,62 +192,39 @@ export default function ChapterEditorPage() {
         return;
       }
       if (res?.chapter) {
-        if (isInitial || !chapterRef.current || chapterRef.current.id !== chapterId) {
-          setChapter(res.chapter);
-          setTitle(res.chapter.title || 'Thẻ');
-          const rawContent = res.chapter.content;
-          const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
+        const normalized = {
+          ...res.chapter,
+          contentUpdatedAt: Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0),
+          titleUpdatedAt: Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0)
+        };
+        if (hasRemoteChapterApi() && !hasUnsyncedDraftRef.current) cacheRemoteChapter(normalized);
+        const rawContent = normalized.content;
+        const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
+        const isProtectedEditor = lockStateRef.current === 'owned' || lockStateRef.current === 'offline' || lockStateRef.current === 'acquiring';
+        const canApply = !isDirtyRef.current && !savingRef.current && (!isProtectedEditor || !chapterRef.current || chapterRef.current.id !== chapterId);
+        if ((isInitial || !chapterRef.current || chapterRef.current.id !== chapterId) && !isDirtyRef.current) {
+          setChapter(normalized);
+          setTitle(normalized.title || 'Thẻ');
           setContent(safeContent);
           setLiveHeadings(extractHeadingsFromContent(safeContent));
-          lastContentEditedTimeRef.current = Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0);
-          lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
+          lastContentEditedTimeRef.current = normalized.contentUpdatedAt;
+          lastTitleEditedTimeRef.current = normalized.titleUpdatedAt;
+          serverVersionRef.current = {
+            updatedAt: Number(normalized.updatedAt || 0),
+            contentUpdatedAt: normalized.contentUpdatedAt,
+            titleUpdatedAt: normalized.titleUpdatedAt
+          };
           isDirtyRef.current = false;
-        } else {
-          // Background sync refresh:
-          if (savingRef.current) return;
-          const incomingUpdated = Number(res.chapter.updatedAt || res.chapter.createdAt || 0);
-          const currentLocalUpdated = Number(chapterRef.current?.updatedAt || chapterRef.current?.createdAt || 0);
-
-          if (incomingUpdated > currentLocalUpdated) {
-            const rawContent = res.chapter.content;
-            const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
-
-            if (!isDirtyRef.current) {
-              setChapter(res.chapter);
-              setTitle(res.chapter.title || 'Thẻ');
-              setContent(safeContent);
-              setLiveHeadings(extractHeadingsFromContent(safeContent));
-              lastContentEditedTimeRef.current = Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0);
-              lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
-              setCloudConflict(null);
-              toast.info('Đã tự động cập nhật văn bản mới nhất từ đám mây', { id: 'sync-updated-notice', duration: 2500 });
-            } else if (safeContent !== contentRef.current) {
-              // User has active uncommitted typing in content: present conflict merge options
-              setCloudConflict(res.chapter);
-            } else if (res.chapter.title !== titleRef.current) {
-              // Content is identical, but title was changed in cloud
-              const userEditedTitle = titleRef.current !== (chapterRef.current?.title ?? '');
-              if (!userEditedTitle) {
-                // User only edited content, didn't edit title: safe to accept new title without touching editor
-                setTitle(res.chapter.title || 'Thẻ');
-                setChapter((prev: any) => ({ ...prev, title: res.chapter.title, titleUpdatedAt: res.chapter.titleUpdatedAt }));
-                lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
-              } else {
-                setCloudConflict(res.chapter);
-              }
-            }
-          } else if (!isDirtyRef.current && contentRef.current === chapterRef.current?.content) {
-            const rawContent = res.chapter.content;
-            const safeContent = typeof rawContent === 'string' ? rawContent : (rawContent ? JSON.stringify(rawContent) : '');
-            if (safeContent !== contentRef.current) {
-              setChapter(res.chapter);
-              setTitle(res.chapter.title || 'Thẻ');
-              setContent(safeContent);
-              setLiveHeadings(extractHeadingsFromContent(safeContent));
-              lastContentEditedTimeRef.current = Number(res.chapter.contentUpdatedAt || res.chapter.updatedAt || 0);
-              lastTitleEditedTimeRef.current = Number(res.chapter.titleUpdatedAt || res.chapter.updatedAt || 0);
-            }
-          }
+        } else if (canApply && lockStateRef.current === 'locked') {
+          setChapter(normalized);
+          setTitle(normalized.title || 'Thẻ');
+          setContent(safeContent);
+          setLiveHeadings(extractHeadingsFromContent(safeContent));
+          serverVersionRef.current = {
+            updatedAt: Number(normalized.updatedAt || 0),
+            contentUpdatedAt: normalized.contentUpdatedAt,
+            titleUpdatedAt: normalized.titleUpdatedAt
+          };
         }
       }
       setAllChapters(Array.isArray(listRes?.chapters) ? listRes.chapters : []);
@@ -190,134 +237,318 @@ export default function ChapterEditorPage() {
         setTargetChapterInfo(null);
       });
     }
-  };
+  }, [chapterId, projectId, router, transitionLockState]);
 
-  useEffect(() => {
-    if (chapterId && projectId) {
-      fetchChapterData(true);
-      pullSync(true)
-        .then(() => {
-          if (!isDirtyRef.current && !savingRef.current) {
-            fetchChapterData(true);
-          }
-        })
-        .catch(() => {});
-    }
-
-    const handleSync = async () => {
-      try {
-        const listRes = await apiFetch(`/api/projects/${projectId}/chapters`);
-        if (Array.isArray(listRes?.chapters)) {
-          setAllChapters(listRes.chapters);
-        }
-      } catch {}
-      if (!savingRef.current) {
-        fetchChapterData(false);
-      }
+  const preserveDraftAsRecovery = useCallback(async () => {
+    if (!hasUnsyncedDraftRef.current && !isDirtyRef.current) return null;
+    const identity = identityRef.current || getDeviceIdentity();
+    const capturedAt = Date.now();
+    const pending = pendingRecoveryRef.current || {
+      capturedAt,
+      recoveryId: `${createRecoveryId(identity.sessionId, chapterId)}_${capturedAt}`.slice(0, 158)
     };
-
-    const handleFlushSync = () => {
-      if (contentRef.current !== chapterRef.current?.content || titleRef.current !== chapterRef.current?.title) {
-        saveChapter(contentRef.current, titleRef.current, true);
-      }
-    };
-
-    window.addEventListener('novelist-sync-updated', handleSync);
-    window.addEventListener('novelist-flush-save', handleFlushSync);
-    return () => {
-      resumeAutoSync();
-      window.removeEventListener('novelist-sync-updated', handleSync);
-      window.removeEventListener('novelist-flush-save', handleFlushSync);
-    };
-  }, [chapterId, projectId]);
-
-  const saveChapter = useCallback(async (newContent?: string, newTitle?: string, isManual = false) => {
-    const contentToSave = newContent !== undefined ? newContent : contentRef.current;
-    const titleToSave = newTitle !== undefined ? newTitle : titleRef.current;
-    setSaving(true);
+    pendingRecoveryRef.current = pending;
     try {
-      const now = Date.now();
-      const contentChanged = contentToSave !== (chapterRef.current?.content ?? '');
-      const titleChanged = titleToSave !== (chapterRef.current?.title ?? '');
-
-      const contentUp = contentChanged
-        ? (lastContentEditedTimeRef.current || now)
-        : Number(chapterRef.current?.contentUpdatedAt || chapterRef.current?.updatedAt || now);
-
-      const titleUp = titleChanged
-        ? (lastTitleEditedTimeRef.current || now)
-        : Number(chapterRef.current?.titleUpdatedAt || chapterRef.current?.updatedAt || now);
-
-      await apiFetch(`/api/chapters/${chapterId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          title: titleToSave,
-          content: contentToSave,
-          contentFormat: 'tiptap-json',
-          updatedAt: now,
-          contentUpdatedAt: contentUp,
-          titleUpdatedAt: titleUp
-        })
+      const result = await createRecoveryChapter({
+        recoveryId: pending.recoveryId,
+        chapterId,
+        content: contentRef.current,
+        title: titleRef.current,
+        deviceLabel: identity.deviceLabel,
+        capturedAt: pending.capturedAt
       });
-      setLastSaved(now);
-      lastContentEditedTimeRef.current = contentUp;
-      lastTitleEditedTimeRef.current = titleUp;
-      setChapter((prev: any) => ({
-        ...prev,
-        title: titleToSave,
-        content: contentToSave,
-        updatedAt: now,
-        contentUpdatedAt: contentUp,
-        titleUpdatedAt: titleUp
-      }));
+      pendingRecoveryRef.current = null;
+      clearPendingChapterDraft(chapterId);
+      hasUnsyncedDraftRef.current = false;
       isDirtyRef.current = false;
-      setCloudConflict(null);
-      resumeAutoSync();
-      playSuccessSound();
-      if (isManual) {
-        pushSync().catch(() => {});
-      } else {
-        triggerAutoPush(1000);
-      }
-    } catch (e: any) {
-      toast.error('Lỗi lưu: ' + e.message);
-    } finally {
-      setSaving(false);
+      setRecoveryChapterId(result?.chapter?.id || pending.recoveryId);
+      toast.warning('Bản ngoại tuyến đã được giữ thành một thẻ khôi phục riêng', { id: 'offline-recovery-created' });
+      return result?.chapter?.id || pending.recoveryId;
+    } catch {
+      toast.error('Chưa thể tạo thẻ khôi phục. Bản nháp vẫn được giữ trên thiết bị này.', { id: 'offline-recovery-pending' });
+      return null;
     }
   }, [chapterId]);
 
-  const handleMergeConflict = () => {
-    if (!cloudConflict) return;
-    const mergedText = appendConflictContent(contentRef.current, cloudConflict.content, 'Bản đám mây');
-    const cloudTitleUpdated = Number(cloudConflict.titleUpdatedAt || cloudConflict.updatedAt || 0);
-    const localTitleUpdated = Number(chapterRef.current?.titleUpdatedAt || chapterRef.current?.updatedAt || 0);
-    const userEditedTitle = titleRef.current !== (chapterRef.current?.title ?? '');
-    const resolvedTitle = (!userEditedTitle && cloudTitleUpdated > localTitleUpdated)
-      ? (cloudConflict.title || titleRef.current)
-      : titleRef.current;
-
-    setContent(mergedText);
-    if (resolvedTitle !== titleRef.current) {
-      setTitle(resolvedTitle);
+  const handleLockLost = useCallback(async (lock: PublicChapterLock | null) => {
+    ownedLockRef.current = null;
+    setVisibleLock(lock);
+    transitionLockState('locked');
+    const recoveryId = await preserveDraftAsRecovery();
+    if (recoveryId) {
+      unprotectChapterFromSync(chapterId);
+      await fetchChapterData(false);
     }
-    isDirtyRef.current = true;
-    lastContentEditedTimeRef.current = Date.now();
-    saveChapter(mergedText, resolvedTitle, true);
-    setCloudConflict(null);
-    toast.success('Đã hợp nhất nội dung từ đám mây vào văn bản hiện tại');
-  };
+  }, [chapterId, fetchChapterData, preserveDraftAsRecovery, transitionLockState]);
 
-  const handleKeepCurrent = () => {
-    lastContentEditedTimeRef.current = Date.now();
-    lastTitleEditedTimeRef.current = Date.now();
-    saveChapter(contentRef.current, titleRef.current, true);
-    setCloudConflict(null);
-    toast.info('Đã giữ bản thảo hiện tại trên thiết bị này');
-  };
+  const tryAcquireLock = useCallback(async (force = false) => {
+    if (!chapterId) return;
+    if (!hasRemoteChapterApi()) {
+      if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
+      transitionLockState('offline');
+      protectChapterFromSync(chapterId);
+      return;
+    }
+    if (lockAcquireInFlightRef.current) return;
+    lockAcquireInFlightRef.current = true;
+    const identity = identityRef.current || getDeviceIdentity();
+    identityRef.current = identity;
+    if (lockStateRef.current !== 'offline') transitionLockState('acquiring');
+    try {
+      if (isDirtyRef.current || hasUnsyncedDraftRef.current) {
+        persistLocalChapterDraft(chapterId, contentRef.current, titleRef.current, serverVersionRef.current);
+      }
+      const result = await acquireChapterLock(chapterId, identity, force, force ? (visibleLock?.version || '') : '');
+      if (activeChapterIdRef.current !== chapterId) {
+        await releaseChapterLock(chapterId, result.lock.token);
+        return;
+      }
+      const serverChangedWhileOffline = offlineBaseVersionRef.current
+        && (result.chapterVersion.contentUpdatedAt !== offlineBaseVersionRef.current.contentUpdatedAt
+          || result.chapterVersion.titleUpdatedAt !== offlineBaseVersionRef.current.titleUpdatedAt);
+
+      if (serverChangedWhileOffline && hasUnsyncedDraftRef.current) {
+        transitionLockState('locked');
+        const recoveryId = await preserveDraftAsRecovery();
+        await releaseChapterLock(chapterId, result.lock.token);
+        ownedLockRef.current = null;
+        offlineBaseVersionRef.current = null;
+        if (recoveryId) {
+          unprotectChapterFromSync(chapterId);
+          router.push(`/editor/${projectId}/${recoveryId}`);
+        } else {
+          transitionLockState('locked');
+        }
+        return;
+      }
+
+      ownedLockRef.current = result.lock;
+      serverVersionRef.current = result.chapterVersion;
+      offlineBaseVersionRef.current = null;
+      setVisibleLock(null);
+      transitionLockState('owned');
+      protectChapterFromSync(chapterId);
+      if (hasUnsyncedDraftRef.current) {
+        void saveChapterRef.current(contentRef.current, titleRef.current, true);
+      } else if (serverChangedWhileOffline) {
+        await fetchChapterData(true);
+      }
+    } catch (error: any) {
+      if (error instanceof RemoteApiError && error.status === 423) {
+        ownedLockRef.current = null;
+        if (hasUnsyncedDraftRef.current || isDirtyRef.current) {
+          await handleLockLost(error.data?.lock || null);
+        } else {
+          setVisibleLock(error.data?.lock || null);
+          transitionLockState('locked');
+          unprotectChapterFromSync(chapterId);
+        }
+      } else {
+        if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
+        transitionLockState('offline');
+        protectChapterFromSync(chapterId);
+      }
+    } finally {
+      lockAcquireInFlightRef.current = false;
+    }
+  }, [chapterId, fetchChapterData, handleLockLost, projectId, preserveDraftAsRecovery, router, transitionLockState, visibleLock?.version]);
+  tryAcquireLockRef.current = tryAcquireLock;
+
+  useEffect(() => {
+    if (!chapterId || !projectId) return;
+    identityRef.current = getDeviceIdentity();
+    ownedLockRef.current = null;
+    const pendingDraft = getPendingChapterDraft(chapterId);
+    isDirtyRef.current = Boolean(pendingDraft);
+    hasUnsyncedDraftRef.current = Boolean(pendingDraft);
+    offlineBaseVersionRef.current = pendingDraft?.baseVersion || null;
+    pendingRecoveryRef.current = null;
+    if (pendingDraft) {
+      const restoredChapter = {
+        id: chapterId,
+        projectId,
+        title: pendingDraft.title,
+        content: pendingDraft.content,
+        ...pendingDraft.baseVersion
+      };
+      contentRef.current = pendingDraft.content;
+      titleRef.current = pendingDraft.title;
+      chapterRef.current = restoredChapter;
+      serverVersionRef.current = pendingDraft.baseVersion;
+      setContent(pendingDraft.content);
+      setTitle(pendingDraft.title);
+      setChapter(restoredChapter);
+      setLiveHeadings(extractHeadingsFromContent(pendingDraft.content));
+    }
+    transitionLockState('acquiring');
+    setVisibleLock(null);
+    setRecoveryChapterId(null);
+    if (navigator.onLine && hasRemoteChapterApi()) void retryPendingRecoveries();
+    void fetchChapterData(true);
+    void tryAcquireLockRef.current(false);
+    void pullSync(false).catch(() => {});
+
+    const handleSync = async () => {
+      try {
+        const fetcher = hasRemoteChapterApi() ? apiFetchRemote : apiFetch;
+        const listRes = await fetcher(`/api/projects/${projectId}/chapters`);
+        if (Array.isArray(listRes?.chapters)) setAllChapters(listRes.chapters);
+      } catch {}
+      if (lockStateRef.current === 'locked' && !isDirtyRef.current && !savingRef.current) {
+        await fetchChapterData(false);
+      }
+    };
+    const handleOnline = async () => {
+      await retryPendingRecoveries();
+      if (lockStateRef.current === 'offline') await tryAcquireLockRef.current(false);
+    };
+    const unregisterFlush = registerSyncFlushHandler(chapterId, () => {
+      if ((lockStateRef.current !== 'owned' && lockStateRef.current !== 'offline') || (!isDirtyRef.current && !hasUnsyncedDraftRef.current)) return;
+      return saveChapterRef.current(contentRef.current, titleRef.current, true);
+    });
+    window.addEventListener('novelist-sync-updated', handleSync);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      unregisterFlush();
+      window.removeEventListener('novelist-sync-updated', handleSync);
+      window.removeEventListener('online', handleOnline);
+      const token = ownedLockRef.current?.token;
+      if (isDirtyRef.current || hasUnsyncedDraftRef.current) {
+        persistLocalChapterDraft(chapterId, contentRef.current, titleRef.current, serverVersionRef.current);
+      }
+      if (token) void releaseChapterLock(chapterId, token);
+      ownedLockRef.current = null;
+      resumeAutoSync(chapterId);
+      unprotectChapterFromSync(chapterId);
+    };
+  }, [chapterId, fetchChapterData, projectId, transitionLockState]);
+
+  useEffect(() => {
+    if (lockState !== 'offline' || !hasRemoteChapterApi()) return;
+    const timer = window.setInterval(() => {
+      void tryAcquireLockRef.current(false);
+    }, CHAPTER_LOCK_HEARTBEAT_MS);
+    return () => window.clearInterval(timer);
+  }, [lockState]);
+
+  useEffect(() => {
+    if (lockState !== 'owned' || !ownedLockRef.current?.token) return;
+    const timer = window.setInterval(async () => {
+      const token = ownedLockRef.current?.token;
+      if (!token) return;
+      try {
+        if (isDirtyRef.current || hasUnsyncedDraftRef.current) {
+          persistLocalChapterDraft(chapterId, contentRef.current, titleRef.current, serverVersionRef.current);
+        }
+        const result = await heartbeatChapterLock(chapterId, token);
+        if (ownedLockRef.current) ownedLockRef.current.expiresAt = result.expiresAt;
+      } catch (error: any) {
+        if (error instanceof RemoteApiError && error.status === 423) {
+          await handleLockLost(error.data?.lock || null);
+        } else {
+          if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
+          transitionLockState('offline');
+          hasUnsyncedDraftRef.current = hasUnsyncedDraftRef.current || isDirtyRef.current;
+          protectChapterFromSync(chapterId);
+        }
+      }
+    }, CHAPTER_LOCK_HEARTBEAT_MS);
+    return () => window.clearInterval(timer);
+  }, [chapterId, handleLockLost, lockState, transitionLockState]);
+
+  const saveChapter = useCallback(async (newContent?: string, newTitle?: string, isManual = false) => {
+    if (lockStateRef.current === 'locked' || lockStateRef.current === 'acquiring') return;
+    const contentToSave = newContent !== undefined ? newContent : contentRef.current;
+    const titleToSave = newTitle !== undefined ? newTitle : titleRef.current;
+    const revision = ++latestSaveRevisionRef.current;
+    hasUnsyncedDraftRef.current = true;
+    persistLocalChapterDraft(chapterId, contentToSave, titleToSave, serverVersionRef.current);
+    queuedSaveCountRef.current += 1;
+    setSaving(true);
+
+    const executeSave = async () => {
+      try {
+        // Coalesce snapshots which have not started yet. An in-flight older
+        // request is still followed by the latest snapshot in this same queue.
+        if (revision < latestSaveRevisionRef.current && !isManual) return;
+
+        if (!hasRemoteChapterApi() || lockStateRef.current === 'offline') {
+          if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
+          setLastSaved(Date.now());
+          return;
+        }
+        const activeLock = ownedLockRef.current;
+        if (lockStateRef.current !== 'owned' || !activeLock?.token) return;
+
+        const response = await apiFetchRemote(`/api/chapters/${chapterId}`, {
+          method: 'PATCH',
+          headers: { 'X-Chapter-Lock-Token': activeLock.token },
+          body: JSON.stringify({
+            title: titleToSave,
+            content: contentToSave,
+            contentFormat: 'tiptap-json',
+            baseContentUpdatedAt: serverVersionRef.current.contentUpdatedAt,
+            baseTitleUpdatedAt: serverVersionRef.current.titleUpdatedAt
+          })
+        });
+
+        const saved = response?.chapter || {};
+        const nextVersion = {
+          updatedAt: Number(saved.updatedAt || Date.now()),
+          contentUpdatedAt: Number(saved.contentUpdatedAt || saved.updatedAt || Date.now()),
+          titleUpdatedAt: Number(saved.titleUpdatedAt || saved.updatedAt || Date.now())
+        };
+        serverVersionRef.current = nextVersion;
+        lastContentEditedTimeRef.current = nextVersion.contentUpdatedAt;
+        lastTitleEditedTimeRef.current = nextVersion.titleUpdatedAt;
+        cacheRemoteChapter({ ...saved, title: titleToSave, content: contentToSave, ...nextVersion });
+
+        if (revision === latestSaveRevisionRef.current) {
+          const stillCurrent = contentRef.current === contentToSave && titleRef.current === titleToSave;
+          setChapter((prev: any) => ({ ...prev, ...saved, title: titleToSave, content: contentToSave, ...nextVersion }));
+          setLastSaved(nextVersion.updatedAt);
+          isDirtyRef.current = !stillCurrent;
+          hasUnsyncedDraftRef.current = !stillCurrent;
+          if (stillCurrent) {
+            clearPendingChapterDraft(chapterId, { content: contentToSave, title: titleToSave });
+            playSuccessSound();
+          }
+        }
+
+        if (isManual && revision === latestSaveRevisionRef.current) pushSync().catch(() => {});
+        else triggerAutoPush(1000);
+      } catch (error: any) {
+        if (activeChapterIdRef.current !== chapterId) return;
+        if (error instanceof RemoteApiError && (error.status === 409 || error.status === 423)) {
+          if (error.status === 423) await handleLockLost(error.data?.lock || null);
+          else {
+            transitionLockState('locked');
+            await preserveDraftAsRecovery();
+            unprotectChapterFromSync(chapterId);
+            await fetchChapterData(false);
+          }
+        } else {
+          if (!offlineBaseVersionRef.current) offlineBaseVersionRef.current = { ...serverVersionRef.current };
+          transitionLockState('offline');
+          protectChapterFromSync(chapterId);
+          toast.warning('Mất kết nối. Bản nháp đang được lưu trên thiết bị này.', { id: 'editor-offline-save' });
+        }
+      } finally {
+        queuedSaveCountRef.current = Math.max(0, queuedSaveCountRef.current - 1);
+        if (queuedSaveCountRef.current === 0) setSaving(false);
+      }
+    };
+
+    const queued = saveChainRef.current.then(executeSave, executeSave);
+    saveChainRef.current = queued;
+    await queued;
+  }, [chapterId, fetchChapterData, handleLockLost, preserveDraftAsRecovery, transitionLockState]);
+  saveChapterRef.current = saveChapter;
 
   // Responsive auto-save: debounced 700ms after user stops typing
   useEffect(() => {
     if (!chapter) return;
+    if (lockState === 'locked' || lockState === 'acquiring') return;
     if (content === chapter.content && title === chapter.title) return;
 
     const timer = setTimeout(() => {
@@ -325,10 +556,11 @@ export default function ChapterEditorPage() {
     }, 700);
 
     return () => clearTimeout(timer);
-  }, [content, title, chapter, saveChapter]);
+  }, [content, title, chapter, saveChapter, lockState]);
 
   // BUG 4 FIX: Auto-sync tab title from the first heading if title is currently default (e.g. "Thẻ 1", "Thẻ", "Thẻ con 1")
   useEffect(() => {
+    if (lockStateRef.current === 'locked' || lockStateRef.current === 'acquiring') return;
     if (!liveHeadings || liveHeadings.length === 0) return;
     const firstHeading = liveHeadings[0]?.text?.trim();
     if (!firstHeading) return;
@@ -351,6 +583,7 @@ export default function ChapterEditorPage() {
     const handleSaveShortcut = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
+        if (lockStateRef.current === 'locked' || lockStateRef.current === 'acquiring') return;
         saveChapter(undefined, undefined, true);
       }
     };
@@ -497,13 +730,22 @@ export default function ChapterEditorPage() {
   };
 
   const handleRenameTab = async (targetId: string, newTitle: string) => {
+    const trimmedTitle = newTitle.trim();
+    if (targetId === chapterId) {
+      if (lockStateRef.current !== 'owned' && lockStateRef.current !== 'offline') {
+        toast.error('Thẻ này đang ở chế độ chỉ đọc');
+        return;
+      }
+      setTitle(trimmedTitle);
+      isDirtyRef.current = true;
+      hasUnsyncedDraftRef.current = true;
+      await saveChapter(contentRef.current, trimmedTitle, true);
+      return;
+    }
     await apiFetch(`/api/chapters/${targetId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ title: newTitle.trim() })
+      body: JSON.stringify({ title: trimmedTitle })
     });
-    if (targetId === chapterId) {
-      setTitle(newTitle.trim());
-    }
     await fetchChapterData(false);
     pushSync().catch(() => {});
   };
@@ -524,9 +766,19 @@ export default function ChapterEditorPage() {
     try {
       // Delete descendants from leaves to root to avoid FK issues
       for (const id of [...descendantIds].reverse()) {
-        await apiFetch(`/api/chapters/${id}`, { method: 'DELETE' });
+        await apiFetch(`/api/chapters/${id}`, {
+          method: 'DELETE',
+          headers: id === chapterId && ownedLockRef.current?.token
+            ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
+            : undefined
+        });
       }
-      await apiFetch(`/api/chapters/${targetId}`, { method: 'DELETE' });
+      await apiFetch(`/api/chapters/${targetId}`, {
+        method: 'DELETE',
+        headers: targetId === chapterId && ownedLockRef.current?.token
+          ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
+          : undefined
+      });
       playDeleteSound();
       toast.success('Đã xóa thẻ');
       pushSync().catch(() => {});
@@ -615,6 +867,9 @@ export default function ChapterEditorPage() {
     try {
       await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
         method: 'POST',
+        headers: ownedLockRef.current?.token
+          ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
+          : undefined,
         body: JSON.stringify({ chapterIds: newFlat.map(c => c.id) })
       });
       toast.success('Đã chuyển vị trí thẻ');
@@ -675,6 +930,9 @@ export default function ChapterEditorPage() {
     try {
       await apiFetch(`/api/chapters/${targetId}`, {
         method: 'PATCH',
+        headers: targetId === chapterId && ownedLockRef.current?.token
+          ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
+          : undefined,
         body: JSON.stringify({ parentId: newParentId })
       });
       playSuccessSound();
@@ -690,6 +948,9 @@ export default function ChapterEditorPage() {
     try {
       await apiFetch(`/api/chapters/${targetId}`, {
         method: 'PATCH',
+        headers: targetId === chapterId && ownedLockRef.current?.token
+          ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
+          : undefined,
         body: JSON.stringify({ emoji })
       });
       await fetchChapterData(false);
@@ -701,6 +962,7 @@ export default function ChapterEditorPage() {
 
   const currentWords = countWords(content);
   const wordGoalProgress = Math.min(100, Math.round((currentWords / targetWordCount) * 100));
+  const canEdit = lockState === 'owned' || lockState === 'offline';
 
   if (loading) return <div className="p-8 animate-pulse text-muted-foreground">Đang mở tài liệu...</div>;
 
@@ -753,11 +1015,15 @@ export default function ChapterEditorPage() {
             <Input
               value={title}
               onChange={e => {
+                if (!canEdit) return;
                 isDirtyRef.current = true;
+                hasUnsyncedDraftRef.current = true;
                 lastTitleEditedTimeRef.current = Date.now();
+                pauseAutoSync(chapterId);
                 setTitle(e.target.value);
               }}
-              onBlur={() => saveChapter(undefined, title, true)}
+              onBlur={() => canEdit && saveChapter(undefined, title, true)}
+              disabled={!canEdit}
               className="flex-1 min-w-0 font-semibold border-0 bg-transparent focus-visible:ring-1 text-xs sm:text-sm h-7 sm:h-8 truncate px-1"
               placeholder="Tên thẻ tài liệu..."
             />
@@ -792,7 +1058,7 @@ export default function ChapterEditorPage() {
                 <Button
                   size="sm"
                   onClick={handleAIContinue}
-                  disabled={aiLoading}
+                  disabled={aiLoading || !canEdit}
                   className="h-7 sm:h-8 px-2 sm:px-2.5 text-xs bg-purple-600 hover:bg-purple-700 text-white font-medium shadow-sm shadow-purple-500/25 btn-interactive"
                   title="AI Viết tiếp văn bản"
                 >
@@ -833,7 +1099,7 @@ export default function ChapterEditorPage() {
                 onClick={() => {
                   saveChapter(undefined, undefined, true);
                 }}
-                disabled={saving}
+                disabled={saving || !canEdit}
               >
                 <Save className="w-3.5 h-3.5 sm:mr-1" />
                 <span className="hidden sm:inline">Lưu</span>
@@ -862,6 +1128,52 @@ export default function ChapterEditorPage() {
           </div>
         )}
 
+        {/* Chapter edit lock status */}
+        {lockState === 'acquiring' && (
+          <div className="bg-muted/80 border-b px-4 py-2.5 flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Đang xin quyền chỉnh sửa chương này...
+          </div>
+        )}
+        {lockState === 'locked' && (
+          <div className="bg-amber-500/15 border-b border-amber-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
+              <LockKeyhole className="w-4 h-4 shrink-0" />
+              <span>Chương này đang được sửa trên <strong>{visibleLock?.deviceLabel || 'thiết bị khác'}</strong>. Bạn đang ở chế độ chỉ đọc.</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void tryAcquireLock(false)}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1" /> Thử lại
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                onClick={() => {
+                  if (window.confirm('Chuyển quyền sửa sang thiết bị này? Thiết bị cũ sẽ chuyển sang chỉ đọc và phần chưa lưu của nó sẽ được giữ thành thẻ khôi phục.')) {
+                    void tryAcquireLock(true);
+                  }
+                }}
+              >
+                Chuyển quyền sửa
+              </Button>
+            </div>
+          </div>
+        )}
+        {lockState === 'offline' && (
+          <div className="bg-orange-500/15 border-b border-orange-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-orange-800 dark:text-orange-200">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 shrink-0" />
+              <span>Đang viết ngoại tuyến. Bản nháp được giữ trên thiết bị này và chưa được đồng bộ.</span>
+            </div>
+            {hasRemoteChapterApi() && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void tryAcquireLock(false)}>Kết nối lại</Button>}
+          </div>
+        )}
+        {recoveryChapterId && (
+          <div className="bg-emerald-500/15 border-b border-emerald-500/30 p-2.5 px-4 flex items-center justify-between gap-3 text-xs text-emerald-800 dark:text-emerald-200">
+            <span>Bản nháp xung đột đã được giữ trong một thẻ khôi phục riêng.</span>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => router.push(`/editor/${projectId}/${recoveryChapterId}`)}>Mở thẻ khôi phục</Button>
+          </div>
+        )}
+
         {/* Duplicated Conflict Blocks Cleanup Banner */}
         {content && content.includes('Nội dung xung đột được lưu lại') && (
           <div className="bg-sky-500/15 border-b border-sky-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs animate-in slide-in-from-top duration-150">
@@ -875,6 +1187,7 @@ export default function ChapterEditorPage() {
               <Button
                 size="sm"
                 className="h-7 text-xs bg-sky-600 hover:bg-sky-700 text-white font-medium shadow-xs"
+                disabled={!canEdit}
                 onClick={() => {
                   const cleaned = deduplicateConflictBlocks(contentRef.current);
                   setContent(cleaned);
@@ -885,26 +1198,6 @@ export default function ChapterEditorPage() {
                 }}
               >
                 Dọn dẹp & Khôi phục bản gốc
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Cloud Conflict Warning Banner */}
-        {cloudConflict && (
-          <div className="bg-amber-500/15 border-b border-amber-500/30 p-2.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs animate-in slide-in-from-top duration-150">
-            <div className="flex items-center gap-2 flex-1 min-w-[280px]">
-              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
-              <span className="text-amber-800 dark:text-amber-200">
-                <strong>Xung đột chỉnh sửa:</strong> Phát hiện bản cập nhật mới hơn từ đám mây trong khi bạn đang soạn thảo.
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button size="sm" variant="default" className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium" onClick={handleMergeConflict}>
-                Xem & Hợp nhất
-              </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs border-amber-500/40 text-amber-800 dark:text-amber-200 hover:bg-amber-500/10" onClick={handleKeepCurrent}>
-                Giữ bản hiện tại
               </Button>
             </div>
           </div>
@@ -950,11 +1243,14 @@ export default function ChapterEditorPage() {
             >
               <EditorErrorBoundary
                 content={content}
+                editable={canEdit}
                 onChange={(newContent) => {
+                  if (!canEdit) return;
                   isDirtyRef.current = true;
+                  hasUnsyncedDraftRef.current = true;
                   lastKeystrokeTimeRef.current = Date.now();
                   lastContentEditedTimeRef.current = Date.now();
-                  pauseAutoSync();
+                  pauseAutoSync(chapterId);
                   setContent(newContent);
                 }}
                 placeholder="Bắt đầu viết những dòng văn bản đầu tiên cho thẻ này..."
@@ -963,12 +1259,15 @@ export default function ChapterEditorPage() {
                   key={chapterId}
                   content={content}
                   onChange={(newContent) => {
+                    if (!canEdit) return;
                     isDirtyRef.current = true;
+                    hasUnsyncedDraftRef.current = true;
                     lastKeystrokeTimeRef.current = Date.now();
                     lastContentEditedTimeRef.current = Date.now();
-                    pauseAutoSync();
+                    pauseAutoSync(chapterId);
                     setContent(newContent);
                   }}
+                  editable={canEdit}
                   onHeadingsChange={setLiveHeadings}
                   placeholder="Bắt đầu viết những dòng văn bản đầu tiên cho thẻ này..."
                 />

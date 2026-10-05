@@ -161,8 +161,12 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     immediatelyRender: false
   });
 
+  useEffect(() => {
+    if (editor && editor.isEditable !== editable) editor.setEditable(editable);
+  }, [editor, editable]);
+
   const openFindReplace = useCallback(() => {
-    if (!editor) return;
+    if (!editor || !editable) return;
     const { from, to, empty } = editor.state.selection;
     if (!empty && from < to) {
       const selectedText = editor.state.doc.textBetween(from, to, ' ');
@@ -171,7 +175,11 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       }
     }
     setIsFindOpen(true);
-  }, [editor]);
+  }, [editor, editable]);
+
+  useEffect(() => {
+    if (!editable) setIsFindOpen(false);
+  }, [editable]);
 
   // Global Ctrl+F / Cmd+F shortcut listener
   useEffect(() => {
@@ -397,7 +405,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden relative">
       {/* Docked Formatting Toolbar */}
-      <div className="shrink-0 border-b bg-card/95 backdrop-blur-sm px-2 sm:px-3 py-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar flex-nowrap z-10 shadow-xs">
+      <div className={`shrink-0 border-b bg-card/95 backdrop-blur-sm px-2 sm:px-3 py-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar flex-nowrap z-10 shadow-xs ${!editable ? 'opacity-60 pointer-events-none' : ''}`} aria-disabled={!editable}>
         <Button variant="ghost" size="sm" className="h-7 px-2 shrink-0" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can?.()?.undo?.()} title="Hoàn tác (Ctrl+Z)"><Undo className="w-3.5 h-3.5" /></Button>
         <Button variant="ghost" size="sm" className="h-7 px-2 shrink-0" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can?.()?.redo?.()} title="Làm lại (Ctrl+Y)"><Redo className="w-3.5 h-3.5" /></Button>
         <Button
