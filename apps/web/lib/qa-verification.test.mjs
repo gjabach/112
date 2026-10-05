@@ -1550,7 +1550,7 @@ test('sync-core: Deleting a chapter on PC creates a tombstone and prevents Cloud
   assert.equal(mergedCloudWithPC.tombstones['ch_2'], now - 1000);
 });
 
-test('sync-core: Recreating or editing a chapter after deletion timestamp permits the newer version', () => {
+test('sync-core: Deletion is terminal - newer updatedAt or recreation attempt does NOT resurrect deleted chapter', () => {
   const now = Date.now();
   const pcStateAfterDelete = {
     chapters: [{ id: 'ch_1', projectId: 'p1', title: 'Chương 1', updatedAt: now - 5000 }],
@@ -1559,18 +1559,20 @@ test('sync-core: Recreating or editing a chapter after deletion timestamp permit
     }
   };
 
-  const mobileBrandNewChapter2 = {
+  const mobileStaleOrRecreationChapter2 = {
     chapters: [
       { id: 'ch_1', projectId: 'p1', title: 'Chương 1', updatedAt: now - 5000 },
-      // Mobile user wrote a new version at now - 500 (after now - 2000)
-      { id: 'ch_2', projectId: 'p1', title: 'Chương 2 (Viết mới toanh)', content: 'Nội dung mới...', updatedAt: now - 500 }
+      // Mobile user has a version with later updatedAt (now - 500 > now - 2000)
+      { id: 'ch_2', projectId: 'p1', title: 'Chương 2 (Cố tái tạo)', content: 'Nội dung...', updatedAt: now - 500 }
     ],
     tombstones: {}
   };
 
-  const { merged } = mergeWorkspaces(pcStateAfterDelete, mobileBrandNewChapter2);
-  assert.equal(merged.chapters.length, 2, 'Chapter recreated/edited strictly after deletion must be kept');
-  assert.ok(merged.chapters.some(c => c.id === 'ch_2' && c.title.includes('Viết mới toanh')));
+  const { merged } = mergeWorkspaces(pcStateAfterDelete, mobileStaleOrRecreationChapter2);
+  assert.equal(merged.chapters.length, 1, 'Deletion is terminal: later updatedAt must NOT resurrect deleted chapter');
+  assert.equal(merged.chapters[0].id, 'ch_1');
+  assert.ok(!merged.chapters.some(c => c.id === 'ch_2'));
+  assert.ok(merged.tombstones['ch_2']);
 });
 
 test('sync-core: Deleting a project cascades tombstones to all child chapters and characters', () => {
@@ -1602,7 +1604,7 @@ test('sync-core: Deleting a project cascades tombstones to all child chapters an
   assert.equal(merged.characters.length, 0, 'Child characters of deleted project must be cascaded and purged');
 });
 
-test('sync-core: Pruning tombstones older than 30 days keeps payload clean', () => {
+test('sync-core: Tombstones are preserved indefinitely (no 30-day pruning)', () => {
   const now = Date.now();
   const FORTY_DAYS_MS = 40 * 24 * 60 * 60 * 1000;
   const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
@@ -1610,13 +1612,13 @@ test('sync-core: Pruning tombstones older than 30 days keeps payload clean', () 
   const localState = {
     chapters: [],
     tombstones: {
-      ancient_tombstone: now - FORTY_DAYS_MS, // 40 days old -> should be pruned
-      recent_tombstone: now - FIVE_DAYS_MS     // 5 days old -> should be kept
+      ancient_tombstone: now - FORTY_DAYS_MS, // 40 days old -> must NOT be pruned
+      recent_tombstone: now - FIVE_DAYS_MS     // 5 days old -> must be kept
     }
   };
 
   const { merged } = mergeWorkspaces(localState, {});
-  assert.equal(merged.tombstones['ancient_tombstone'], undefined, 'Tombstones older than 30 days must be pruned');
+  assert.equal(merged.tombstones['ancient_tombstone'], now - FORTY_DAYS_MS, 'Ancient tombstones (> 30 days) must be preserved indefinitely');
   assert.equal(merged.tombstones['recent_tombstone'], now - FIVE_DAYS_MS, 'Recent tombstones must be preserved');
 });
 

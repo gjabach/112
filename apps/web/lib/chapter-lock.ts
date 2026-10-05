@@ -279,6 +279,11 @@ export function clearPendingChapterDraft(chapterId: string, expected?: { content
 export function cacheRemoteChapter(chapter: any) {
   if (!chapter?.id) return;
   try {
+    // Tombstone gate: do NOT cache if chapter has already been deleted
+    const rawTombstones = localStorage.getItem('novelist_tombstones');
+    const tombstones = rawTombstones ? JSON.parse(rawTombstones) : {};
+    if (tombstones?.[chapter.id]) return;
+
     const raw = localStorage.getItem('novelist_chapters');
     const chapters = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(chapters)) return;
@@ -329,14 +334,24 @@ export async function createRecoveryChapter(draft: PendingRecovery) {
   if (existingRequest) return existingRequest;
   const request = (async () => {
     savePendingRecovery(draft);
-    const response = await apiFetchRemote(`/api/chapters/${draft.chapterId}/recoveries`, {
-      method: 'POST',
-      body: JSON.stringify(draft)
-    });
-    removePendingRecovery(draft.recoveryId);
-    clearPendingChapterDraft(draft.chapterId, { content: draft.content, title: draft.title });
-    if (response?.chapter) cacheRemoteChapter(response.chapter);
-    return response;
+    try {
+      const response = await apiFetchRemote(`/api/chapters/${draft.chapterId}/recoveries`, {
+        method: 'POST',
+        body: JSON.stringify(draft)
+      });
+      removePendingRecovery(draft.recoveryId);
+      clearPendingChapterDraft(draft.chapterId, { content: draft.content, title: draft.title });
+      if (response?.chapter) cacheRemoteChapter(response.chapter);
+      return response;
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      // If server rejected with 410 Gone (RECOVERY_DELETED or SOURCE_DELETED) or 409 Conflict, TERMINATE retry
+      if (msg.includes('410') || msg.includes('RECOVERY_DELETED') || msg.includes('SOURCE_DELETED') || msg.includes('409') || msg.includes('OPERATION_PAYLOAD_MISMATCH')) {
+        removePendingRecovery(draft.recoveryId);
+        clearPendingChapterDraft(draft.chapterId, { content: draft.content, title: draft.title });
+      }
+      throw err;
+    }
   })();
   recoveryRequests.set(draft.recoveryId, request);
   try {

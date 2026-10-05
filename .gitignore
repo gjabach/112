@@ -18,3 +18,4 @@ coverage
 .idea
 *.tsbuildinfo
 Unselected files
+backups/

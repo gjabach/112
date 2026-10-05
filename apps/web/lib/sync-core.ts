@@ -324,7 +324,7 @@ export function mergeWorkspaces(
     const lDel = Number(localTombstones[id] || 0);
     const rDel = Number(remoteTombstones[id] || 0);
     const maxDel = Math.max(lDel, rDel);
-    if (maxDel > 0 && now - maxDel < MAX_TOMBSTONE_AGE) {
+    if (maxDel > 0) {
       mergedTombstones[id] = maxDel;
     }
   }
@@ -339,14 +339,8 @@ export function mergeWorkspaces(
   }
 
   const isDeleted = (id?: string, parentId?: string, updatedAt: number = 0): boolean => {
-    if (id && mergedTombstones[id]) {
-      const delTime = mergedTombstones[id];
-      if (delTime >= updatedAt) return true;
-    }
-    if (parentId && mergedTombstones[parentId]) {
-      const parentDelTime = mergedTombstones[parentId];
-      if (parentDelTime >= updatedAt) return true;
-    }
+    if (id && mergedTombstones[id]) return true;
+    if (parentId && mergedTombstones[parentId]) return true;
     return false;
   };
 

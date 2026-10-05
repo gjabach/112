@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import { playSuccessSound, playDeleteSound, playPopSound } from '@/lib/sound';
 import { SoundToggleButton } from '@/components/layout/sound-provider';
 import { SyncStatusButton } from '@/components/layout/sync-provider';
 import { pushSync, pullSync } from '@/lib/sync';
+import { deleteChapterWithSync } from '@/lib/delete-service';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { buildTabTree, flattenTabTree, TabTreeNode } from '@/components/editor/document-tabs-sidebar';
@@ -216,6 +217,8 @@ export default function ProjectEditorPage() {
     }
   };
 
+  const fetchGenerationRef = useRef(0);
+
   useEffect(() => {
     setCurrentProjectId(projectId);
     fetchData();
@@ -228,22 +231,40 @@ export default function ProjectEditorPage() {
     const handleSync = () => {
       fetchData();
     };
+    const handleChapterDeleted = () => {
+      fetchData();
+    };
     window.addEventListener('novelist-sync-updated', handleSync);
-    return () => window.removeEventListener('novelist-sync-updated', handleSync);
+    window.addEventListener('novelist-chapters-deleted', handleChapterDeleted);
+    return () => {
+      window.removeEventListener('novelist-sync-updated', handleSync);
+      window.removeEventListener('novelist-chapters-deleted', handleChapterDeleted);
+    };
   }, [projectId]);
 
   const fetchData = async () => {
+    const gen = ++fetchGenerationRef.current;
     try {
       const [projRes, chapRes] = await Promise.all([
         apiFetch(`/api/projects/${projectId}`),
         apiFetch(`/api/projects/${projectId}/chapters`)
       ]);
+      if (gen !== fetchGenerationRef.current) return;
+
+      const rawTombstones = typeof window !== 'undefined' ? localStorage.getItem('novelist_tombstones') : null;
+      const tombstones = rawTombstones ? JSON.parse(rawTombstones) : {};
+
       setProject(projRes.project);
-      setChapters(chapRes.chapters);
+      const activeChapters = (chapRes.chapters || []).filter((c: any) => !tombstones[c.id]);
+      setChapters(activeChapters);
     } catch (e: any) {
-      toast.error(e.message);
+      if (gen === fetchGenerationRef.current) {
+        toast.error(e.message);
+      }
     } finally {
-      setLoading(false);
+      if (gen === fetchGenerationRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -263,7 +284,7 @@ export default function ProjectEditorPage() {
       playSuccessSound();
       toast.success('Tạo chương mới thành công');
       fireConfetti({ type: 'stardust', particleCount: 20 });
-      fetchData();
+      await fetchData();
       pushSync().catch(() => {});
     } catch (e: any) {
       toast.error(e.message);
@@ -273,11 +294,17 @@ export default function ProjectEditorPage() {
   const deleteChapter = async (id: string) => {
     if (!confirm('Xóa chương này?')) return;
     try {
-      await apiFetch(`/api/chapters/${id}`, { method: 'DELETE' });
+      const res = await deleteChapterWithSync({
+        projectId,
+        chapterId: id
+      });
+      if (!res.success) {
+        toast.error(res.error || 'Lỗi khi xóa chương');
+        return;
+      }
       playDeleteSound();
       toast.success('Đã xóa chương');
-      fetchData();
-      pushSync().catch(() => {});
+      await fetchData();
     } catch (e: any) {
       toast.error(e.message);
     }

@@ -22,22 +22,12 @@ async function createTestDatabase() {
   const m0 = await readFile(join(migrationsDir, '0000_initial.sql'), 'utf8');
   const m1 = await readFile(join(migrationsDir, '0001_add_chapter_emoji.sql'), 'utf8');
   const m2 = await readFile(join(migrationsDir, '0002_chapter_edit_locks.sql'), 'utf8');
+  const m3 = await readFile(join(migrationsDir, '0003_entity_tombstones_and_recovery_ops.sql'), 'utf8');
 
-  function applyMigration(sql) {
-    const stmts = sql.split(';').map(s => s.trim()).filter(Boolean);
-    for (const stmt of stmts) {
-      try {
-        sqlite.exec(stmt + ';');
-      } catch (err) {
-        if (err.message && err.message.includes('duplicate column name')) continue;
-        throw err;
-      }
-    }
-  }
-
-  applyMigration(m0);
-  applyMigration(m1);
-  applyMigration(m2);
+  sqlite.exec(m0);
+  sqlite.exec(m1);
+  sqlite.exec(m2);
+  sqlite.exec(m3);
 
   return sqlite;
 }
@@ -573,7 +563,8 @@ test('T04: A gõ và autosave; B đứng yên đang mở chương -> B thấy đ
   const lockA = server.acquireLock({ chapterId: 'chap_2', userId: 'user_a', ...pc.identity });
   assert.equal(lockA.status, 200);
 
-  // PC types and saves
+  // PC types and saves after typing time
+  server.advanceTime(1000);
   const newContentA = 'Nội dung PC vừa viết xong câu đầu tiên.';
   const patchRes = server.patchChapter({
     chapterId: 'chap_2',
@@ -970,7 +961,7 @@ test('T19: Upstream storage trả 500/429; restart/cold start -> Không ack gi�
 });
 
 test('T20: Browser B gửi workspace snapshot cũ/không token khóa -> Không thay canonical content hoặc resurrect deleted chapter', async () => {
-  const { server } = await setupTestEnvironment();
+  const { sqlite, server } = await setupTestEnvironment();
   const pc = createBrowserContext('pc');
 
   // PC holds lock on Chapter 2
@@ -985,6 +976,22 @@ test('T20: Browser B gửi workspace snapshot cũ/không token khóa -> Không t
     body: { content: 'Stale snapshot overwrite attempt' }
   });
   assert.equal(snapshotRes.status, 423);
+
+  // When chapter 2 is deleted and tombstoned
+  const now = Date.now();
+  sqlite.prepare(`
+    INSERT INTO entity_tombstones (user_id, project_id, entity_type, entity_id, deleted_at, deleted_revision)
+    VALUES ('user_a', 'project_1', 'chapter', 'chap_2', ?, 1)
+  `).run(now);
+  sqlite.prepare('DELETE FROM chapters WHERE id = ?').run('chap_2');
+
+  // Stale snapshot trying to re-insert chap_2 MUST trigger SQL constraint error
+  assert.throws(() => {
+    sqlite.prepare(`
+      INSERT INTO chapters (id, project_id, title, content, content_format, order_index, status, created_at, updated_at)
+      VALUES ('chap_2', 'project_1', 'Chương 2 Resurrect', 'content', 'tiptap-json', 2, 'draft', ?, ?)
+    `).run(now, now);
+  }, /CHAPTER_DELETED/);
 });
 
 test('T21: Gõ N+1 khi save N đang in-flight và reload sau ack N -> N+1 vẫn pending/khôi phục; không bị cache N xóa', async () => {
@@ -1159,6 +1166,22 @@ test('T30: Đổi tên, di chuyển thẻ con, emoji, tombstone -> Metadata gi�
   const chap2 = sqlite.prepare('SELECT * FROM chapters WHERE id = ?').get('chap_2');
   assert.equal(chap2.emoji, '📖');
   assert.equal(chap2.parent_id, 'chap_1');
+
+  // Tombstone chap_2 and delete
+  const now = Date.now();
+  sqlite.prepare(`
+    INSERT INTO entity_tombstones (user_id, project_id, entity_type, entity_id, deleted_at, deleted_revision)
+    VALUES ('user_a', 'project_1', 'chapter', 'chap_2', ?, 1)
+  `).run(now);
+  sqlite.prepare('DELETE FROM chapters WHERE id = ?').run('chap_2');
+
+  // Attempting to re-insert or resurrect chap_2 must be rejected by SQL trigger
+  assert.throws(() => {
+    sqlite.prepare(`
+      INSERT INTO chapters (id, project_id, title, content, content_format, order_index, status, created_at, updated_at)
+      VALUES ('chap_2', 'project_1', 'Chương 2', 'Nội dung', 'tiptap-json', 2, 'draft', ?, ?)
+    `).run(now, now);
+  }, /CHAPTER_DELETED/);
 });
 
 test('T31: Mobile IME tiếng Việt đang composition, blur/pagehide -> Không cắt dấu/ký tự; flush phản ánh document thực tế', async () => {

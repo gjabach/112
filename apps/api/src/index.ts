@@ -53,14 +53,14 @@ app.get('/health', (c) => c.json({ status: 'ok' }));
 // Mount routes
 app.route('/api/auth', authRoutes);
 app.route('/api/projects', projectRoutes);
+app.route('/api/sync', syncRoutes); // cloud workspace sync (mounted before catch-all /api/:id)
+app.route('/api/ai', aiRoutes);
+app.route('/api/export', exportRoutes);
 app.route('/api', chapterRoutes); // includes /projects/:id/chapters and /chapters/:id
 app.route('/api', characterRoutes); // includes /projects/:id/characters and /characters/:id
-app.route('/api/ai', aiRoutes);
 app.route('/api', worldbuildingRoutes); // worldbuilding & locations
-app.route('/api/export', exportRoutes);
 app.route('/api', outlineRoutes); // outline: /projects/:id/outline and /outline/:id
 app.route('/api', timelineRoutes); // timeline: /projects/:id/timeline and /timeline/:id
-app.route('/api/sync', syncRoutes); // cloud workspace sync
 
 // Upload endpoint - returns presigned-like handling for R2
 app.post('/api/upload', async (c) => {

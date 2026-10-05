@@ -180,20 +180,44 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
       finalData = merged;
     }
 
+    // Authoritative Tombstones Gate: Unify and strictly enforce tombstones
+    const localTombstones = getStoredJson('novelist_tombstones', {});
+    const incomingTombstones = (finalData.tombstones && typeof finalData.tombstones === 'object') ? finalData.tombstones : {};
+    const allTombstones: Record<string, number> = { ...localTombstones, ...incomingTombstones };
+    localStorage.setItem('novelist_tombstones', JSON.stringify(allTombstones));
+    finalData.tombstones = allTombstones;
+
+    // Any tombstoned chapter must NEVER remain in protectedChapterIds
+    for (const tombId of Object.keys(allTombstones)) {
+      protectedChapterIds.delete(tombId);
+    }
+
+    // Filter out all deleted chapters and projects
+    if (Array.isArray(finalData.chapters)) {
+      finalData.chapters = finalData.chapters.filter((ch: any) => ch?.id && !allTombstones[ch.id] && (!ch.projectId || !allTombstones[ch.projectId]));
+    }
+    if (Array.isArray(finalData.projects)) {
+      finalData.projects = finalData.projects.filter((p: any) => p?.id && !allTombstones[p.id]);
+    }
+
     // Never let a background response replace a chapter currently owned,
-    // dirty, saving, or being edited offline in this tab.
+    // dirty, saving, or being edited offline in this tab - provided it is NOT deleted!
     if (protectedChapterIds.size > 0 && Array.isArray(finalData.chapters)) {
       const localChapters = getStoredJson('novelist_chapters', []);
-      const localById = new Map((Array.isArray(localChapters) ? localChapters : []).map((chapter: any) => [chapter.id, chapter]));
+      const localById = new Map((Array.isArray(localChapters) ? localChapters : [])
+        .filter((c: any) => c?.id && !allTombstones[c.id])
+        .map((chapter: any) => [chapter.id, chapter]));
       const seen = new Set<string>();
       finalData = { ...finalData };
       finalData.chapters = finalData.chapters.map((chapter: any) => {
         seen.add(chapter.id);
-        if (protectedChapterIds.has(chapter.id) && localById.has(chapter.id)) return localById.get(chapter.id);
+        if (protectedChapterIds.has(chapter.id) && !allTombstones[chapter.id] && localById.has(chapter.id)) return localById.get(chapter.id);
         return chapter;
       });
       for (const chapterId of protectedChapterIds) {
-        if (!seen.has(chapterId) && localById.has(chapterId)) finalData.chapters.push(localById.get(chapterId));
+        if (!allTombstones[chapterId] && !seen.has(chapterId) && localById.has(chapterId)) {
+          finalData.chapters.push(localById.get(chapterId));
+        }
       }
     }
 
@@ -323,6 +347,8 @@ function broadcastSyncStatus(status: SyncStatus, message?: string) {
 }
 
 let isPushing = false;
+let pushQueued = false;
+let activePushPromise: Promise<{ success: boolean; stats?: any; error?: string }> | null = null;
 
 /**
  * Push workspace to cloud.
@@ -333,12 +359,15 @@ let isPushing = false;
  */
 export async function pushSync(): Promise<{ success: boolean; stats?: any; error?: string }> {
   if (typeof window === 'undefined') return { success: false, error: 'Not in browser' };
-  if (isPushing) return { success: true };
+  if (isPushing) {
+    pushQueued = true;
+    return activePushPromise || Promise.resolve({ success: true });
+  }
   isPushing = true;
-
-  try {
-    const local = exportFullWorkspace();
-    if (!local) return { success: false, error: 'No data to sync' };
+  activePushPromise = (async () => {
+    try {
+      const local = exportFullWorkspace();
+      if (!local) return { success: false, error: 'No data to sync' };
 
     const email = getUserEmail();
     if (!email || !email.includes('@')) {
@@ -408,15 +437,25 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
           characters: Array.isArray(workspace.characters) ? workspace.characters.length : 0
         }
       };
-    } else {
-      broadcastSyncStatus('error', 'Không thể kết nối đến đám mây để lưu');
-      return { success: false, error: 'Không thể kết nối đến đám mây để lưu' };
+      } else {
+        broadcastSyncStatus('error', 'Không thể kết nối đến đám mây để lưu');
+        return { success: false, error: 'Không thể kết nối đến đám mây để lưu' };
+      }
+    } catch (err: any) {
+      broadcastSyncStatus('error', err.message || 'Lỗi lưu đám mây');
+      return { success: false, error: err.message || 'Lỗi mạng khi lưu đám mây' };
     }
-  } catch (err: any) {
-    broadcastSyncStatus('error', err.message || 'Lỗi lưu đám mây');
-    return { success: false, error: err.message || 'Lỗi mạng khi lưu đám mây' };
+  })();
+
+  try {
+    return await activePushPromise;
   } finally {
     isPushing = false;
+    activePushPromise = null;
+    if (pushQueued) {
+      pushQueued = false;
+      setTimeout(() => pushSync().catch(() => {}), 50);
+    }
   }
 }
 

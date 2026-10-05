@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, and } from 'drizzle-orm';
 import { schema } from '../lib/db';
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
-import { nowTimestamp, generateId } from '../lib/auth';
+import { nowTimestamp } from '../lib/auth';
 import { readActiveLock, publicLock } from './chapters';
 import { countWords } from '../utils/validation';
+import { getAuthoritativeTombstones, getWorkspaceRevision, sha256 } from '../services/lifecycle';
 
 type Variables = {
   db: any;
@@ -68,8 +69,8 @@ function mergeSyncSnapshots(existingRaw: any, incomingRaw: any) {
   const mergedTombstones = { ...(existing.tombstones || {}), ...(incoming.tombstones || {}) };
   for (const id of Object.keys(mergedTombstones)) {
     mergedTombstones[id] = Math.max(Number(existing.tombstones?.[id] || 0), Number(incoming.tombstones?.[id] || 0));
-    const chapter = chapterMap.get(id);
-    if (chapter && mergedTombstones[id] >= Number(chapter.updatedAt || 0)) chapterMap.delete(id);
+    // Tombstones are authoritative: once tombstoned, ID is removed unconditionally (timestamp never resurrects)
+    if (chapterMap.has(id)) chapterMap.delete(id);
   }
   const now = nowTimestamp();
   return {
@@ -91,17 +92,20 @@ function mergeSyncSnapshots(existingRaw: any, incomingRaw: any) {
 sync.use('*', authMiddleware);
 
 // GET /api/sync
-sync.get('/', async (c) => {
+const getSyncHandler = async (c: any) => {
   const user = c.get('user');
   const db = c.get('db');
   const kv = c.env.KV;
 
-  // 1. Fetch canonical data from D1
+  // 1. Fetch canonical data and authoritative tombstones from D1
   const dbProjects = await db.select().from(schema.projects).where(eq(schema.projects.userId, user.userId));
   const projectIds = dbProjects.map((p: any) => p.id);
   const dbChapters = projectIds.length > 0
     ? await db.select().from(schema.chapters).where(inArray(schema.chapters.projectId, projectIds))
     : [];
+
+  const authoritativeTombstones = await getAuthoritativeTombstones(db, user.userId);
+  const workspaceRevision = await getWorkspaceRevision(db, user.userId);
 
   const rawKv = kv ? await kv.get(`sync:${user.userId}`, 'json') : null;
   const kvData = unwrapWorkspace((rawKv as any)?.data || rawKv);
@@ -111,31 +115,38 @@ sync.get('/', async (c) => {
       success: true,
       userId: user.userId,
       lastModified: 0,
+      workspaceRevision,
       data: null,
       message: 'Chưa có bản đồng bộ nào cho tài khoản này'
     });
   }
 
-  // Canonical projects & chapters from D1
-  const canonicalChapters = dbChapters.map((ch: any) => ({
-    ...ch,
-    charactersPresent: ch.charactersPresent ? JSON.parse(ch.charactersPresent) : []
-  }));
+  // Filter out any chapter in D1 that has a tombstone (defense in depth)
+  const canonicalChapters = dbChapters
+    .filter((ch: any) => !authoritativeTombstones.chapters.has(ch.id))
+    .map((ch: any) => ({
+      ...ch,
+      charactersPresent: ch.charactersPresent ? JSON.parse(ch.charactersPresent) : []
+    }));
 
   const maxDbChapterUpdated = dbChapters.reduce((max: number, ch: any) => Math.max(max, Number(ch.updatedAt || ch.createdAt || 0)), 0);
   const maxDbProjectUpdated = dbProjects.reduce((max: number, p: any) => Math.max(max, Number(p.updatedAt || p.createdAt || 0)), 0);
   const lastModified = Math.max(Number(kvData?.lastModified || 0), maxDbChapterUpdated, maxDbProjectUpdated, nowTimestamp());
 
+  // Canonical workspace: D1 is always authoritative for active entities in a D1 account.
+  // Never fallback to KV chapters when D1 has 0 chapters!
+  const allTombstones = { ...(kvData?.tombstones || {}), ...authoritativeTombstones.allMap };
   const canonicalWorkspace = {
     version: 2,
     lastModified,
-    projects: dbProjects.length > 0 ? dbProjects : (kvData.projects || []),
-    chapters: dbChapters.length > 0 ? canonicalChapters : (kvData.chapters || []),
-    characters: kvData.characters || [],
-    entities: kvData.entities || kvData.worldbuilding || [],
-    timeline: kvData.timeline || kvData.timelineEvents || [],
-    outline: kvData.outline || kvData.outlines || [],
-    tombstones: kvData.tombstones || {}
+    workspaceRevision,
+    projects: dbProjects,
+    chapters: canonicalChapters,
+    characters: kvData?.characters || [],
+    entities: kvData?.entities || kvData?.worldbuilding || [],
+    timeline: kvData?.timeline || kvData?.timelineEvents || [],
+    outline: kvData?.outline || kvData?.outlines || [],
+    tombstones: allTombstones
   };
 
   // Cache to KV
@@ -143,6 +154,7 @@ sync.get('/', async (c) => {
     await kv.put(`sync:${user.userId}`, JSON.stringify({
       userId: user.userId,
       lastModified,
+      workspaceRevision,
       syncedAt: nowTimestamp(),
       data: canonicalWorkspace
     })).catch(() => {});
@@ -152,13 +164,16 @@ sync.get('/', async (c) => {
     success: true,
     userId: user.userId,
     lastModified,
+    workspaceRevision,
     data: canonicalWorkspace,
     source: 'canonical-d1'
   });
-});
+};
+sync.get('/', getSyncHandler);
+sync.get('', getSyncHandler);
 
 // POST /api/sync
-sync.post('/', async (c) => {
+const postSyncHandler = async (c: any) => {
   const user = c.get('user');
   const db = c.get('db');
   const body = await c.req.json();
@@ -171,7 +186,14 @@ sync.post('/', async (c) => {
   const now = nowTimestamp();
   const suppliedLockToken = String(c.req.header('X-Chapter-Lock-Token') || '');
 
-  // 1. Fetch user's existing projects and chapters from D1
+  // 1. Authoritative Tombstones & Sync Revision from D1
+  const authoritativeTombstones = await getAuthoritativeTombstones(db, user.userId);
+  const currentWorkspaceRevision = await getWorkspaceRevision(db, user.userId);
+  let hasMutations = false;
+  const rejectedEntities: Array<{ id: string; type: 'chapter' | 'project'; reason: string }> = [];
+  const acceptedOperations: string[] = [];
+
+  // 2. Fetch user's existing projects and chapters from D1
   const existingProjects = await db.select().from(schema.projects).where(eq(schema.projects.userId, user.userId));
   const existingProjectMap = new Map<string, any>(existingProjects.map((p: any) => [p.id, p]));
 
@@ -179,6 +201,11 @@ sync.post('/', async (c) => {
   const incomingProjects = Array.isArray(data.projects) ? data.projects : [];
   for (const proj of incomingProjects) {
     if (!proj?.id) continue;
+    // Tombstone gate: do not recreate tombstoned projects!
+    if (authoritativeTombstones.projects.has(proj.id)) {
+      rejectedEntities.push({ id: proj.id, type: 'project', reason: 'PROJECT_DELETED' });
+      continue;
+    }
     if (!existingProjectMap.has(proj.id)) {
       const newProj = {
         id: proj.id,
@@ -194,8 +221,13 @@ sync.post('/', async (c) => {
         createdAt: Number(proj.createdAt || now),
         updatedAt: Number(proj.updatedAt || now)
       };
-      await db.insert(schema.projects).values(newProj).catch(() => {});
-      existingProjectMap.set(proj.id, newProj);
+      try {
+        await db.insert(schema.projects).values(newProj);
+        existingProjectMap.set(proj.id, newProj);
+        hasMutations = true;
+      } catch (err: any) {
+        rejectedEntities.push({ id: proj.id, type: 'project', reason: err.message || 'PROJECT_INSERT_FAILED' });
+      }
     }
   }
 
@@ -206,14 +238,37 @@ sync.post('/', async (c) => {
     : [];
   const existingChapterMap = new Map<string, any>(existingChapters.map((ch: any) => [ch.id, ch]));
 
-  // 2. Process incoming chapters with lock awareness & data preservation
+  // 3. Process incoming chapters with tombstone gate, lock awareness & recovery idempotency
   const incomingChapters = Array.isArray(data.chapters) ? data.chapters : [];
   for (const chapter of incomingChapters) {
     if (!chapter?.id) continue;
+
+    // A. Tombstone check: DO NOT RE-INSERT OR UPDATE DELETED CHAPTERS!
+    if (authoritativeTombstones.chapters.has(chapter.id)) {
+      rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: 'CHAPTER_DELETED' });
+      continue;
+    }
+
+    // B. Check if target project is tombstoned
+    if (chapter.projectId && authoritativeTombstones.projects.has(chapter.projectId)) {
+      rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: 'PROJECT_DELETED' });
+      continue;
+    }
+
     const targetProjectId = chapter.projectId && existingProjectMap.has(chapter.projectId)
       ? chapter.projectId
       : (allUserProjectIds[0] || null);
-    if (!targetProjectId) continue;
+
+    if (!targetProjectId) {
+      rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: 'NO_VALID_PROJECT' });
+      continue;
+    }
+
+    // C. Clean up deleted parent reference
+    let parentId = chapter.parentId || null;
+    if (parentId && authoritativeTombstones.chapters.has(parentId)) {
+      parentId = null;
+    }
 
     const existingD1 = existingChapterMap.get(chapter.id);
     if (!existingD1) {
@@ -229,7 +284,7 @@ sync.post('/', async (c) => {
         wordCount,
         orderIndex: Number(chapter.orderIndex ?? existingChapters.length),
         status: chapter.status || 'outline',
-        parentId: chapter.parentId || null,
+        parentId,
         notes: chapter.notes || null,
         pov: chapter.pov || null,
         location: chapter.location || null,
@@ -240,8 +295,13 @@ sync.post('/', async (c) => {
         contentUpdatedAt: Number(chapter.contentUpdatedAt || chapter.updatedAt || now),
         titleUpdatedAt: Number(chapter.titleUpdatedAt || chapter.updatedAt || now)
       };
-      await db.insert(schema.chapters).values(createdChapter).catch(() => {});
-      existingChapterMap.set(chapter.id, createdChapter);
+      try {
+        await db.insert(schema.chapters).values(createdChapter);
+        existingChapterMap.set(chapter.id, createdChapter);
+        hasMutations = true;
+      } catch (err: any) {
+        rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: err.message || 'CHAPTER_INSERT_FAILED' });
+      }
     } else {
       // Existing chapter -> check differences
       const contentChanged = chapter.content !== undefined && chapter.content !== (existingD1.content || '');
@@ -252,30 +312,70 @@ sync.post('/', async (c) => {
         const lockHeldByOther = activeLock && (!suppliedLockToken || activeLock.lockToken !== suppliedLockToken);
 
         if (lockHeldByOther) {
-          // DO NOT OVERWRITE LOCK HOLDER'S CANONICAL CONTENT!
-          // Safely preserve divergent incoming chapter as a dedicated recovery chapter
-          const recoveryId = `recovery_sync_${chapter.id}_${now}`.slice(0, 150);
-          const recoveryTitle = `Khôi phục – ${chapter.title || existingD1.title} – Bản đồng bộ ngoại tuyến`.slice(0, 200);
-          const recovered = {
-            id: recoveryId,
-            projectId: targetProjectId,
-            title: recoveryTitle,
-            content: chapter.content || '',
-            contentFormat: chapter.contentFormat || 'tiptap-json',
-            summary: chapter.summary || null,
-            wordCount: countWords(chapter.content || ''),
-            orderIndex: Number(existingD1.orderIndex || 0) + 1,
-            status: 'draft',
-            parentId: existingD1.parentId || null,
-            charactersPresent: existingD1.charactersPresent || '[]',
-            createdAt: now,
-            updatedAt: now,
-            contentUpdatedAt: now,
-            titleUpdatedAt: now
-          };
-          await db.insert(schema.chapters).values(recovered).catch(() => {});
+          // Idempotent recovery creation for lock conflicts
+          const payloadHash = sha256(user.userId + '::' + chapter.id + '::' + (chapter.content || ''));
+          const recoveryId = `recovery_sync_${payloadHash.slice(0, 32)}`;
+
+          if (authoritativeTombstones.chapters.has(recoveryId)) {
+            rejectedEntities.push({ id: recoveryId, type: 'chapter', reason: 'RECOVERY_DELETED' });
+            continue;
+          }
+
+          const existingOps = await db.select().from(schema.recoveryOperations)
+            .where(and(
+              eq(schema.recoveryOperations.userId, user.userId),
+              eq(schema.recoveryOperations.recoveryChapterId, recoveryId)
+            )).limit(1);
+
+          if (existingOps.length > 0 && existingOps[0].state === 'deleted') {
+            rejectedEntities.push({ id: recoveryId, type: 'chapter', reason: 'RECOVERY_DELETED' });
+            continue;
+          }
+
+          const alreadyInD1 = existingChapterMap.has(recoveryId);
+          if (!alreadyInD1) {
+            const recoveryTitle = `Khôi phục – ${chapter.title || existingD1.title} – Bản đồng bộ ngoại tuyến`.slice(0, 200);
+            const recovered = {
+              id: recoveryId,
+              projectId: targetProjectId,
+              title: recoveryTitle,
+              content: chapter.content || '',
+              contentFormat: chapter.contentFormat || 'tiptap-json',
+              summary: chapter.summary || null,
+              wordCount: countWords(chapter.content || ''),
+              orderIndex: Number(existingD1.orderIndex || 0) + 1,
+              status: 'draft',
+              parentId: existingD1.parentId || null,
+              charactersPresent: existingD1.charactersPresent || '[]',
+              emoji: existingD1.emoji || null,
+              notes: null,
+              pov: null,
+              location: null,
+              createdAt: now,
+              updatedAt: now,
+              contentUpdatedAt: now,
+              titleUpdatedAt: now
+            };
+            try {
+              await db.insert(schema.chapters).values(recovered);
+              await db.insert(schema.recoveryOperations).values({
+                userId: user.userId,
+                operationKey: `${user.userId}::${chapter.id}::${recoveryId}`,
+                sourceChapterId: chapter.id,
+                payloadHash,
+                recoveryChapterId: recoveryId,
+                state: 'created',
+                createdAt: now,
+                deletedAt: null
+              });
+              existingChapterMap.set(recoveryId, recovered);
+              hasMutations = true;
+            } catch (err: any) {
+              rejectedEntities.push({ id: recoveryId, type: 'chapter', reason: err.message });
+            }
+          }
         } else {
-          // Caller holds the lock or no active lock -> apply update if newer
+          // Caller holds lock or no active lock -> apply update if newer
           const incomingContentUpdated = Number(chapter.contentUpdatedAt || chapter.updatedAt || 0);
           const existingContentUpdated = Number(existingD1.contentUpdatedAt || existingD1.updatedAt || 0);
           const incomingTitleUpdated = Number(chapter.titleUpdatedAt || chapter.updatedAt || 0);
@@ -287,22 +387,40 @@ sync.post('/', async (c) => {
               title: titleChanged ? chapter.title : existingD1.title,
               content: contentChanged ? chapter.content : existingD1.content,
               wordCount: contentChanged ? countWords(chapter.content) : existingD1.wordCount,
+              parentId,
               updatedAt: mutationTime,
               contentUpdatedAt: contentChanged ? Math.max(incomingContentUpdated, mutationTime) : existingD1.contentUpdatedAt,
               titleUpdatedAt: titleChanged ? Math.max(incomingTitleUpdated, mutationTime) : existingD1.titleUpdatedAt
             }).where(eq(schema.chapters.id, chapter.id)).catch(() => {});
+            hasMutations = true;
           }
         }
       }
     }
   }
 
-  // 3. Read back latest canonical D1 chapters & projects
+  // 4. If any mutation occurred, bump workspaceSyncState revision
+  let finalRevision = currentWorkspaceRevision;
+  if (hasMutations) {
+    finalRevision = currentWorkspaceRevision + 1;
+    const d1 = c.env.DB;
+    await d1.prepare(`
+      INSERT INTO workspace_sync_state (user_id, revision, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        revision = excluded.revision,
+        updated_at = excluded.updated_at
+    `).bind(user.userId, finalRevision, now).run();
+  }
+
+  // 5. Read back latest canonical D1 chapters & projects (excluding any tombstoned entities)
   const finalProjects = await db.select().from(schema.projects).where(eq(schema.projects.userId, user.userId));
   const finalProjectIds = finalProjects.map((p: any) => p.id);
-  const finalChapters = finalProjectIds.length > 0
+  const rawFinalChapters = finalProjectIds.length > 0
     ? await db.select().from(schema.chapters).where(inArray(schema.chapters.projectId, finalProjectIds))
     : [];
+
+  const finalChapters = rawFinalChapters.filter((ch: any) => !authoritativeTombstones.chapters.has(ch.id));
 
   const canonicalChapters = finalChapters.map((ch: any) => ({
     ...ch,
@@ -314,18 +432,22 @@ sync.post('/', async (c) => {
   const mergedMetadata = mergeSyncSnapshots((existingPayload as any)?.data || existingPayload, data);
   const lastModified = Math.max(Number(body.lastModified || 0), now);
 
+  const allTombstones = { ...(mergedMetadata.tombstones || {}), ...authoritativeTombstones.allMap };
   const canonicalPayload = {
     ...mergedMetadata,
     version: 2,
     lastModified,
+    workspaceRevision: finalRevision,
     projects: finalProjects,
-    chapters: canonicalChapters
+    chapters: canonicalChapters,
+    tombstones: allTombstones
   };
 
   if (kv) {
     await kv.put(`sync:${user.userId}`, JSON.stringify({
       userId: user.userId,
       lastModified,
+      workspaceRevision: finalRevision,
       syncedAt: now,
       data: canonicalPayload
     })).catch(() => {});
@@ -335,15 +457,19 @@ sync.post('/', async (c) => {
     success: true,
     userId: user.userId,
     lastModified,
+    workspaceRevision: finalRevision,
     syncedAt: now,
     data: canonicalPayload,
+    rejectedEntities,
+    acceptedOperations,
     stats: {
       projects: finalProjects.length,
       chapters: canonicalChapters.length,
       characters: Array.isArray(canonicalPayload.characters) ? canonicalPayload.characters.length : 0
     }
   });
-});
+};
+sync.post('/', postSyncHandler);
+sync.post('', postSyncHandler);
 
 export default sync;
-

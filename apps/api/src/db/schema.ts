@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, index, primaryKey } from 'drizzle-orm/sqlite-core';
 import { relations } from 'drizzle-orm';
 
 // USERS
@@ -354,3 +354,52 @@ export type Chapter = typeof chapters.$inferSelect;
 export type NewChapter = typeof chapters.$inferInsert;
 export type Character = typeof characters.$inferSelect;
 export type NewCharacter = typeof characters.$inferInsert;
+
+// ENTITY TOMBSTONES - Durable D1 tombstone ledger
+export const entityTombstones = sqliteTable('entity_tombstones', {
+  userId: text('user_id').notNull(),
+  entityType: text('entity_type').notNull(), // 'chapter' | 'project'
+  entityId: text('entity_id').notNull(),
+  projectId: text('project_id'),
+  deletedAt: integer('deleted_at').notNull(),
+  deleteOperationId: text('delete_operation_id'),
+  deletedRevision: integer('deleted_revision').notNull().default(1)
+}, (table) => ({
+  pk: primaryKey({ columns: [table.userId, table.entityType, table.entityId] }),
+  userProjectIdx: index('entity_tombstones_user_project_idx').on(table.userId, table.projectId),
+  userRevIdx: index('entity_tombstones_user_rev_idx').on(table.userId, table.deletedRevision),
+  userEntityIdx: index('entity_tombstones_user_entity_idx').on(table.userId, table.entityId)
+}));
+
+// WORKSPACE SYNC STATE - Monotonically increasing sync revision per user
+export const workspaceSyncState = sqliteTable('workspace_sync_state', {
+  userId: text('user_id').primaryKey(),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull()
+});
+
+// RECOVERY OPERATIONS - Idempotency ledger for conflicting/offline draft recoveries
+export const recoveryOperations = sqliteTable('recovery_operations', {
+  userId: text('user_id').notNull(),
+  operationKey: text('operation_key').notNull(),
+  sourceChapterId: text('source_chapter_id').notNull(),
+  sourceBaseRevision: text('source_base_revision'),
+  draftId: text('draft_id'),
+  payloadHash: text('payload_hash').notNull(),
+  recoveryChapterId: text('recovery_chapter_id').notNull(),
+  state: text('state').notNull(), // 'created' | 'deleted'
+  createdAt: integer('created_at').notNull(),
+  deletedAt: integer('deleted_at')
+}, (table) => ({
+  pk: primaryKey({ columns: [table.userId, table.operationKey] }),
+  userRecIdx: index('recovery_ops_user_rec_idx').on(table.userId, table.recoveryChapterId),
+  userSourceIdx: index('recovery_ops_user_source_idx').on(table.userId, table.sourceChapterId)
+}));
+
+export type EntityTombstone = typeof entityTombstones.$inferSelect;
+export type NewEntityTombstone = typeof entityTombstones.$inferInsert;
+export type WorkspaceSyncState = typeof workspaceSyncState.$inferSelect;
+export type NewWorkspaceSyncState = typeof workspaceSyncState.$inferInsert;
+export type RecoveryOperation = typeof recoveryOperations.$inferSelect;
+export type NewRecoveryOperation = typeof recoveryOperations.$inferInsert;
+

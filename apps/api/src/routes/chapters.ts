@@ -6,6 +6,7 @@ import { createChapterSchema, updateChapterSchema } from '@novelist/shared';
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
 import { countWords } from '../utils/validation';
+import { deleteChapterAtomic, handleRecoveryCreation } from '../services/lifecycle';
 
 type Variables = { db: any; user: AuthUser };
 const chapters = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -265,52 +266,10 @@ chapters.delete('/chapters/:id/lock', async (c) => {
 
 // POST /api/chapters/:id/recoveries - idempotently preserve an offline/conflicting draft
 chapters.post('/chapters/:id/recoveries', async (c) => {
-  const db = c.get('db');
-  const user = c.get('user');
   const sourceId = c.req.param('id');
-  const source = await getOwnedChapter(c, sourceId);
-  if (!source) return c.json({ error: 'Chapter not found' }, 404);
   const body = await c.req.json().catch(() => ({}));
-  const recoveryId = String(body.recoveryId || '').slice(0, 160);
-  const content = typeof body.content === 'string' ? body.content : '';
-  if (!/^recovery_[a-zA-Z0-9_-]+$/.test(recoveryId)) return c.json({ error: 'Mã bản khôi phục không hợp lệ' }, 400);
-
-  const existing = await db.select().from(schema.chapters).where(eq(schema.chapters.id, recoveryId)).limit(1);
-  if (existing.length > 0) return c.json({ success: true, chapter: existing[0], existed: true });
-
-  const allChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, source.projectId));
-  if (allChapters.length >= 100) return c.json({ error: 'Tài liệu đã đạt giới hạn tối đa 100 thẻ' }, 400);
-  const now = nowTimestamp();
-  const desiredOrder = Number(source.orderIndex || 0) + 1;
-  const siblings = allChapters.filter((item: any) => (item.parentId || null) === (source.parentId || null) && Number(item.orderIndex || 0) >= desiredOrder);
-  for (const sibling of siblings) {
-    await db.update(schema.chapters).set({ orderIndex: Number(sibling.orderIndex || 0) + 1, updatedAt: now }).where(eq(schema.chapters.id, sibling.id));
-  }
-
-  const capturedAt = Number(body.capturedAt || now);
-  const deviceLabel = String(body.deviceLabel || 'Thiết bị ngoại tuyến').slice(0, 60);
-  const timestampLabel = new Date(capturedAt).toLocaleString('vi-VN', { timeZone: 'Asia/Bangkok', hour12: false });
-  const title = `Khôi phục – ${source.title} – ${deviceLabel} – ${timestampLabel}`.slice(0, 200);
-  const recovered = {
-    ...source,
-    id: recoveryId,
-    title,
-    content,
-    wordCount: countWords(content),
-    orderIndex: desiredOrder,
-    charactersPresent: source.charactersPresent || '[]',
-    createdAt: now,
-    updatedAt: now,
-    contentUpdatedAt: now,
-    titleUpdatedAt: now
-  };
-  await db.insert(schema.chapters).values(recovered);
-  await db.insert(schema.revisions).values({
-    id: generateId(), entityType: 'chapter', entityId: recoveryId, content,
-    wordCount: recovered.wordCount, createdBy: user.userId, createdAt: now,
-    label: 'Offline conflict recovery'
-  });
-  return c.json({ success: true, chapter: { ...recovered, charactersPresent: JSON.parse(recovered.charactersPresent || '[]') } }, 201);
+  const result = await handleRecoveryCreation(c, sourceId, body);
+  return c.json(result.data, result.status as any);
 });
 
 // POST /api/projects/:projectId/chapters/reorder - Contiguous reorder by array of chapterIds
@@ -345,7 +304,18 @@ const getChapterHandler = async (c: any) => {
   const id = c.req.param('id');
 
   const result = await db.select().from(schema.chapters).where(eq(schema.chapters.id, id)).limit(1);
-  if (result.length === 0) return c.json({ error: 'Chapter not found' }, 404);
+  if (result.length === 0) {
+    const tomb = await db.select().from(schema.entityTombstones)
+      .where(and(
+        eq(schema.entityTombstones.userId, user.userId),
+        eq(schema.entityTombstones.entityType, 'chapter'),
+        eq(schema.entityTombstones.entityId, id)
+      )).limit(1);
+    if (tomb.length > 0) {
+      return c.json({ error: 'Chương đã bị xóa', code: 'CHAPTER_DELETED', deletedAt: Number(tomb[0].deletedAt) }, 410);
+    }
+    return c.json({ error: 'Chapter not found' }, 404);
+  }
 
   const chapter = result[0];
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
@@ -550,45 +520,13 @@ const patchChapterHandler = async (c: any) => {
 chapters.patch('/chapters/:id', patchChapterHandler);
 chapters.patch('/:id', patchChapterHandler);
 
-// DELETE /api/chapters/:id (with Cascade Delete and min 1 tab requirement)
+// DELETE /api/chapters/:id (Atomic D1 tombstone ledger and cascade delete)
 const deleteChapterHandler = async (c: any) => {
-  const db = c.get('db');
-  const user = c.get('user');
   const id = c.req.param('id');
-
-  const existing = await db.select().from(schema.chapters).where(eq(schema.chapters.id, id)).limit(1);
-  if (existing.length === 0) return c.json({ error: 'Chapter not found' }, 404);
-
-  const chapter = existing[0];
-  const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, chapter.projectId), eq(schema.projects.userId, user.userId))).limit(1);
-  if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
-
-  const allProjectChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, chapter.projectId));
-  if (allProjectChapters.length <= 1) {
-    return c.json({ error: 'Tài liệu phải có tối thiểu 1 thẻ' }, 400);
-  }
-
-  const getAllDescendantIds = (rootId: string): string[] => {
-    const children = allProjectChapters.filter((ch: any) => ch.parentId === rootId);
-    const childIds = children.map((ch: any) => ch.id);
-    const nestedIds = childIds.flatMap((cid: string) => getAllDescendantIds(cid));
-    return [...childIds, ...nestedIds];
-  };
-  const toDeleteIds = Array.from(new Set([id, ...getAllDescendantIds(id)]));
-  if (toDeleteIds.length >= allProjectChapters.length) {
-    return c.json({ error: 'Tài liệu phải có tối thiểu 1 thẻ' }, 400);
-  }
-
-  const lockedResponse = await rejectIfAnyChangedChapterIsLocked(c, toDeleteIds);
-  if (lockedResponse) return lockedResponse;
-
-  for (const delId of toDeleteIds) {
-    await db.delete(schema.scenes).where(eq(schema.scenes.chapterId, delId));
-    await db.delete(schema.chapters).where(eq(schema.chapters.id, delId));
-    await db.delete(schema.revisions).where(and(eq(schema.revisions.entityType, 'chapter'), eq(schema.revisions.entityId, delId)));
-  }
-
-  return c.json({ success: true });
+  const operationId = c.req.header('X-Operation-Id') || c.req.query('operationId');
+  const suppliedLockToken = c.req.header('X-Chapter-Lock-Token');
+  const result = await deleteChapterAtomic(c, id, { suppliedLockToken, operationId });
+  return c.json(result.data, result.status as any);
 };
 chapters.delete('/chapters/:id', deleteChapterHandler);
 chapters.delete('/:id', deleteChapterHandler);

@@ -45,6 +45,7 @@ import {
   registerSyncFlushHandler
 } from '@/lib/sync';
 import { deduplicateConflictBlocks } from '@/lib/sync-core';
+import { deleteChapterWithSync } from '@/lib/delete-service';
 import {
   CHAPTER_LOCK_HEARTBEAT_MS,
   acquireChapterLock,
@@ -719,7 +720,7 @@ export default function ChapterEditorPage() {
   const prevChapter = currentIndex > 0 ? orderedChapters[currentIndex - 1] : null;
   const nextChapter = currentIndex >= 0 && currentIndex < orderedChapters.length - 1 ? orderedChapters[currentIndex + 1] : null;
 
-  const navigateToChapter = (targetId: string, forcedDir?: 'next' | 'prev' | 'fade') => {
+  const navigateToChapter = (targetId: string, forcedDir?: 'next' | 'prev' | 'fade', skipSave = false) => {
     if (!targetId || targetId === chapterId || isSwitching) return;
 
     const targetIdx = orderedChapters.findIndex(c => c?.id === targetId);
@@ -733,7 +734,7 @@ export default function ChapterEditorPage() {
       setTargetChapterInfo({ title: targetChap.title, orderIndex: targetChap.orderIndex });
     }
 
-    if (content !== chapter?.content || title !== chapter?.title) {
+    if (!skipSave && (content !== chapter?.content || title !== chapter?.title)) {
       saveChapter(undefined, undefined, true).catch(() => {});
     }
 
@@ -848,45 +849,33 @@ export default function ChapterEditorPage() {
   };
 
   const handleDeleteTab = async (targetId: string) => {
-    // BUG 3 FIX: Cascade delete all descendants to prevent orphan tabs
-    const getAllDescendantIds = (rootId: string): string[] => {
-      const children = allChapters.filter(c => c.parentId === rootId);
-      return children.flatMap(c => [c.id, ...getAllDescendantIds(c.id)]);
-    };
-    const descendantIds = getAllDescendantIds(targetId);
-    const allIdsToDelete = [targetId, ...descendantIds];
-
-    if (allChapters.length <= allIdsToDelete.length) {
+    if (allChapters.length <= 1) {
       toast.error('Tài liệu phải có tối thiểu 1 thẻ');
       return;
     }
     try {
-      // Delete descendants from leaves to root to avoid FK issues
-      for (const id of [...descendantIds].reverse()) {
-        await apiFetch(`/api/chapters/${id}`, {
-          method: 'DELETE',
-          headers: id === chapterId && ownedLockRef.current?.token
-            ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
-            : undefined
-        });
-      }
-      await apiFetch(`/api/chapters/${targetId}`, {
-        method: 'DELETE',
-        headers: targetId === chapterId && ownedLockRef.current?.token
-          ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
-          : undefined
+      const lockToken = targetId === chapterId ? ownedLockRef.current?.token : undefined;
+      const res = await deleteChapterWithSync({
+        projectId: projectId as string,
+        chapterId: targetId,
+        lockToken
       });
+      if (!res.success) {
+        toast.error(res.error || 'Lỗi xóa thẻ');
+        return;
+      }
       playDeleteSound();
       toast.success('Đã xóa thẻ');
-      pushSync().catch(() => {});
-      if (targetId === chapterId || allIdsToDelete.includes(chapterId)) {
-        // BUG 2 FIX: Navigate to adjacent tab instead of first tab
+
+      const deletedSet = new Set(res.deletedIds);
+      if (deletedSet.has(chapterId)) {
+        // Navigate to adjacent tab without triggering save on the deleted chapter
         const currentIdx = orderedChapters.findIndex(c => c.id === chapterId);
-        const remaining = orderedChapters.filter(c => !allIdsToDelete.includes(c.id));
+        const remaining = orderedChapters.filter(c => !deletedSet.has(c.id));
         if (remaining.length > 0) {
           const adjacentIdx = Math.min(currentIdx, remaining.length - 1);
           const adjacentTab = remaining[Math.max(0, adjacentIdx)];
-          navigateToChapter(adjacentTab.id, currentIdx < orderedChapters.length - 1 ? 'next' : 'prev');
+          navigateToChapter(adjacentTab.id, currentIdx < orderedChapters.length - 1 ? 'next' : 'prev', true);
         } else {
           router.push(`/editor/${projectId}`);
         }
