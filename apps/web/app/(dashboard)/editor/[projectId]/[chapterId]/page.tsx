@@ -29,6 +29,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { DocumentTabsSidebar, buildTabTree, flattenTabTree, extractHeadingsFromContent, getSubtreeHeight, type TabTreeNode } from '@/components/editor/document-tabs-sidebar';
+import { applyTabOrder, type TabDrop } from '@novelist/shared';
 import type { EditorHeading } from '@/components/editor/tiptap-editor';
 import { MagicSparkles, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
@@ -89,6 +90,8 @@ export default function ChapterEditorPage() {
 
   const [chapter, setChapter] = useState<any>(null);
   const [allChapters, setAllChapters] = useState<any[]>([]);
+  const [isMovingTab, setIsMovingTab] = useState(false);
+  const tabDropSavingRef = useRef(false);
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [liveHeadings, setLiveHeadings] = useState<EditorHeading[]>([]);
@@ -237,7 +240,7 @@ export default function ChapterEditorPage() {
           };
         }
       }
-      setAllChapters(getCachedChapters(projectId));
+      if (!tabDropSavingRef.current) setAllChapters(getCachedChapters(projectId));
     } catch (e: any) {
       toast.error(e.message || 'Lỗi tải thẻ');
     } finally {
@@ -387,7 +390,7 @@ export default function ChapterEditorPage() {
         const fetcher = hasRemoteChapterApi() ? apiFetchRemote : apiFetch;
         const listRes = await fetcher(`/api/projects/${projectId}/chapters`);
         if (activeChapterIdRef.current === chapterId && Array.isArray(listRes?.chapters)) {
-          setAllChapters(getCachedChapters(projectId));
+          if (!tabDropSavingRef.current) setAllChapters(getCachedChapters(projectId));
         }
       } catch {}
       if (lockStateRef.current === 'locked' && !isDirtyRef.current && !savingRef.current) {
@@ -397,7 +400,7 @@ export default function ChapterEditorPage() {
     const handleWorkspace = () => {
       if (activeChapterIdRef.current !== chapterId) return;
       const active = getCachedChapters(projectId);
-      setAllChapters(active);
+      if (!tabDropSavingRef.current) setAllChapters(active);
       const tombstones = readWorkspaceCache('novelist_tombstones', {});
       if (!tombstones[chapterId] && !tombstones[projectId]) return;
       if (isDirtyRef.current || hasUnsyncedDraftRef.current) {
@@ -893,8 +896,35 @@ export default function ChapterEditorPage() {
     }
   };
 
+  const handleDropTab = async (drop: TabDrop) => {
+    if (tabDropSavingRef.current) return;
+    const before = new Map(allChapters.map(c => [c.id, { orderIndex: c.orderIndex, parentId: c.parentId || null }]));
+    tabDropSavingRef.current = true;
+    setIsMovingTab(true);
+    try {
+      const reordered = applyTabOrder(allChapters, drop.chapterIds, { chapterId: drop.chapterId, parentId: drop.parentId });
+      setAllChapters(reordered);
+      await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
+        method: 'POST',
+        headers: ownedLockRef.current?.token ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token } : undefined,
+        body: JSON.stringify({ chapterIds: drop.chapterIds, move: { chapterId: drop.chapterId, parentId: drop.parentId } })
+      });
+      setAllChapters(getCachedChapters(projectId));
+      pushSync().catch(() => {});
+    } catch (error: any) {
+      // Restore only the layout metadata, preserving edits made while saving.
+      setAllChapters(current => current.map(c => before.has(c.id) ? { ...c, ...before.get(c.id) } : c));
+      toast.error(error.message || 'Không thể lưu vị trí thẻ. Đã khôi phục vị trí cũ.');
+      throw error;
+    } finally {
+      tabDropSavingRef.current = false;
+      setIsMovingTab(false);
+    }
+  };
+
   // Move tab strictly swaps among siblings of the same parent (Google Docs standard)
   const handleMoveTab = async (targetId: string, direction: 'up' | 'down') => {
+    if (tabDropSavingRef.current) return;
     const target = allChapters.find(c => c.id === targetId);
     if (!target) return;
     const parentId = target.parentId || null;
@@ -937,22 +967,13 @@ export default function ChapterEditorPage() {
     const newFlat = flattenTabTree(tree);
 
     try {
-      await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
-        method: 'POST',
-        headers: ownedLockRef.current?.token
-          ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
-          : undefined,
-        body: JSON.stringify({ chapterIds: newFlat.map(c => c.id) })
-      });
+      await handleDropTab({ chapterId: targetId, parentId, chapterIds: newFlat.map(c => c.id) });
       toast.success('Đã chuyển vị trí thẻ');
-      await fetchChapterData(false);
-      pushSync().catch(() => {});
-    } catch (e: any) {
-      toast.error(e.message || 'Lỗi sắp xếp thẻ');
-    }
+    } catch { /* The shared drop handler reports the error. */ }
   };
 
   const handleReparentTab = async (targetId: string, newParentId: string | null) => {
+    if (tabDropSavingRef.current) return;
     if (newParentId) {
       if (newParentId === targetId) {
         toast.error('Không thể chọn chính thẻ này làm thẻ cha');
@@ -993,27 +1014,30 @@ export default function ChapterEditorPage() {
         const parentDepth = parentNode.depth;
         const subtreeHeight = getSubtreeHeight(targetNode);
         if (parentDepth + 1 + subtreeHeight > 2) {
-          toast.error('Google Docs giới hạn phân cấp tối đa 3 cấp thẻ');
+          toast.error('Tài liệu chỉ hỗ trợ tối đa 3 cấp thẻ');
           return;
         }
       }
     }
 
     try {
-      await apiFetch(`/api/chapters/${targetId}`, {
-        method: 'PATCH',
-        headers: targetId === chapterId && ownedLockRef.current?.token
-          ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
-          : undefined,
-        body: JSON.stringify({ parentId: newParentId })
-      });
+      const tree = buildTabTree(allChapters);
+      let moved: TabTreeNode | undefined;
+      const detach = (nodes: TabTreeNode[]) => {
+        const index = nodes.findIndex(n => n.id === targetId);
+        if (index >= 0) { [moved] = nodes.splice(index, 1); return; }
+        for (const node of nodes) detach(node.children);
+      };
+      detach(tree);
+      if (!moved) return;
+      moved.parentId = newParentId;
+      const parent = newParentId ? flattenTabTree(tree).find(n => n.id === newParentId) as TabTreeNode | undefined : undefined;
+      if (newParentId && !parent) throw new Error('Thẻ cha không tồn tại');
+      (parent?.children || tree).push(moved);
+      await handleDropTab({ chapterId: targetId, parentId: newParentId, chapterIds: flattenTabTree(tree).map(c => c.id) });
       playSuccessSound();
       toast.success(newParentId ? 'Đã thụt lề làm thẻ con' : 'Đã nâng lên làm thẻ cha');
-      await fetchChapterData(false);
-      pushSync().catch(() => {});
-    } catch (e: any) {
-      toast.error(e.message || 'Lỗi thay đổi cấp độ thẻ');
-    }
+    } catch { /* The shared drop handler reports the error. */ }
   };
 
   const handleUpdateTabEmoji = async (targetId: string, emoji: string | null) => {
@@ -1354,6 +1378,8 @@ export default function ChapterEditorPage() {
             onDeleteTab={handleDeleteTab}
             onDuplicateTab={handleDuplicateTab}
             onMoveTab={handleMoveTab}
+            onDropTab={handleDropTab}
+            isMovingTab={isMovingTab}
             onReparentTab={handleReparentTab}
             onUpdateEmoji={handleUpdateTabEmoji}
             className="hidden md:flex"
@@ -1459,6 +1485,8 @@ export default function ChapterEditorPage() {
                   onDeleteTab={handleDeleteTab}
                   onDuplicateTab={handleDuplicateTab}
                   onMoveTab={handleMoveTab}
+                  onDropTab={handleDropTab}
+                  isMovingTab={isMovingTab}
                   onReparentTab={handleReparentTab}
                   onUpdateEmoji={handleUpdateTabEmoji}
                   className="w-full border-r-0 h-full max-h-[85vh]"

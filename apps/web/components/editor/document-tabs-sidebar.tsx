@@ -1,6 +1,16 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
+  useSensor, useSensors, closestCenter, pointerWithin, MeasuringStrategy,
+  type DragMoveEvent, type DragEndEvent, type CollisionDetection, type KeyboardCoordinateGetter
+} from '@dnd-kit/core';
+import { motion, useReducedMotion } from 'framer-motion';
+import { type TabDrop } from '@novelist/shared';
+import { projectTabDrop, getTabDescendants, type TabProjection } from '@/lib/tab-drag';
+import { DocumentTabRow } from './document-tab-row';
 import { 
   FileText, 
   Plus, 
@@ -283,6 +293,8 @@ export interface DocumentTabsSidebarProps {
   onDeleteTab: (chapterId: string) => Promise<void>;
   onDuplicateTab: (chapterId: string) => Promise<void>;
   onMoveTab: (chapterId: string, direction: 'up' | 'down') => Promise<void>;
+  onDropTab: (drop: TabDrop) => Promise<void>;
+  isMovingTab?: boolean;
   onReparentTab?: (chapterId: string, newParentId: string | null) => Promise<void>;
   onUpdateEmoji?: (chapterId: string, emoji: string | null) => Promise<void>;
   hideHeader?: boolean;
@@ -390,6 +402,8 @@ export function DocumentTabsSidebar({
   onDeleteTab,
   onDuplicateTab,
   onMoveTab,
+  onDropTab,
+  isMovingTab = false,
   onReparentTab,
   onUpdateEmoji,
   hideHeader = false,
@@ -488,6 +502,138 @@ export function DocumentTabsSidebar({
   }, [emojiPickerTabId]);
 
   const tree = buildTabTree(chapters);
+  const treeNodesById = new Map((flattenTabTree(tree) as TabTreeNode[]).map(node => [node.id, node]));
+  const reducedMotion = useReducedMotion();
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [projection, setProjection] = useState<TabProjection | null>(null);
+  const projectionRef = useRef<TabProjection | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const pointerYRef = useRef<number | null>(null);
+  const keyboardAfterRef = useRef(false);
+  const blockClickUntilRef = useRef(0);
+  const dragStartChaptersRef = useRef<ChapterTab[]>([]);
+  const [portalReady, setPortalReady] = useState(false);
+  useEffect(() => setPortalReady(true), []);
+
+  const visibleNodes: TabTreeNode[] = [];
+  const collectVisible = (nodes: TabTreeNode[]) => {
+    for (const node of nodes) {
+      visibleNodes.push(node);
+      if (expandedIds[node.id] !== false) collectVisible(node.children);
+    }
+  };
+  collectVisible(tree);
+  const visibleNodesRef = useRef(visibleNodes);
+  visibleNodesRef.current = visibleNodes;
+  const chaptersRef = useRef(chapters);
+  chaptersRef.current = chapters;
+  const draggedDescendants = draggingId ? getTabDescendants(chapters, draggingId) : new Set<string>();
+  const remainingNodes = visibleNodes.filter(n => n.id !== draggingId && !draggedDescendants.has(n.id));
+  const dropBeforeId = projection ? remainingNodes[projection.index]?.id : undefined;
+
+  const keyboardCoordinates: KeyboardCoordinateGetter = (event, { currentCoordinates, context }) => {
+    if (event.code === 'ArrowRight' || event.code === 'ArrowLeft') {
+      event.preventDefault();
+      return { ...currentCoordinates, x: currentCoordinates.x + (event.code === 'ArrowRight' ? 20 : -20) };
+    }
+    if (event.code !== 'ArrowDown' && event.code !== 'ArrowUp') return;
+    event.preventDefault();
+    const descendants = getTabDescendants(chaptersRef.current, String(context.active?.id));
+    const nodes = visibleNodesRef.current.filter(n => !descendants.has(n.id));
+    const index = nodes.findIndex(n => n.id === (context.over?.id || context.active?.id));
+    const target = nodes[index + (event.code === 'ArrowDown' ? 1 : -1)];
+    const rect = target && context.droppableRects.get(target.id);
+    if (!rect) return;
+    keyboardAfterRef.current = event.code === 'ArrowDown';
+    const activeRect = context.active?.rect.current.initial;
+    return { x: currentCoordinates.x, y: rect.top + rect.height / 2 - (activeRect?.height || rect.height) / 2 };
+  };
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: keyboardCoordinates,
+      keyboardCodes: { start: ['Space'], cancel: ['Escape', 'Tab'], end: ['Space', 'Enter'] }
+    })
+  );
+  const detectCollision: CollisionDetection = args => {
+    pointerYRef.current = args.pointerCoordinates?.y ?? null;
+    if (args.pointerCoordinates) {
+      const bounds = listRef.current?.getBoundingClientRect();
+      const { x, y } = args.pointerCoordinates;
+      if (!bounds || x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return [];
+      const hits = pointerWithin(args);
+      if (hits.length) return hits;
+    }
+    return closestCenter(args);
+  };
+  const updateProjection = (event: DragMoveEvent) => {
+    const over = event.over;
+    setDragOverId(over ? String(over.id) : null);
+    if (!over) {
+      projectionRef.current = null;
+      setProjection(null);
+      return;
+    }
+    const isKeyboard = event.activatorEvent instanceof KeyboardEvent;
+    const centerY = event.active.rect.current.translated
+      ? event.active.rect.current.translated.top + event.active.rect.current.translated.height / 2
+      : over.rect.top;
+    const after = isKeyboard ? keyboardAfterRef.current : (pointerYRef.current ?? centerY) > over.rect.top + over.rect.height / 2;
+    const next = projectTabDrop(chapters, visibleNodes, String(event.active.id), String(over.id), after, event.delta.x);
+    projectionRef.current = next;
+    setProjection(next);
+  };
+  const resetDrag = () => {
+    setDraggingId(null);
+    setDragOverId(null);
+    setProjection(null);
+    projectionRef.current = null;
+    blockClickUntilRef.current = Date.now() + 300;
+  };
+  useEffect(() => {
+    if (!isOpen && draggingId) resetDrag();
+  }, [isOpen, draggingId]);
+  const finishDrag = async (event: DragEndEvent) => {
+    updateProjection(event);
+    const next = projectionRef.current;
+    const original = dragStartChaptersRef.current;
+    const structureChanged = original.length !== chapters.length || original.some(c => {
+      const current = chapters.find(item => item.id === c.id);
+      return !current || current.orderIndex !== c.orderIndex || (current.parentId || null) !== (c.parentId || null);
+    });
+    resetDrag();
+    if (!event.over || !next?.valid || next.unchanged) return;
+    if (structureChanged) {
+      toast.error('Danh sách thẻ vừa thay đổi. Vui lòng kéo lại.');
+      return;
+    }
+    try {
+      await onDropTab({ chapterId: next.chapterId, parentId: next.parentId, chapterIds: next.chapterIds });
+      if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
+    } catch { /* The editor restores the order and reports the save error. */ }
+    finally {
+      if (event.activatorEvent instanceof KeyboardEvent) {
+        requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next.chapterId)}"]`)?.focus());
+      }
+    }
+  };
+  useEffect(() => {
+    if (!draggingId || !dragOverId || getTabDescendants(chapters, draggingId).has(dragOverId) || dragOverId === draggingId) return;
+    const hovered = chapters.find(c => c.id === dragOverId);
+    if (!hovered || expandedIds[dragOverId] !== false || !chapters.some(c => c.parentId === dragOverId)) return;
+    const timer = window.setTimeout(() => setExpandedIds(prev => ({ ...prev, [dragOverId]: true })), 600);
+    return () => window.clearTimeout(timer);
+  }, [draggingId, dragOverId, chapters, expandedIds]);
+
+  const dropIndicator = () => projection && (
+    <div aria-hidden="true" className="relative h-0 z-10 pointer-events-none" style={{ marginLeft: projection.depth * 20 + 8 }}>
+      <div className={`absolute -top-0.5 left-0 right-1 h-0.5 rounded-full ${projection.valid ? 'bg-primary' : 'bg-destructive'}`}>
+        <span className={`absolute -left-1 -top-0.5 h-1.5 w-1.5 rounded-full ${projection.valid ? 'bg-primary' : 'bg-destructive'}`} />
+      </div>
+    </div>
+  );
 
   const isAtMaxLimit = chapters.length >= 100;
   const isNearLimit = chapters.length >= 90;
@@ -635,7 +781,7 @@ export function DocumentTabsSidebar({
 
     // Google Docs allows max 3 levels: depth 0 (root) -> depth 1 (subtab) -> depth 2 (sub-subtab)
     if (parentNode.depth >= 2) {
-      toast.error('Google Docs giới hạn phân cấp tối đa 3 cấp thẻ');
+      toast.error('Tài liệu chỉ hỗ trợ tối đa 3 cấp thẻ');
       return;
     }
 
@@ -782,30 +928,30 @@ export function DocumentTabsSidebar({
     const canDuplicate = !isAtMaxLimit && (chapters.length + subtreeNodeCount <= 100);
 
     return (
-      <div key={node.id} className="relative group/tab flex flex-col">
+      <motion.div key={node.id} layout={reducedMotion ? false : 'position'} transition={{ duration: 0.18 }}
+        className="relative group/tab flex flex-col" style={{ marginLeft: node.depth * 20 }}>
         {/* Tab Row Container */}
-        <div
-          onClick={() => {
-            if (!isEditing) {
-              onSelectTab(node.id);
-            }
-          }}
-          onDoubleClick={(e) => {
+        <DocumentTabRow
+          id={node.id}
+          title={node.title}
+          depth={node.depth}
+          active={isActive}
+          expanded={hasChildren ? isExpanded : undefined}
+          disabled={isMovingTab || Boolean(draggingId && draggingId !== node.id)}
+          editing={isEditing}
+          dropDisabled={isEditing || isMovingTab}
+          faded={draggedDescendants.has(node.id)}
+          blockClick={() => Boolean(draggingId) || Date.now() < blockClickUntilRef.current}
+          onSelect={() => onSelectTab(node.id)}
+          onRename={(e) => {
             e.stopPropagation();
             handleStartRename(node, e);
           }}
-          onContextMenu={(e) => {
+          onMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
             setActiveMenuId(activeMenuId === node.id ? null : node.id);
           }}
-          className={`
-            relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg cursor-pointer text-xs font-medium transition-all select-none
-            ${isActive 
-              ? 'bg-primary/15 text-primary font-semibold shadow-2xs border border-primary/25' 
-              : 'text-foreground/80 hover:bg-muted/70 hover:text-foreground'
-            }
-          `}
         >
           {/* Caret expand/collapse button for parent nodes */}
           {hasChildren ? (
@@ -857,6 +1003,7 @@ export function DocumentTabsSidebar({
             {emojiPickerTabId === node.id && (
               <div
                 ref={emojiPickerRef}
+                data-no-drag
                 onClick={(e) => e.stopPropagation()}
                 className="absolute left-0 top-full mt-1.5 w-60 bg-card border border-border/80 rounded-xl shadow-2xl p-2.5 z-50 text-xs animate-in fade-in-50 zoom-in-95"
               >
@@ -969,25 +1116,6 @@ export function DocumentTabsSidebar({
             </span>
           )}
 
-          {/* Word count pill */}
-          {node.wordCount ? (
-            <span className="text-[10px] text-muted-foreground/80 font-mono opacity-0 group-hover/tab:opacity-100 transition-opacity">
-              {node.wordCount.toLocaleString()}t
-            </span>
-          ) : null}
-
-          {/* Quick Add Subtab button on hover (Google Docs feature) */}
-          {canHaveSubtab && !isEditing && (
-            <button
-              type="button"
-              onClick={(e) => handleCreateSubTab(node, e)}
-              className="opacity-0 group-hover/tab:opacity-100 p-0.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shrink-0"
-              title="Thêm thẻ con (+)"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          )}
-
           {/* Three dots menu trigger */}
           <div className="relative shrink-0">
             <button
@@ -998,7 +1126,7 @@ export function DocumentTabsSidebar({
               }}
               className={`
                 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/80 transition-opacity
-                ${activeMenuId === node.id ? 'opacity-100 bg-background text-foreground' : 'opacity-0 group-hover/tab:opacity-100'}
+                ${activeMenuId === node.id ? 'opacity-100 bg-background text-foreground' : 'opacity-0 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100 max-md:opacity-100'}
               `}
               title="Tùy chọn thẻ"
             >
@@ -1009,6 +1137,7 @@ export function DocumentTabsSidebar({
             {activeMenuId === node.id && (
               <div
                 ref={menuRef}
+                data-no-drag
                 onClick={(e) => e.stopPropagation()}
                 className="absolute right-0 top-full mt-1 w-52 bg-card border border-border/80 rounded-xl shadow-xl z-50 py-1 text-xs animate-in fade-in-50 zoom-in-95 duration-100"
               >
@@ -1085,6 +1214,12 @@ export function DocumentTabsSidebar({
 
                 <div className="my-1 border-t border-border/50" />
 
+                <details className="group/move">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 hover:bg-accent">
+                    <CornerDownRight className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="flex-1">Di chuyển</span>
+                    <ChevronRight className="w-3 h-3 group-open/move:rotate-90" />
+                  </summary>
                 {/* 6. Demote / Promote (Reparenting) */}
                 {canDemote && prevSibling && (
                   <button
@@ -1157,6 +1292,7 @@ export function DocumentTabsSidebar({
                   <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                   <span>Chuyển xuống dưới</span>
                 </button>
+                </details>
 
                 <div className="my-1 border-t border-border/50" />
 
@@ -1203,24 +1339,16 @@ export function DocumentTabsSidebar({
               </div>
             )}
           </div>
-        </div>
+        </DocumentTabRow>
 
         {/* Real-time automatic subtabs under active document (Google Docs style: e.g. I, aceererf / II, nrfnerjf) */}
         {isActive && activeHeadingTree.length > 0 && !isOutlineHidden && (
-          <div className="ml-4 pl-2.5 border-l-2 border-primary/40 space-y-0.5 my-1 animate-in fade-in duration-150">
+          <div className={`ml-4 pl-2.5 border-l-2 border-primary/40 space-y-0.5 my-1 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150 ${draggingId === node.id || draggedDescendants.has(node.id) ? 'opacity-30' : ''}`}>
             {activeHeadingTree.map(hNode => renderHeadingNode(hNode))}
           </div>
         )}
 
-        {/* Render Nested Children with Google Docs-style Indentation Guide Line */}
-        {hasChildren && isExpanded && (
-          <div className="ml-4 pl-2.5 border-l-2 border-border/70 hover:border-primary/40 transition-colors my-0.5 space-y-0.5">
-            {node.children.map((child, idx) =>
-              renderTabNode(child, node.children, idx === node.children.length - 1)
-            )}
-          </div>
-        )}
-      </div>
+      </motion.div>
     );
   };
 
@@ -1241,6 +1369,38 @@ export function DocumentTabsSidebar({
   }
 
   return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={detectCollision}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      autoScroll={{ threshold: { x: 0, y: 0.15 } }}
+      onDragStart={event => {
+        const id = String(event.active.id);
+        dragStartChaptersRef.current = chapters.map(c => ({ ...c }));
+        blockClickUntilRef.current = Number.POSITIVE_INFINITY;
+        keyboardAfterRef.current = false;
+        setActiveMenuId(null);
+        setEmojiPickerTabId(null);
+        setDraggingId(id);
+        const initial = projectTabDrop(chapters, visibleNodes, id, id, false, 0);
+        projectionRef.current = initial;
+        setProjection(initial);
+      }}
+      onDragMove={updateProjection}
+      onDragOver={updateProjection}
+      onDragCancel={resetDrag}
+      onDragEnd={finishDrag}
+      accessibility={{
+        screenReaderInstructions: { draggable: 'Nhấn phím cách để nhấc thẻ. Dùng mũi tên lên xuống để đổi vị trí, trái phải để đổi cấp. Nhấn cách hoặc Enter để thả, Escape để hủy.' },
+        announcements: {
+          onDragStart: ({ active }) => `Đã nhấc thẻ ${chapters.find(c => c.id === active.id)?.title || ''}`,
+          onDragMove: () => projectionRef.current?.reason || (projectionRef.current ? `Vị trí cấp ${projectionRef.current.depth + 1}` : 'Ngoài danh sách thẻ'),
+          onDragOver: () => projectionRef.current?.reason || `Vị trí cấp ${(projectionRef.current?.depth || 0) + 1}`,
+          onDragEnd: () => 'Đã kết thúc di chuyển thẻ',
+          onDragCancel: () => 'Đã hủy di chuyển thẻ'
+        }
+      }}
+    >
     <aside
       className={`
         w-64 lg:w-72 h-full border-r border-border/70 bg-card/95 backdrop-blur-md flex flex-col shrink-0 z-20 select-none
@@ -1253,7 +1413,7 @@ export function DocumentTabsSidebar({
           <div className="flex items-center gap-2 min-w-0">
             <FileText className="w-4 h-4 text-primary shrink-0" />
             <h2 className="font-semibold text-xs sm:text-sm text-foreground truncate">
-              Các thẻ trong tài liệu
+              Thẻ tài liệu
             </h2>
             {isNearLimit && (
               <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
@@ -1269,7 +1429,7 @@ export function DocumentTabsSidebar({
             <Button
               size="icon"
               variant="ghost"
-              disabled={isAtMaxLimit}
+              disabled={isAtMaxLimit || isMovingTab || Boolean(draggingId)}
               className={`h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors ${
                 isAtMaxLimit ? 'opacity-40 cursor-not-allowed' : ''
               }`}
@@ -1327,14 +1487,25 @@ export function DocumentTabsSidebar({
       )}
 
       {/* Tabs Tree List */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+      <div ref={listRef} role="tree" aria-label="Thẻ tài liệu" aria-busy={isMovingTab}
+        inert={isMovingTab || undefined} className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
         {tree.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             Chưa có thẻ nào. Bấm nút <Plus className="w-3 h-3 inline mx-0.5 text-primary" /> để tạo thẻ đầu tiên.
           </div>
         ) : (
-          tree.map((root, idx) => renderTabNode(root, tree, idx === tree.length - 1))
+          visibleNodes.map(node => {
+            const siblings = node.parentId
+              ? treeNodesById.get(node.parentId)
+              : undefined;
+            const group = siblings?.children || tree;
+            return <React.Fragment key={node.id}>
+              {dropBeforeId === node.id && dropIndicator()}
+              {renderTabNode(node, group, group[group.length - 1]?.id === node.id)}
+            </React.Fragment>;
+          })
         )}
+        {projection && !dropBeforeId && dropIndicator()}
       </div>
 
       {/* Footer Info */}
@@ -1347,19 +1518,26 @@ export function DocumentTabsSidebar({
             </span>
           )}
         </div>
-        <button
-          type="button"
-          disabled={isAtMaxLimit}
-          onClick={handleCreateRootTab}
-          className={`text-primary hover:underline font-medium flex items-center gap-1 text-[11px] ${
-            isAtMaxLimit ? 'opacity-40 cursor-not-allowed' : ''
-          }`}
-          title={isAtMaxLimit ? 'Đã đạt tối đa 100 thẻ' : undefined}
-        >
-          <Plus className="w-3 h-3" />
-          <span>Thêm thẻ</span>
-        </button>
+        <span role="status" title={projection?.reason} className={projection?.valid === false ? 'text-destructive' : ''}>
+          {isMovingTab ? 'Đang lưu…' : draggingId ? projection?.valid === false ? 'Không thể thả' : 'Thả để đặt thẻ' : ''}
+        </span>
       </div>
     </aside>
+    {portalReady && createPortal(
+      <DragOverlay dropAnimation={reducedMotion ? null : { duration: 180, easing: 'ease-out' }} zIndex={70}>
+        {draggingId && (() => {
+          const tab = chapters.find(c => c.id === draggingId);
+          return <motion.div initial={reducedMotion ? false : { scale: 1 }} animate={{ scale: reducedMotion ? 1 : 1.03 }} transition={{ duration: 0.12 }}
+            className={`flex min-h-9 items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs shadow-2xl pointer-events-none
+            ${projection?.valid === false ? 'border-destructive/60' : 'border-primary/40'}`}>
+            {tab?.emoji ? <span>{tab.emoji}</span> : <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />}
+            <span className="min-w-0 flex-1 truncate font-medium">{tab?.title || 'Thẻ không tên'}</span>
+            {draggedDescendants.size > 0 && <span className="shrink-0 text-[10px] text-muted-foreground">+{draggedDescendants.size}</span>}
+            {projection?.valid === false && <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />}
+          </motion.div>;
+        })()}
+      </DragOverlay>, document.body
+    )}
+    </DndContext>
   );
 }

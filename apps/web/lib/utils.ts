@@ -3,6 +3,7 @@ import { twMerge } from 'tailwind-merge';
 import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail, recordTombstone } from './sync';
 import { countWords, getProjectChapterStats } from './sync-core';
 import { cacheChapterApiResponse, getCachedChapters, refreshCachedProjectStats, notifyWorkspaceChanged } from './workspace-cache';
+import { applyTabOrder } from '@novelist/shared';
 export { countWords } from './sync-core';
 
 export function cn(...inputs: ClassValue[]) {
@@ -781,22 +782,27 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
   const reorderChapMatch = path.match(/^\/api\/projects\/([^\/]+)\/chapters\/reorder$/);
   if (reorderChapMatch && method === 'POST') {
     const projectId = reorderChapMatch[1];
+    const currentUser = getCurrentUser();
+    const project = getStorage('novelist_projects', []).find((p: any) => p.id === projectId && p.userId === currentUser?.id);
+    if (!project) throw new Error('Không có quyền chỉnh sửa tài liệu');
     const chapters = getStorage('novelist_chapters', []);
-    const orderedIds: string[] = body.chapterIds || (Array.isArray(body.orderedIds) ? body.orderedIds.map((o: any) => o.id) : []);
-
-    if (orderedIds.length > 0) {
-      const updated = chapters.map((c: any) => {
-        if (c.projectId === projectId) {
-          const newIdx = orderedIds.indexOf(c.id);
-          if (newIdx !== -1) {
-            return { ...c, orderIndex: newIdx + 1, updatedAt: now };
-          }
-        }
-        return c;
-      });
-      setStorage('novelist_chapters', updated);
-    }
-    return { success: true };
+    const active = getCachedChapters(projectId);
+    const orderedIds = body.chapterIds ?? (Array.isArray(body.orderedIds) ? body.orderedIds.map((o: any) => o.id) : undefined);
+    const reordered = applyTabOrder(active, orderedIds, body.move).map(chapter => {
+      const previous = active.find(c => c.id === chapter.id)!;
+      return previous.orderIndex !== chapter.orderIndex || (previous.parentId || null) !== (chapter.parentId || null)
+        ? { ...chapter, updatedAt: now } : chapter;
+    });
+    const byId = new Map(reordered.map(chapter => [chapter.id, chapter]));
+    const updated = chapters.map((c: any) => byId.get(c.id) || c);
+    // Do not report success if storage failed; this is one atomic local write.
+    localStorage.setItem('novelist_chapters', JSON.stringify(updated));
+    notifyWorkspaceChanged();
+    try {
+      localStorage.setItem('novelist_last_modified', String(now));
+      triggerAutoPush();
+    } catch { /* The layout is already saved; auxiliary sync metadata is optional. */ }
+    return { success: true, chapters: reordered };
   }
 
   // Chapters

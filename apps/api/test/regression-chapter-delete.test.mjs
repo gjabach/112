@@ -168,6 +168,78 @@ async function setupTestApp() {
   return { sqlite, d1, kv, env, userId, email, token, request };
 }
 
+test('TAB DROP: saves parent and complete order together, preserving content versions', async () => {
+  const { request, sqlite } = await setupTestApp();
+  try {
+    const project = await request('/api/projects', { method: 'POST', body: { title: 'Tab drop', genre: 'fantasy' } });
+    const projectId = project.data.project.id;
+    const original = (await request(`/api/projects/${projectId}/chapters`)).data.chapters[0];
+    const b = (await request(`/api/projects/${projectId}/chapters`, { method: 'POST', body: { title: 'B', orderIndex: 1 } })).data.chapter;
+    const c = (await request(`/api/projects/${projectId}/chapters`, { method: 'POST', body: { title: 'C', orderIndex: 2 } })).data.chapter;
+    const result = await request(`/api/projects/${projectId}/chapters/reorder`, {
+      method: 'POST', body: { chapterIds: [c.id, original.id, b.id], move: { chapterId: b.id, parentId: original.id } }
+    });
+    assert.equal(result.status, 200);
+    const reloaded = (await request(`/api/projects/${projectId}/chapters`)).data.chapters;
+    assert.deepEqual(reloaded.map(ch => ch.id), [c.id, original.id, b.id]);
+    assert.equal(reloaded.find(ch => ch.id === b.id).parentId, original.id);
+    assert.equal(reloaded.find(ch => ch.id === original.id).contentUpdatedAt, original.contentUpdatedAt);
+    assert.equal(reloaded.find(ch => ch.id === original.id).titleUpdatedAt, original.titleUpdatedAt);
+    const legacy = await request(`/api/projects/${projectId}/chapters/reorder`, {
+      method: 'POST', body: { chapterIds: [original.id, b.id, c.id] }
+    });
+    assert.equal(legacy.status, 200);
+  } finally { sqlite.close(); }
+});
+
+test('TAB DROP: validation and foreign locks reject changes before writing', async () => {
+  const { request, sqlite, userId } = await setupTestApp();
+  try {
+    const projectId = (await request('/api/projects', { method: 'POST', body: { title: 'Locked tabs', genre: 'fantasy' } })).data.project.id;
+    const a = (await request(`/api/projects/${projectId}/chapters`)).data.chapters[0];
+    const b = (await request(`/api/projects/${projectId}/chapters`, { method: 'POST', body: { title: 'B', orderIndex: 1 } })).data.chapter;
+    const before = sqlite.prepare('SELECT id, parent_id, order_index, updated_at FROM chapters WHERE project_id = ? ORDER BY id').all(projectId);
+    for (const body of [
+      { chapterIds: [a.id] }, { chapterIds: [a.id, a.id] }, { chapterIds: [a.id, 'foreign'] },
+      { chapterIds: [a.id, b.id], move: { chapterId: a.id, parentId: a.id } },
+      { chapterIds: [a.id, b.id], move: { chapterId: b.id, parentId: 'foreign' } }
+    ]) {
+      assert.equal((await request(`/api/projects/${projectId}/chapters/reorder`, { method: 'POST', body })).status, 400);
+    }
+    const now = Date.now();
+    sqlite.prepare(`INSERT INTO chapter_edit_locks
+      (chapter_id, user_id, session_id, device_id, device_label, lock_token, lock_version, acquired_at, heartbeat_at, expires_at)
+      VALUES (?, ?, 'other-session', 'other-device', 'Other device', 'foreign-token', 'v1', ?, ?, ?)`)
+      .run(b.id, userId, now, now, now + 60000);
+    const body = { chapterIds: [a.id, b.id], move: { chapterId: b.id, parentId: a.id } };
+    const locked = await request(`/api/projects/${projectId}/chapters/reorder`, { method: 'POST', body });
+    assert.equal(locked.status, 423);
+    assert.deepEqual(sqlite.prepare('SELECT id, parent_id, order_index, updated_at FROM chapters WHERE project_id = ? ORDER BY id').all(projectId), before);
+    const owned = await request(`/api/projects/${projectId}/chapters/reorder`, {
+      method: 'POST', headers: { 'X-Chapter-Lock-Token': 'foreign-token' }, body
+    });
+    assert.equal(owned.status, 200);
+  } finally { sqlite.close(); }
+});
+
+test('TAB DROP: a batch failure rolls back both order and parent', async () => {
+  const { request, sqlite, d1 } = await setupTestApp();
+  try {
+    const projectId = (await request('/api/projects', { method: 'POST', body: { title: 'Atomic tabs', genre: 'fantasy' } })).data.project.id;
+    const a = (await request(`/api/projects/${projectId}/chapters`)).data.chapters[0];
+    const b = (await request(`/api/projects/${projectId}/chapters`, { method: 'POST', body: { title: 'B', orderIndex: 1 } })).data.chapter;
+    const c = (await request(`/api/projects/${projectId}/chapters`, { method: 'POST', body: { title: 'C', orderIndex: 2 } })).data.chapter;
+    const before = sqlite.prepare('SELECT id, parent_id, order_index, updated_at FROM chapters WHERE project_id = ? ORDER BY id').all(projectId);
+    const batch = d1.batch.bind(d1);
+    d1.batch = statements => batch([statements[0], d1.prepare('UPDATE missing_table SET value = 1'), ...statements.slice(1)]);
+    const result = await request(`/api/projects/${projectId}/chapters/reorder`, {
+      method: 'POST', body: { chapterIds: [c.id, a.id, b.id], move: { chapterId: b.id, parentId: a.id } }
+    });
+    assert.equal(result.status, 500);
+    assert.deepEqual(sqlite.prepare('SELECT id, parent_id, order_index, updated_at FROM chapters WHERE project_id = ? ORDER BY id').all(projectId), before);
+  } finally { sqlite.close(); }
+});
+
 test('REGRESSION D01: DELETE chapter followed by stale POST sync should NOT resurrect chapter', async () => {
   const { request } = await setupTestApp();
 

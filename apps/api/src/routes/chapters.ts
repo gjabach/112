@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { eq, and, asc } from 'drizzle-orm';
 import { schema } from '../lib/db';
 import { generateId, nowTimestamp } from '../lib/auth';
-import { createChapterSchema, updateChapterSchema } from '@novelist/shared';
+import { createChapterSchema, updateChapterSchema, applyTabOrder } from '@novelist/shared';
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
 import { countWords } from '../utils/validation';
@@ -279,24 +279,36 @@ chapters.post('/projects/:projectId/chapters/reorder', async (c) => {
   const db = c.get('db');
   const user = c.get('user');
   const projectId = c.req.param('projectId');
-  const body = await c.req.json();
-  const chapterIds: string[] = body.chapterIds || [];
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Thứ tự thẻ không hợp lệ' }, 400);
 
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Forbidden' }, 403);
 
   const currentChapters = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, projectId));
-  const currentOrder = new Map(currentChapters.map((chapter: any) => [chapter.id, Number(chapter.orderIndex || 0)]));
-  const changedIds = chapterIds.filter((chapterId, index) => currentOrder.get(chapterId) !== index);
+  let reordered: any[];
+  try {
+    reordered = applyTabOrder(currentChapters, body.chapterIds, body.move);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Thứ tự thẻ không hợp lệ' }, 400);
+  }
+  const currentById = new Map<string, any>(currentChapters.map((chapter: any) => [chapter.id, chapter]));
+  const changed = reordered.filter(chapter => {
+    const previous = currentById.get(chapter.id);
+    return previous.orderIndex !== chapter.orderIndex || (previous.parentId || null) !== (chapter.parentId || null);
+  });
+  const changedIds = changed.map(chapter => chapter.id);
   const lockedResponse = await rejectIfAnyChangedChapterIsLocked(c, changedIds);
   if (lockedResponse) return lockedResponse;
 
   const now = nowTimestamp();
-  for (let i = 0; i < chapterIds.length; i++) {
-    await db.update(schema.chapters).set({ orderIndex: i, updatedAt: now }).where(and(eq(schema.chapters.id, chapterIds[i]), eq(schema.chapters.projectId, projectId)));
+  if (changed.length > 0) {
+    await c.env.DB.batch(changed.map(chapter => c.env.DB.prepare(
+      'UPDATE chapters SET order_index = ?, parent_id = ?, updated_at = ? WHERE id = ? AND project_id = ?'
+    ).bind(chapter.orderIndex, chapter.parentId || null, now, chapter.id, projectId)));
   }
-
-  return c.json({ success: true });
+  const changedSet = new Set(changedIds);
+  return c.json({ success: true, chapters: reordered.map(chapter => changedSet.has(chapter.id) ? { ...chapter, updatedAt: now } : chapter) });
 });
 
 // GET /api/chapters/:id

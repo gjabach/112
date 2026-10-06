@@ -33,12 +33,13 @@ export function notifyWorkspaceChanged() {
 }
 
 /** Keep server lists and offline/recovered chapters in one shared snapshot. */
-export function cacheChapterList(projectId: string, incoming: any[]): any[] {
+export function cacheChapterList(projectId: string, incoming: any[], authoritativeOrder = false): any[] {
   const local = getCachedChapters(projectId);
   const tombstones = readWorkspaceCache('novelist_tombstones', {});
   const { merged } = mergeWorkspaces({ chapters: local, tombstones }, { chapters: incoming, tombstones });
   const pending = readWorkspaceCache('novelist_pending_chapter_drafts', {});
   const localById = new Map(local.map(c => [c.id, c]));
+  const incomingById = new Map(incoming.map(c => [c.id, c]));
   const chapters = getActiveChapters(merged.chapters.map((c: any) => {
     // A list refresh must never overwrite an editor's pending draft.
     const draft = pending[c.id];
@@ -51,7 +52,11 @@ export function cacheChapterList(projectId: string, incoming: any[]): any[] {
     parentId: c.parentId ?? null,
     contentUpdatedAt: Number(c.contentUpdatedAt || c.updatedAt || c.createdAt || 0),
     titleUpdatedAt: Number(c.titleUpdatedAt || c.updatedAt || c.createdAt || 0)
-  }));
+  })).map(c => {
+    const accepted = authoritativeOrder ? incomingById.get(c.id) : undefined;
+    return accepted ? { ...c, parentId: accepted.parentId ?? null, orderIndex: accepted.orderIndex,
+      updatedAt: Math.max(Number(c.updatedAt || 0), Number(accepted.updatedAt || 0)) } : c;
+  });
   const all = [...getCachedChapters().filter(c => c.projectId !== projectId), ...chapters];
   const next = JSON.stringify(all);
   if (localStorage.getItem('novelist_chapters') !== next) {
@@ -63,9 +68,9 @@ export function cacheChapterList(projectId: string, incoming: any[]): any[] {
 }
 
 export function cacheChapterApiResponse(path: string, data: any): any {
-  const listMatch = path.match(/^\/api\/projects\/([^/]+)\/chapters$/);
+  const listMatch = path.match(/^\/api\/projects\/([^/]+)\/chapters(?:\/reorder)?$/);
   if (listMatch && Array.isArray(data?.chapters)) {
-    return { ...data, chapters: cacheChapterList(listMatch[1], data.chapters) };
+    return { ...data, chapters: cacheChapterList(listMatch[1], data.chapters, path.endsWith('/reorder')) };
   }
   if (data?.chapter?.id && data.chapter.projectId && !path.endsWith('/lock')) {
     cacheChapterList(data.chapter.projectId, [data.chapter]);
