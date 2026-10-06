@@ -550,8 +550,17 @@ export function DocumentTabsSidebar({
     return { x: currentCoordinates.x, y: rect.top + rect.height / 2 - (activeRect?.height || rect.height) / 2 };
   };
   const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 200,
+        tolerance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: keyboardCoordinates,
       keyboardCodes: { start: ['Space'], cancel: ['Escape', 'Tab'], end: ['Space', 'Enter'] }
@@ -560,11 +569,8 @@ export function DocumentTabsSidebar({
   const detectCollision: CollisionDetection = args => {
     pointerYRef.current = args.pointerCoordinates?.y ?? null;
     if (args.pointerCoordinates) {
-      const bounds = listRef.current?.getBoundingClientRect();
-      const { x, y } = args.pointerCoordinates;
-      if (!bounds || x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return [];
       const hits = pointerWithin(args);
-      if (hits.length) return hits;
+      if (hits.length > 0) return hits;
     }
     return closestCenter(args);
   };
@@ -572,8 +578,6 @@ export function DocumentTabsSidebar({
     const over = event.over;
     setDragOverId(over ? String(over.id) : null);
     if (!over) {
-      projectionRef.current = null;
-      setProjection(null);
       return;
     }
     const isKeyboard = event.activatorEvent instanceof KeyboardEvent;
@@ -582,8 +586,10 @@ export function DocumentTabsSidebar({
       : over.rect.top;
     const after = isKeyboard ? keyboardAfterRef.current : (pointerYRef.current ?? centerY) > over.rect.top + over.rect.height / 2;
     const next = projectTabDrop(chapters, visibleNodes, String(event.active.id), String(over.id), after, event.delta.x);
-    projectionRef.current = next;
-    setProjection(next);
+    if (next) {
+      projectionRef.current = next;
+      setProjection(next);
+    }
   };
   const resetDrag = () => {
     setDraggingId(null);
@@ -604,13 +610,14 @@ export function DocumentTabsSidebar({
       return !current || current.orderIndex !== c.orderIndex || (current.parentId || null) !== (c.parentId || null);
     });
     resetDrag();
-    if (!event.over || !next?.valid || next.unchanged) return;
+    if (!next?.valid || next.unchanged) return;
     if (structureChanged) {
       toast.error('Danh sách thẻ vừa thay đổi. Vui lòng kéo lại.');
       return;
     }
     try {
       await onDropTab({ chapterId: next.chapterId, parentId: next.parentId, chapterIds: next.chapterIds });
+      playSuccessSound();
       if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
     } catch { /* The editor restores the order and reports the save error. */ }
     finally {
@@ -629,7 +636,7 @@ export function DocumentTabsSidebar({
 
   const dropIndicator = () => projection && (
     <div aria-hidden="true" className="relative h-0 z-10 pointer-events-none" style={{ marginLeft: projection.depth * 20 + 8 }}>
-      <div className={`absolute -top-0.5 left-0 right-1 h-0.5 rounded-full ${projection.valid ? 'bg-primary' : 'bg-destructive'}`}>
+      <div className={`absolute -top-0.5 left-0 right-1 h-0.5 rounded-full transition-all duration-75 ${projection.valid ? 'bg-primary shadow-[0_0_8px_rgba(59,130,246,0.7)]' : 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.7)]'}`}>
         <span className={`absolute -left-1 -top-0.5 h-1.5 w-1.5 rounded-full ${projection.valid ? 'bg-primary' : 'bg-destructive'}`} />
       </div>
     </div>
@@ -1524,19 +1531,64 @@ export function DocumentTabsSidebar({
       </div>
     </aside>
     {portalReady && createPortal(
-      <DragOverlay dropAnimation={reducedMotion ? null : { duration: 180, easing: 'ease-out' }} zIndex={70}>
+      <DragOverlay
+        dropAnimation={reducedMotion ? null : {
+          duration: 180,
+          easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)'
+        }}
+        zIndex={1000}
+      >
         {draggingId && (() => {
           const tab = chapters.find(c => c.id === draggingId);
-          return <motion.div initial={reducedMotion ? false : { scale: 1 }} animate={{ scale: reducedMotion ? 1 : 1.03 }} transition={{ duration: 0.12 }}
-            className={`flex min-h-9 items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs shadow-2xl pointer-events-none
-            ${projection?.valid === false ? 'border-destructive/60' : 'border-primary/40'}`}>
-            {tab?.emoji ? <span>{tab.emoji}</span> : <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />}
-            <span className="min-w-0 flex-1 truncate font-medium">{tab?.title || 'Thẻ không tên'}</span>
-            {draggedDescendants.size > 0 && <span className="shrink-0 text-[10px] text-muted-foreground">+{draggedDescendants.size}</span>}
-            {projection?.valid === false && <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />}
-          </motion.div>;
+          const isValid = projection?.valid !== false;
+          return (
+            <motion.div
+              initial={reducedMotion ? false : { scale: 0.98, rotate: 0, opacity: 0.85 }}
+              animate={reducedMotion ? { scale: 1 } : {
+                scale: 1.05,
+                rotate: [1.5, 2.5, 1.5],
+                y: [-3, 3, -3],
+                transition: {
+                  rotate: { repeat: Infinity, duration: 2.2, ease: "easeInOut" },
+                  y: { repeat: Infinity, duration: 1.8, ease: "easeInOut" },
+                  scale: { duration: 0.15 }
+                }
+              }}
+              className={`
+                flex min-h-10 w-64 items-center gap-2.5 rounded-xl border px-3.5 py-2 text-xs font-medium
+                backdrop-blur-xl pointer-events-none select-none transition-colors duration-150
+                ${isValid
+                  ? 'border-primary/60 bg-card/95 text-foreground shadow-[0_20px_35px_-8px_rgba(59,130,246,0.35),0_10px_20px_-6px_rgba(0,0,0,0.25)] ring-2 ring-primary/40'
+                  : 'border-destructive/70 bg-card/95 text-destructive shadow-[0_20px_35px_-8px_rgba(239,68,68,0.35),0_10px_20px_-6px_rgba(0,0,0,0.25)] ring-2 ring-destructive/40'
+                }
+              `}
+            >
+              <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-primary/10 text-primary shrink-0">
+                {tab?.emoji ? (
+                  <span className="text-sm">{tab.emoji}</span>
+                ) : (
+                  <FileText className="w-4 h-4 text-primary" />
+                )}
+              </div>
+
+              <span className="min-w-0 flex-1 truncate font-semibold text-foreground">
+                {tab?.title || 'Thẻ không tên'}
+              </span>
+
+              {draggedDescendants.size > 0 && (
+                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/15 text-primary border border-primary/30">
+                  +{draggedDescendants.size} thẻ con
+                </span>
+              )}
+
+              {!isValid && (
+                <AlertCircle className="h-4 w-4 shrink-0 text-destructive animate-pulse" />
+              )}
+            </motion.div>
+          );
         })()}
-      </DragOverlay>, document.body
+      </DragOverlay>,
+      document.body
     )}
     </DndContext>
   );

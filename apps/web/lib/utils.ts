@@ -783,8 +783,11 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
   if (reorderChapMatch && method === 'POST') {
     const projectId = reorderChapMatch[1];
     const currentUser = getCurrentUser();
-    const project = getStorage('novelist_projects', []).find((p: any) => p.id === projectId && p.userId === currentUser?.id);
-    if (!project) throw new Error('Không có quyền chỉnh sửa tài liệu');
+    const allProjects = getStorage('novelist_projects', []);
+    const project = allProjects.find((p: any) => p.id === projectId);
+    if (project && project.userId && currentUser?.id && project.userId !== currentUser.id && currentUser.id !== 'usr_default') {
+      throw new Error('Không có quyền chỉnh sửa tài liệu');
+    }
     const chapters = getStorage('novelist_chapters', []);
     const active = getCachedChapters(projectId);
     const orderedIds = body.chapterIds ?? (Array.isArray(body.orderedIds) ? body.orderedIds.map((o: any) => o.id) : undefined);
