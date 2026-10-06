@@ -616,9 +616,11 @@ export function DocumentTabsSidebar({
       return;
     }
     try {
+      // Reveal the optimistic destination in the same render as the reordered tabs.
+      // Waiting for the save hides a drop into a collapsed parent until it completes.
+      if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
       await onDropTab({ chapterId: next.chapterId, parentId: next.parentId, chapterIds: next.chapterIds });
       playSuccessSound();
-      if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
     } catch { /* The editor restores the order and reports the save error. */ }
     finally {
       if (event.activatorEvent instanceof KeyboardEvent) {
@@ -935,7 +937,7 @@ export function DocumentTabsSidebar({
     const canDuplicate = !isAtMaxLimit && (chapters.length + subtreeNodeCount <= 100);
 
     return (
-      <motion.div key={node.id} layout={reducedMotion ? false : 'position'} transition={{ duration: 0.18 }}
+      <motion.div key={node.id} layout={reducedMotion || draggingId || isMovingTab ? false : 'position'} transition={{ duration: 0.18 }}
         className="relative group/tab flex flex-col" style={{ marginLeft: node.depth * 20 }}>
         {/* Tab Row Container */}
         <DocumentTabRow
@@ -1532,10 +1534,9 @@ export function DocumentTabsSidebar({
     </aside>
     {portalReady && createPortal(
       <DragOverlay
-        dropAnimation={reducedMotion ? null : {
-          duration: 180,
-          easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)'
-        }}
+        // The rows already occupy their optimistic destinations on release.
+        // Animating the overlay to its previous measured rect causes a snap back.
+        dropAnimation={null}
         zIndex={1000}
       >
         {draggingId && (() => {
