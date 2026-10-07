@@ -22,6 +22,19 @@ function preserveChapterLayout(projectId: string, readRevisions?: ReadonlyMap<st
   return Boolean(current?.pending || (readRevisions && (readRevisions.get(projectId) ?? 0) !== (current?.revision ?? 0)));
 }
 
+/** Fence whole-workspace replies as well as chapter-list replies. */
+export function preserveCachedChapterLayouts<T extends { id: string; projectId: string }>(
+  incoming: T[], readRevisions?: ReadonlyMap<string, number>
+): T[] {
+  const cached = new Map(getCachedChapters().map(c => [c.id, c]));
+  return incoming.map(chapter => {
+    const local = cached.get(chapter.id);
+    return local && preserveChapterLayout(chapter.projectId, readRevisions)
+      ? { ...chapter, orderIndex: local.orderIndex, parentId: local.parentId ?? null }
+      : chapter;
+  });
+}
+
 export function readWorkspaceCache(key: string, fallback: any = []) {
   try {
     const raw = localStorage.getItem(key);
@@ -103,7 +116,10 @@ export function cacheChapterApiResponse(path: string, data: any, readRevisions?:
       preserveChapterLayout(listMatch[1], readRevisions)) };
   }
   if (data?.chapter?.id && data.chapter.projectId && !path.endsWith('/lock')) {
-    cacheChapterList(data.chapter.projectId, [data.chapter], false, preserveChapterLayout(data.chapter.projectId, readRevisions));
+    // A single chapter snapshot cannot establish the relative project order.
+    // Server preorder indexes differ from normalized sibling indexes; even a
+    // fresh read/save would otherwise create collisions and move existing rows.
+    cacheChapterList(data.chapter.projectId, [data.chapter], false, true);
   }
   return data;
 }

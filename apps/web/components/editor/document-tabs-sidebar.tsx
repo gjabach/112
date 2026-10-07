@@ -612,9 +612,11 @@ export function DocumentTabsSidebar({
     const next = projectionRef.current;
     const currentList = effectiveChapters;
     const original = dragStartChaptersRef.current;
-    const structureChanged = original.length !== currentList.length || original.some(c => {
+    const originalOrder = flattenTabTree(buildTabTree(original)).map(c => c.id);
+    const currentOrder = flattenTabTree(buildTabTree(currentList)).map(c => c.id);
+    const structureChanged = originalOrder.length !== currentOrder.length || originalOrder.some((id, index) => id !== currentOrder[index]) || original.some(c => {
       const current = currentList.find(item => item.id === c.id);
-      return !current || current.orderIndex !== c.orderIndex || (current.parentId || null) !== (c.parentId || null);
+      return !current || (current.parentId || null) !== (c.parentId || null);
     });
 
     if (!next?.valid || next.unchanged) {

@@ -5,6 +5,8 @@ import { applyTabOrder } from '../../../packages/shared/src/tab-order.ts';
 import { createTabDropQueue } from './tab-drop-queue.ts';
 import { projectTabDrop } from './tab-drag.ts';
 import { apiFetch, apiFetchRemote } from './utils.ts';
+import { cacheRemoteChapter } from './chapter-lock.ts';
+import { importFullWorkspace, protectChapterFromSync, pushSync, pullSync, resetAutoSyncState } from './sync.ts';
 import {
   advanceChapterLayoutRevision, cacheChapterApiResponse, captureChapterLayoutRevisions,
   getCachedChapters, setChapterLayoutPending
@@ -16,7 +18,7 @@ const tabs = [
   { id: 'a11', projectId: 'p', parentId: 'a1', orderIndex: 2, depth: 2 },
   { id: 'b', projectId: 'p', parentId: null, orderIndex: 3, depth: 0 },
   { id: 'c', projectId: 'p', parentId: null, orderIndex: 4, depth: 0 }
-];
+].map(c => ({ ...c, updatedAt: c.updatedAt ?? 10, contentUpdatedAt: 10, titleUpdatedAt: 10 }));
 const ids = chapters => chapters.map(c => c.id);
 const moveCFirst = { chapterId: 'c', parentId: null, chapterIds: ['c', 'a', 'a1', 'a11', 'b'] };
 const moveBFirst = { chapterId: 'b', parentId: null, chapterIds: ['b', 'c', 'a', 'a1', 'a11'] };
@@ -191,6 +193,7 @@ function workspace() {
   globalThis.window.location = { protocol: 'https:' };
   globalThis.localStorage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
   return async () => {
+    resetAutoSyncState();
     setChapterLayoutPending('p', false);
     await setImmediate();
     for (const [key, value] of Object.entries(previous)) {
@@ -231,6 +234,101 @@ test('real API reads finishing after a reorder cannot poison cached layout or wo
         assert.ok(notifications.every(order => JSON.stringify(order) === JSON.stringify(moveCFirst.chapterIds)));
       } finally { await cleanup(); }
     }
+  }
+});
+
+function treeOrder(chapters) {
+  const result = [];
+  const walk = parent => {
+    for (const c of chapters.filter(c => (c.parentId || null) === parent).sort((a, b) => a.orderIndex - b.orderIndex || a.id.localeCompare(b.id))) {
+      result.push(c.id);
+      walk(c.id);
+    }
+  };
+  walk(null);
+  return result;
+}
+
+test('a delayed active-chapter response cannot restore its pre-drop position or parent', async () => {
+  const cleanup = workspace();
+  try {
+    const moved = applyTabOrder(tabs, ['b', 'c', 'a', 'a1', 'a11']);
+    cacheChapterApiResponse('/api/projects/p/chapters/reorder', { chapters: moved });
+    cacheRemoteChapter({ ...tabs[0], content: 'server draft', updatedAt: 1000 });
+    assert.deepEqual(treeOrder(getCachedChapters('p')), ['b', 'c', 'a', 'a1', 'a11']);
+    assert.equal(getCachedChapters('p').find(c => c.id === 'a').content, 'server draft');
+    cacheChapterApiResponse('/api/projects/p/chapters/reorder', {
+      chapters: applyTabOrder(getCachedChapters('p'), ['b', 'c', 'a1', 'a11', 'a'], { chapterId: 'a1', parentId: 'c' })
+    });
+    cacheRemoteChapter({ ...tabs[1], updatedAt: 2000 });
+    assert.equal(getCachedChapters('p').find(c => c.id === 'a1').parentId, 'c');
+  } finally { await cleanup(); }
+});
+
+test('a fresh full sync cannot reorder an active protected chapter through mixed order indexes', async () => {
+  const cleanup = workspace();
+  try {
+    const ordered = ['b', 'c', 'a', 'a1', 'a11'];
+    const saved = applyTabOrder(tabs, ordered).map(c => ({ ...c, updatedAt: 100, contentUpdatedAt: 100, titleUpdatedAt: 100 }));
+    cacheChapterApiResponse('/api/projects/p/chapters/reorder', { chapters: saved });
+    protectChapterFromSync('a');
+    // mergeWorkspaces numbers siblings independently before import protects the editor.
+    assert.equal(importFullWorkspace({ projects: [{ id: 'p' }], chapters: saved }), true);
+    assert.deepEqual(treeOrder(getCachedChapters('p')), ordered);
+  } finally { await cleanup(); }
+});
+
+test('fresh individual chapter reads and saves cannot mix server preorder indexes into sibling-indexed cache', async () => {
+  const cleanup = workspace();
+  try {
+    const ordered = ['b', 'c', 'a', 'a1', 'a11'];
+    const saved = applyTabOrder(tabs, ordered);
+    cacheChapterApiResponse('/api/projects/p/chapters/reorder', { chapters: saved });
+    importFullWorkspace({ projects: [{ id: 'p' }], chapters: saved });
+    for (const updatedAt of [10, 1000]) {
+      const response = { ...saved.find(c => c.id === 'a'), content: 'new acknowledged draft', contentUpdatedAt: updatedAt, updatedAt };
+      cacheChapterApiResponse('/api/chapters/a', { chapter: response }, captureChapterLayoutRevisions());
+      cacheRemoteChapter(response);
+      assert.deepEqual(treeOrder(getCachedChapters('p')), ordered);
+    }
+  } finally { await cleanup(); }
+});
+
+test('fresh full-workspace layout changes still apply while protecting unsaved editor content', async () => {
+  const cleanup = workspace();
+  try {
+    const draft = tabs.map(c => c.id === 'a' ? { ...c, content: 'local unsaved draft', updatedAt: 200, contentUpdatedAt: 200 } : c);
+    localStorage.setItem('novelist_chapters', JSON.stringify(draft));
+    protectChapterFromSync('a');
+    const incoming = applyTabOrder(tabs, ['c', 'a', 'a1', 'a11', 'b']).map(c => ({ ...c, updatedAt: 300 }));
+    assert.equal(importFullWorkspace({ projects: [{ id: 'p' }], chapters: incoming }, true, captureChapterLayoutRevisions()), true);
+    assert.deepEqual(treeOrder(getCachedChapters('p')), ['c', 'a', 'a1', 'a11', 'b']);
+    assert.equal(getCachedChapters('p').find(c => c.id === 'a').content, 'local unsaved draft');
+  } finally { await cleanup(); }
+});
+
+test('push and pull replies started before a drop cannot restore an older workspace layout after saving', async () => {
+  for (const sync of [pushSync, pullSync]) {
+    const cleanup = workspace();
+    try {
+      localStorage.setItem('novelist_current_user', JSON.stringify({ id: 'u', email: 'layout-test@example.invalid' }));
+      localStorage.setItem('token', 'local-fixture');
+      const response = deferred();
+      globalThis.fetch = () => response.promise;
+      const reading = sync();
+      advanceChapterLayoutRevision('p');
+      setChapterLayoutPending('p', true);
+      const saved = applyTabOrder(tabs, ['b', 'c', 'a', 'a1', 'a11']);
+      cacheChapterApiResponse('/api/projects/p/chapters/reorder', { chapters: saved });
+      setChapterLayoutPending('p', false);
+      response.resolve(Response.json({ success: true, data: {
+        projects: [{ id: 'p' }],
+        chapters: tabs.map(c => ({ ...c, content: 'updated remote text', updatedAt: 1000 }))
+      } }));
+      await reading;
+      assert.deepEqual(treeOrder(getCachedChapters('p')), ['b', 'c', 'a', 'a1', 'a11']);
+      assert.equal(getCachedChapters('p').find(c => c.id === 'c').content, 'updated remote text');
+    } finally { await cleanup(); }
   }
 });
 

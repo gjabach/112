@@ -1,5 +1,7 @@
 'use client';
 
+import { captureChapterLayoutRevisions, preserveCachedChapterLayouts } from './workspace-cache';
+
 import {
   sha256,
   normalizeEmail,
@@ -175,7 +177,7 @@ export function exportFullWorkspace() {
   };
 }
 
-export function importFullWorkspace(data: any, merge: boolean = true): boolean {
+export function importFullWorkspace(data: any, merge: boolean = true, layoutReadRevisions?: ReadonlyMap<string, number>): boolean {
   if (typeof window === 'undefined' || !data || typeof data !== 'object') return false;
 
   try {
@@ -217,7 +219,14 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
       finalData = { ...finalData };
       finalData.chapters = finalData.chapters.map((chapter: any) => {
         seen.add(chapter.id);
-        if (protectedChapterIds.has(chapter.id) && !allTombstones[chapter.id] && localById.has(chapter.id)) return localById.get(chapter.id);
+        if (protectedChapterIds.has(chapter.id) && !allTombstones[chapter.id] && localById.has(chapter.id)) {
+          const draft: any = localById.get(chapter.id);
+          // Protect editable fields only. Copying a whole cached chapter mixes
+          // preorder indexes with the merged sibling indexes and changes its position.
+          return { ...chapter, content: draft.content, title: draft.title, wordCount: draft.wordCount,
+            contentUpdatedAt: draft.contentUpdatedAt, titleUpdatedAt: draft.titleUpdatedAt,
+            updatedAt: Math.max(Number(chapter.updatedAt || 0), Number(draft.updatedAt || 0)) };
+        }
         return chapter;
       });
       for (const chapterId of protectedChapterIds) {
@@ -251,6 +260,12 @@ export function importFullWorkspace(data: any, merge: boolean = true): boolean {
           ch.orderIndex = idx + 1;
         });
       }
+    }
+
+    // Restore the complete current project layout after normalization if this
+    // workspace read overlapped a drop. Keep independent content updates.
+    if (Array.isArray(finalData.chapters)) {
+      finalData.chapters = preserveCachedChapterLayouts(finalData.chapters, layoutReadRevisions);
     }
 
     // Recalculate project chapterCount and wordCount accurately
@@ -370,6 +385,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
   isPushing = true;
   activePushPromise = (async () => {
     try {
+      const layoutReadRevisions = captureChapterLayoutRevisions();
       const local = exportFullWorkspace();
       if (!local) return { success: false, error: 'No data to sync' };
 
@@ -419,7 +435,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
           anySuccess = true;
           if (json.data && Array.isArray(json.data.chapters)) {
             // Absorb any canonical updates that server unified
-            importFullWorkspace(json.data, true);
+            importFullWorkspace(json.data, true, layoutReadRevisions);
           }
         }
       }
@@ -476,6 +492,7 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
   if (typeof window === 'undefined') return { success: false, updated: false, error: 'Not in browser' };
   if (isPulling) return { success: true, updated: false };
   isPulling = true;
+  const layoutReadRevisions = captureChapterLayoutRevisions();
 
   try {
     const email = getUserEmail();
@@ -586,7 +603,7 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
 
     let updated = false;
     if (hasRemoteChanges || force) {
-      updated = importFullWorkspace(merged, false);
+      updated = importFullWorkspace(merged, false, layoutReadRevisions);
     }
 
     // If local had changes that cloud didn't have, push the canonical merged state up

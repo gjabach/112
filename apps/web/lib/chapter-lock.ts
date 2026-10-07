@@ -303,7 +303,12 @@ export function cacheRemoteChapter(chapter: any) {
       titleUpdatedAt: Number(chapter.titleUpdatedAt || chapter.updatedAt || Date.now())
     };
     const index = chapters.findIndex((item: any) => item.id === chapter.id);
-    if (index >= 0) chapters[index] = normalized;
+    if (index >= 0) {
+      // Chapter reads/save acknowledgements own the draft, not the project layout.
+      // Their snapshots may predate a reorder even after the reorder has saved.
+      const cached = chapters[index];
+      chapters[index] = { ...cached, ...normalized, orderIndex: cached.orderIndex, parentId: cached.parentId ?? null };
+    }
     else chapters.push(normalized);
     localStorage.setItem('novelist_chapters', JSON.stringify(chapters));
     refreshCachedProjectStats();
