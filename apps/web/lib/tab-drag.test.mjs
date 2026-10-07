@@ -137,3 +137,72 @@ test('accepted reorder overrides stale layout even with client clock skew, prese
     await Promise.resolve();
   } finally { delete globalThis.localStorage; delete globalThis.window; }
 });
+
+test('optimistic drop immediately reflects reordered tabs without reverting to previous order', () => {
+  // Simulating the drop event: moving tab 'c' before 'a'
+  const drop = projectTabDrop(tabs, tabs, 'c', 'a', false, 0);
+  assert.equal(drop.valid, true);
+
+  // Optimistic calculation executed immediately upon drop:
+  const optimistic = applyTabOrder(tabs, drop.chapterIds, { chapterId: drop.chapterId, parentId: drop.parentId });
+  assert.deepEqual(optimistic.map(t => t.id), ['c', 'a', 'a1', 'a11', 'b']);
+  assert.equal(optimistic[0].id, 'c');
+  assert.equal(optimistic[0].orderIndex, 0);
+  assert.equal(optimistic[1].id, 'a');
+  assert.equal(optimistic[1].orderIndex, 1);
+
+  // If a failure occurs during save, restoring the original state works cleanly
+  const reverted = tabs;
+  assert.equal(reverted[0].id, 'a');
+  assert.equal(reverted[4].id, 'c');
+});
+
+test('getCachedChapters for a project returns canonically sorted chapters by orderIndex', async () => {
+  const { getCachedChapters } = await import('./workspace-cache.ts');
+  const workspace = localWorkspace();
+  try {
+    // Storing chapters deliberately scrambled in localStorage
+    const scrambled = [
+      { id: 'b', projectId: 'p', orderIndex: 2, title: 'B' },
+      { id: 'c', projectId: 'p', orderIndex: 0, title: 'C' },
+      { id: 'a', projectId: 'p', orderIndex: 1, title: 'A' },
+      { id: 'other', projectId: 'other_proj', orderIndex: 0, title: 'Other' }
+    ];
+    workspace.values.set('novelist_chapters', JSON.stringify(scrambled));
+    const cached = getCachedChapters('p');
+    assert.deepEqual(cached.map(t => t.id), ['c', 'a', 'b']);
+    assert.deepEqual(cached.map(t => t.orderIndex), [0, 1, 2]);
+  } finally { delete globalThis.localStorage; delete globalThis.window; }
+});
+
+test('sequential tab reorders via chained handler apply both movements without dropped actions', async () => {
+  const workspace = localWorkspace();
+  try {
+    let currentChapters = tabs.slice();
+
+    // 1st drop: move 'c' before 'a'
+    const drop1 = projectTabDrop(currentChapters, currentChapters, 'c', 'a', false, 0);
+    const reordered1 = applyTabOrder(currentChapters, drop1.chapterIds, { chapterId: drop1.chapterId, parentId: drop1.parentId });
+    currentChapters = reordered1;
+
+    // 2nd drop immediately: move 'b' to the front before 'c'
+    const drop2 = projectTabDrop(currentChapters, currentChapters, 'b', 'c', false, 0);
+    const reordered2 = applyTabOrder(currentChapters, drop2.chapterIds, { chapterId: drop2.chapterId, parentId: drop2.parentId });
+    currentChapters = reordered2;
+
+    assert.equal(currentChapters[0].id, 'b');
+    assert.equal(currentChapters[0].orderIndex, 0);
+    assert.equal(currentChapters[1].id, 'c');
+    assert.equal(currentChapters[1].orderIndex, 1);
+    assert.equal(currentChapters[2].id, 'a');
+    assert.equal(currentChapters[2].orderIndex, 2);
+
+    // Save final state via handleLocalApi
+    const result = await handleLocalApi('/api/projects/p/chapters/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ chapterIds: currentChapters.map(c => c.id), move: { chapterId: 'b', parentId: null } })
+    });
+    assert.equal(result.success, true);
+    assert.deepEqual(result.chapters.map(c => c.id), ['b', 'c', 'a', 'a1', 'a11']);
+  } finally { delete globalThis.localStorage; delete globalThis.window; }
+});

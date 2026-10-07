@@ -797,7 +797,10 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
         ? { ...chapter, updatedAt: now } : chapter;
     });
     const byId = new Map(reordered.map(chapter => [chapter.id, chapter]));
-    const updated = chapters.map((c: any) => byId.get(c.id) || c);
+    const reorderedIds = new Set(reordered.map(c => c.id));
+    const nonReorderedThisProject = chapters.filter((c: any) => c.projectId === projectId && !reorderedIds.has(c.id));
+    const otherProjectsChapters = chapters.filter((c: any) => c.projectId !== projectId);
+    const updated = [...otherProjectsChapters, ...reordered, ...nonReorderedThisProject];
     // Do not report success if storage failed; this is one atomic local write.
     localStorage.setItem('novelist_chapters', JSON.stringify(updated));
     notifyWorkspaceChanged();

@@ -10,7 +10,11 @@ export function readWorkspaceCache(key: string, fallback: any = []) {
 export function getCachedChapters(projectId?: string): any[] {
   const chapters = readWorkspaceCache('novelist_chapters');
   const active = getActiveChapters(Array.isArray(chapters) ? chapters : [], readWorkspaceCache('novelist_tombstones', {}));
-  return projectId ? active.filter(c => c.projectId === projectId) : active;
+  const list = projectId ? active.filter(c => c.projectId === projectId) : active;
+  if (projectId) {
+    return list.slice().sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0) || (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  }
+  return list;
 }
 
 export function refreshCachedProjectStats() {

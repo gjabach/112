@@ -66,10 +66,10 @@ export function DocumentTabRow({
       onDoubleClick={event => { if (!disabled && !editing && !blockClick()) onRename(event); }}
       onContextMenu={event => { if (!disabled && !editing && !blockClick()) onMenu(event); }}
       className={`relative flex min-h-9 items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium select-none
-        transition-[background-color,border-color,opacity,transform] duration-150 motion-reduce:transition-none
+        transition-[background-color,border-color,opacity] duration-150 motion-reduce:transition-none
         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60
-        ${isDragging ? 'opacity-35 border-dashed border-2 border-primary/50 bg-primary/5 scale-[0.98]' : faded ? 'opacity-30' : ''}
-        ${disabled || editing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing hover:border-primary/30 active:scale-[0.98]'}
+        ${isDragging ? 'opacity-35 border-dashed border-2 border-primary/50 bg-primary/5' : faded ? 'opacity-30' : ''}
+        ${disabled || editing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing hover:border-primary/30'}
         ${active ? 'border-primary/20 bg-primary/10 text-primary' : 'border-transparent text-foreground/80 hover:bg-muted/60 hover:text-foreground'}`}
       style={{ touchAction: 'pan-y' }}
     >

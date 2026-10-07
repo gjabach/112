@@ -8,7 +8,7 @@ import {
   type DragMoveEvent, type DragEndEvent, type CollisionDetection, type KeyboardCoordinateGetter
 } from '@dnd-kit/core';
 import { motion, useReducedMotion } from 'framer-motion';
-import { type TabDrop } from '@novelist/shared';
+import { applyTabOrder, type TabDrop } from '@novelist/shared';
 import { projectTabDrop, getTabDescendants, type TabProjection } from '@/lib/tab-drag';
 import { DocumentTabRow } from './document-tab-row';
 import { 
@@ -445,9 +445,17 @@ export function DocumentTabsSidebar({
     }
   });
 
+  const [optimisticChapters, setOptimisticChapters] = useState<ChapterTab[] | null>(null);
+  const effectiveChapters = optimisticChapters || chapters;
+
+  // Clear optimistic override when canonical chapters prop updates
+  useEffect(() => {
+    setOptimisticChapters(null);
+  }, [chapters]);
+
   const recoveryTabs = useMemo(() => 
-    chapters.filter(c => c.id.startsWith('recovery_') || c.title.toLowerCase().startsWith('khôi phục')),
-    [chapters]
+    effectiveChapters.filter(c => c.id.startsWith('recovery_') || c.title.toLowerCase().startsWith('khôi phục')),
+    [effectiveChapters]
   );
   const [cleaningUp, setCleaningUp] = useState(false);
 
@@ -501,11 +509,13 @@ export function DocumentTabsSidebar({
     };
   }, [emojiPickerTabId]);
 
-  const tree = buildTabTree(chapters);
+  const tree = buildTabTree(effectiveChapters);
   const treeNodesById = new Map((flattenTabTree(tree) as TabTreeNode[]).map(node => [node.id, node]));
   const reducedMotion = useReducedMotion();
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [justDroppedId, setJustDroppedId] = useState<string | null>(null);
+  const justDroppedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [projection, setProjection] = useState<TabProjection | null>(null);
   const projectionRef = useRef<TabProjection | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -515,6 +525,11 @@ export function DocumentTabsSidebar({
   const dragStartChaptersRef = useRef<ChapterTab[]>([]);
   const [portalReady, setPortalReady] = useState(false);
   useEffect(() => setPortalReady(true), []);
+  useEffect(() => {
+    return () => {
+      if (justDroppedTimerRef.current) clearTimeout(justDroppedTimerRef.current);
+    };
+  }, []);
 
   const visibleNodes: TabTreeNode[] = [];
   const collectVisible = (nodes: TabTreeNode[]) => {
@@ -526,9 +541,9 @@ export function DocumentTabsSidebar({
   collectVisible(tree);
   const visibleNodesRef = useRef(visibleNodes);
   visibleNodesRef.current = visibleNodes;
-  const chaptersRef = useRef(chapters);
-  chaptersRef.current = chapters;
-  const draggedDescendants = draggingId ? getTabDescendants(chapters, draggingId) : new Set<string>();
+  const chaptersRef = useRef(effectiveChapters);
+  chaptersRef.current = effectiveChapters;
+  const draggedDescendants = draggingId ? getTabDescendants(effectiveChapters, draggingId) : new Set<string>();
   const remainingNodes = visibleNodes.filter(n => n.id !== draggingId && !draggedDescendants.has(n.id));
   const dropBeforeId = projection ? remainingNodes[projection.index]?.id : undefined;
 
@@ -585,7 +600,7 @@ export function DocumentTabsSidebar({
       ? event.active.rect.current.translated.top + event.active.rect.current.translated.height / 2
       : over.rect.top;
     const after = isKeyboard ? keyboardAfterRef.current : (pointerYRef.current ?? centerY) > over.rect.top + over.rect.height / 2;
-    const next = projectTabDrop(chapters, visibleNodes, String(event.active.id), String(over.id), after, event.delta.x);
+    const next = projectTabDrop(effectiveChapters, visibleNodes, String(event.active.id), String(over.id), after, event.delta.x);
     if (next) {
       projectionRef.current = next;
       setProjection(next);
@@ -604,37 +619,64 @@ export function DocumentTabsSidebar({
   const finishDrag = async (event: DragEndEvent) => {
     updateProjection(event);
     const next = projectionRef.current;
+    const currentList = effectiveChapters;
     const original = dragStartChaptersRef.current;
-    const structureChanged = original.length !== chapters.length || original.some(c => {
-      const current = chapters.find(item => item.id === c.id);
+    const structureChanged = original.length !== currentList.length || original.some(c => {
+      const current = currentList.find(item => item.id === c.id);
       return !current || current.orderIndex !== c.orderIndex || (current.parentId || null) !== (c.parentId || null);
     });
-    resetDrag();
-    if (!next?.valid || next.unchanged) return;
+
+    if (!next?.valid || next.unchanged) {
+      resetDrag();
+      return;
+    }
+
     if (structureChanged) {
+      resetDrag();
       toast.error('Danh sách thẻ vừa thay đổi. Vui lòng kéo lại.');
       return;
     }
+
+    let reordered: ChapterTab[];
     try {
-      // Reveal the optimistic destination in the same render as the reordered tabs.
-      // Waiting for the save hides a drop into a collapsed parent until it completes.
-      if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
+      reordered = applyTabOrder(currentList, next.chapterIds, { chapterId: next.chapterId, parentId: next.parentId });
+    } catch {
+      resetDrag();
+      return;
+    }
+
+    // Immediately update tab order optimistically in the same render batch as ending drag
+    // This prevents any delay, snap back to old position, or flash before save completion
+    setOptimisticChapters(reordered);
+    setJustDroppedId(next.chapterId);
+    if (justDroppedTimerRef.current) clearTimeout(justDroppedTimerRef.current);
+    justDroppedTimerRef.current = setTimeout(() => {
+      setJustDroppedId(null);
+    }, 250);
+
+    if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
+    resetDrag();
+
+    try {
       await onDropTab({ chapterId: next.chapterId, parentId: next.parentId, chapterIds: next.chapterIds });
       playSuccessSound();
-    } catch { /* The editor restores the order and reports the save error. */ }
-    finally {
+    } catch {
+      // Revert optimistic order if saving fails
+      setOptimisticChapters(null);
+      setJustDroppedId(null);
+    } finally {
       if (event.activatorEvent instanceof KeyboardEvent) {
         requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next.chapterId)}"]`)?.focus());
       }
     }
   };
   useEffect(() => {
-    if (!draggingId || !dragOverId || getTabDescendants(chapters, draggingId).has(dragOverId) || dragOverId === draggingId) return;
-    const hovered = chapters.find(c => c.id === dragOverId);
-    if (!hovered || expandedIds[dragOverId] !== false || !chapters.some(c => c.parentId === dragOverId)) return;
+    if (!draggingId || !dragOverId || getTabDescendants(effectiveChapters, draggingId).has(dragOverId) || dragOverId === draggingId) return;
+    const hovered = effectiveChapters.find(c => c.id === dragOverId);
+    if (!hovered || expandedIds[dragOverId] !== false || !effectiveChapters.some(c => c.parentId === dragOverId)) return;
     const timer = window.setTimeout(() => setExpandedIds(prev => ({ ...prev, [dragOverId]: true })), 600);
     return () => window.clearTimeout(timer);
-  }, [draggingId, dragOverId, chapters, expandedIds]);
+  }, [draggingId, dragOverId, effectiveChapters, expandedIds]);
 
   const dropIndicator = () => projection && (
     <div aria-hidden="true" className="relative h-0 z-10 pointer-events-none" style={{ marginLeft: projection.depth * 20 + 8 }}>
@@ -644,11 +686,11 @@ export function DocumentTabsSidebar({
     </div>
   );
 
-  const isAtMaxLimit = chapters.length >= 100;
-  const isNearLimit = chapters.length >= 90;
+  const isAtMaxLimit = effectiveChapters.length >= 100;
+  const isNearLimit = effectiveChapters.length >= 90;
 
   // Active chapter's real-time live heading tree for automatic subtabs (e.g. I, aceererf / II, nrfnerjf)
-  const activeChapter = chapters.find(c => c.id === currentChapterId);
+  const activeChapter = effectiveChapters.find(c => c.id === currentChapterId);
   const effectiveHeadings = headings && headings.length > 0
     ? headings
     : extractHeadingsFromContent(activeChapter?.content);
@@ -693,7 +735,7 @@ export function DocumentTabsSidebar({
     if (!trimmed) {
       return; // Revert silently on empty input
     }
-    const currentTab = chapters.find(c => c.id === tabId);
+    const currentTab = effectiveChapters.find(c => c.id === tabId);
     if (currentTab && currentTab.title === trimmed) {
       return; // No change
     }
@@ -764,7 +806,7 @@ export function DocumentTabsSidebar({
       toast.error('Tài liệu đã đạt giới hạn tối đa 100 thẻ');
       return;
     }
-    const rootCount = chapters.filter(c => !c.parentId).length;
+    const rootCount = effectiveChapters.filter(c => !c.parentId).length;
     const defaultTitle = `Thẻ ${rootCount + 1}`;
     try {
       const createdId = await onCreateTab(defaultTitle, null);
@@ -933,11 +975,15 @@ export function DocumentTabsSidebar({
     const canDemote = Boolean(prevSibling && (prevSibling.depth + 1 + nodeSubtreeHeight <= 2) && onReparentTab);
     const canPromote = Boolean(node.parentId && onReparentTab);
     const isOutlineHidden = Boolean(hiddenOutlineTabs[node.id]);
-    const canDelete = chapters.length > subtreeNodeCount;
-    const canDuplicate = !isAtMaxLimit && (chapters.length + subtreeNodeCount <= 100);
+    const canDelete = effectiveChapters.length > subtreeNodeCount;
+    const canDuplicate = !isAtMaxLimit && (effectiveChapters.length + subtreeNodeCount <= 100);
+
+    const isDragged = node.id === draggingId;
+    const isJustDropped = node.id === justDroppedId;
+    const shouldAnimateLayout = !reducedMotion && !isDragged && !isJustDropped;
 
     return (
-      <motion.div key={node.id} layout={reducedMotion || draggingId || isMovingTab ? false : 'position'} transition={{ duration: 0.18 }}
+      <motion.div key={node.id} layout={shouldAnimateLayout ? 'position' : false} transition={{ duration: 0.18, ease: 'easeOut' }}
         className="relative group/tab flex flex-col" style={{ marginLeft: node.depth * 20 }}>
         {/* Tab Row Container */}
         <DocumentTabRow
@@ -946,9 +992,9 @@ export function DocumentTabsSidebar({
           depth={node.depth}
           active={isActive}
           expanded={hasChildren ? isExpanded : undefined}
-          disabled={isMovingTab || Boolean(draggingId && draggingId !== node.id)}
+          disabled={Boolean(draggingId && draggingId !== node.id)}
           editing={isEditing}
-          dropDisabled={isEditing || isMovingTab}
+          dropDisabled={isEditing}
           faded={draggedDescendants.has(node.id)}
           blockClick={() => Boolean(draggingId) || Date.now() < blockClickUntilRef.current}
           onSelect={() => onSelectTab(node.id)}
@@ -1255,9 +1301,9 @@ export function DocumentTabsSidebar({
                       e.stopPropagation();
                       setActiveMenuId(null);
                       if (onReparentTab) {
-                        const parent = chapters.find(c => c.id === node.parentId);
+                        const parent = effectiveChapters.find(c => c.id === node.parentId);
                         const rawGrandParentId = parent?.parentId || null;
-                        const validGrandParentId = rawGrandParentId && chapters.some(c => c.id === rawGrandParentId) ? rawGrandParentId : null;
+                        const validGrandParentId = rawGrandParentId && effectiveChapters.some(c => c.id === rawGrandParentId) ? rawGrandParentId : null;
                         await onReparentTab(node.id, validGrandParentId);
                       }
                     }}
@@ -1385,24 +1431,29 @@ export function DocumentTabsSidebar({
       autoScroll={{ threshold: { x: 0, y: 0.15 } }}
       onDragStart={event => {
         const id = String(event.active.id);
-        dragStartChaptersRef.current = chapters.map(c => ({ ...c }));
+        dragStartChaptersRef.current = effectiveChapters.map(c => ({ ...c }));
         blockClickUntilRef.current = Number.POSITIVE_INFINITY;
         keyboardAfterRef.current = false;
         setActiveMenuId(null);
         setEmojiPickerTabId(null);
         setDraggingId(id);
-        const initial = projectTabDrop(chapters, visibleNodes, id, id, false, 0);
+        const initial = projectTabDrop(effectiveChapters, visibleNodes, id, id, false, 0);
         projectionRef.current = initial;
         setProjection(initial);
       }}
       onDragMove={updateProjection}
       onDragOver={updateProjection}
-      onDragCancel={resetDrag}
+      onDragCancel={() => {
+        setOptimisticChapters(null);
+        setJustDroppedId(null);
+        if (justDroppedTimerRef.current) clearTimeout(justDroppedTimerRef.current);
+        resetDrag();
+      }}
       onDragEnd={finishDrag}
       accessibility={{
         screenReaderInstructions: { draggable: 'Nhấn phím cách để nhấc thẻ. Dùng mũi tên lên xuống để đổi vị trí, trái phải để đổi cấp. Nhấn cách hoặc Enter để thả, Escape để hủy.' },
         announcements: {
-          onDragStart: ({ active }) => `Đã nhấc thẻ ${chapters.find(c => c.id === active.id)?.title || ''}`,
+          onDragStart: ({ active }) => `Đã nhấc thẻ ${effectiveChapters.find(c => c.id === active.id)?.title || ''}`,
           onDragMove: () => projectionRef.current?.reason || (projectionRef.current ? `Vị trí cấp ${projectionRef.current.depth + 1}` : 'Ngoài danh sách thẻ'),
           onDragOver: () => projectionRef.current?.reason || `Vị trí cấp ${(projectionRef.current?.depth || 0) + 1}`,
           onDragEnd: () => 'Đã kết thúc di chuyển thẻ',
@@ -1428,7 +1479,7 @@ export function DocumentTabsSidebar({
               <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
                 isAtMaxLimit ? 'bg-destructive/20 text-destructive' : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
               }`} title={isAtMaxLimit ? 'Đã đạt giới hạn tối đa 100 thẻ' : 'Sắp đạt giới hạn 100 thẻ'}>
-                {chapters.length}/100
+                {effectiveChapters.length}/100
               </span>
             )}
           </div>
@@ -1438,7 +1489,7 @@ export function DocumentTabsSidebar({
             <Button
               size="icon"
               variant="ghost"
-              disabled={isAtMaxLimit || isMovingTab || Boolean(draggingId)}
+              disabled={isAtMaxLimit || Boolean(draggingId)}
               className={`h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors ${
                 isAtMaxLimit ? 'opacity-40 cursor-not-allowed' : ''
               }`}
@@ -1497,7 +1548,7 @@ export function DocumentTabsSidebar({
 
       {/* Tabs Tree List */}
       <div ref={listRef} role="tree" aria-label="Thẻ tài liệu" aria-busy={isMovingTab}
-        inert={isMovingTab || undefined} className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+        className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
         {tree.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             Chưa có thẻ nào. Bấm nút <Plus className="w-3 h-3 inline mx-0.5 text-primary" /> để tạo thẻ đầu tiên.
@@ -1520,10 +1571,10 @@ export function DocumentTabsSidebar({
       {/* Footer Info */}
       <div className="p-2.5 border-t border-border/60 text-[11px] text-muted-foreground flex items-center justify-between bg-muted/20">
         <div className="flex items-center gap-1.5">
-          <span>{chapters.length} thẻ tài liệu</span>
+          <span>{effectiveChapters.length} thẻ tài liệu</span>
           {isNearLimit && (
             <span className={`text-[10px] font-mono font-semibold ${isAtMaxLimit ? 'text-destructive font-bold' : 'text-amber-500'}`}>
-              ({chapters.length}/100)
+              ({effectiveChapters.length}/100)
             </span>
           )}
         </div>
@@ -1540,7 +1591,7 @@ export function DocumentTabsSidebar({
         zIndex={1000}
       >
         {draggingId && (() => {
-          const tab = chapters.find(c => c.id === draggingId);
+          const tab = effectiveChapters.find(c => c.id === draggingId);
           const isValid = projection?.valid !== false;
           return (
             <motion.div
