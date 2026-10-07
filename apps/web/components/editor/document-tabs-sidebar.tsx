@@ -8,7 +8,7 @@ import {
   type DragMoveEvent, type DragEndEvent, type CollisionDetection, type KeyboardCoordinateGetter
 } from '@dnd-kit/core';
 import { motion, useReducedMotion } from 'framer-motion';
-import { applyTabOrder, type TabDrop } from '@novelist/shared';
+import { type TabDrop } from '@novelist/shared';
 import { projectTabDrop, getTabDescendants, type TabProjection } from '@/lib/tab-drag';
 import { DocumentTabRow } from './document-tab-row';
 import { 
@@ -445,13 +445,7 @@ export function DocumentTabsSidebar({
     }
   });
 
-  const [optimisticChapters, setOptimisticChapters] = useState<ChapterTab[] | null>(null);
-  const effectiveChapters = optimisticChapters || chapters;
-
-  // Clear optimistic override when canonical chapters prop updates
-  useEffect(() => {
-    setOptimisticChapters(null);
-  }, [chapters]);
+  const effectiveChapters = chapters;
 
   const recoveryTabs = useMemo(() => 
     effectiveChapters.filter(c => c.id.startsWith('recovery_') || c.title.toLowerCase().startsWith('khôi phục')),
@@ -514,8 +508,6 @@ export function DocumentTabsSidebar({
   const reducedMotion = useReducedMotion();
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const [justDroppedId, setJustDroppedId] = useState<string | null>(null);
-  const justDroppedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [projection, setProjection] = useState<TabProjection | null>(null);
   const projectionRef = useRef<TabProjection | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -525,11 +517,6 @@ export function DocumentTabsSidebar({
   const dragStartChaptersRef = useRef<ChapterTab[]>([]);
   const [portalReady, setPortalReady] = useState(false);
   useEffect(() => setPortalReady(true), []);
-  useEffect(() => {
-    return () => {
-      if (justDroppedTimerRef.current) clearTimeout(justDroppedTimerRef.current);
-    };
-  }, []);
 
   const visibleNodes: TabTreeNode[] = [];
   const collectVisible = (nodes: TabTreeNode[]) => {
@@ -617,6 +604,10 @@ export function DocumentTabsSidebar({
     if (!isOpen && draggingId) resetDrag();
   }, [isOpen, draggingId]);
   const finishDrag = async (event: DragEndEvent) => {
+    if (!event.over) {
+      resetDrag();
+      return;
+    }
     updateProjection(event);
     const next = projectionRef.current;
     const currentList = effectiveChapters;
@@ -637,37 +628,24 @@ export function DocumentTabsSidebar({
       return;
     }
 
-    let reordered: ChapterTab[];
+    let saving: Promise<void>;
     try {
-      reordered = applyTabOrder(currentList, next.chapterIds, { chapterId: next.chapterId, parentId: next.parentId });
+      // The owner updates the list synchronously before the overlay disappears.
+      saving = onDropTab({ chapterId: next.chapterId, parentId: next.parentId, chapterIds: next.chapterIds });
+      if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
     } catch {
       resetDrag();
       return;
     }
-
-    // Immediately update tab order optimistically in the same render batch as ending drag
-    // This prevents any delay, snap back to old position, or flash before save completion
-    setOptimisticChapters(reordered);
-    setJustDroppedId(next.chapterId);
-    if (justDroppedTimerRef.current) clearTimeout(justDroppedTimerRef.current);
-    justDroppedTimerRef.current = setTimeout(() => {
-      setJustDroppedId(null);
-    }, 250);
-
-    if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
     resetDrag();
-
+    if (event.activatorEvent instanceof KeyboardEvent) {
+      requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next.chapterId)}"]`)?.focus());
+    }
     try {
-      await onDropTab({ chapterId: next.chapterId, parentId: next.parentId, chapterIds: next.chapterIds });
+      await saving;
       playSuccessSound();
     } catch {
-      // Revert optimistic order if saving fails
-      setOptimisticChapters(null);
-      setJustDroppedId(null);
-    } finally {
-      if (event.activatorEvent instanceof KeyboardEvent) {
-        requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next.chapterId)}"]`)?.focus());
-      }
+      // The owner restores the last saved layout and reports the error once.
     }
   };
   useEffect(() => {
@@ -978,12 +956,8 @@ export function DocumentTabsSidebar({
     const canDelete = effectiveChapters.length > subtreeNodeCount;
     const canDuplicate = !isAtMaxLimit && (effectiveChapters.length + subtreeNodeCount <= 100);
 
-    const isDragged = node.id === draggingId;
-    const isJustDropped = node.id === justDroppedId;
-    const shouldAnimateLayout = !reducedMotion && !isDragged && !isJustDropped;
-
     return (
-      <motion.div key={node.id} layout={shouldAnimateLayout ? 'position' : false} transition={{ duration: 0.18, ease: 'easeOut' }}
+      <div key={node.id}
         className="relative group/tab flex flex-col" style={{ marginLeft: node.depth * 20 }}>
         {/* Tab Row Container */}
         <DocumentTabRow
@@ -1403,7 +1377,7 @@ export function DocumentTabsSidebar({
           </div>
         )}
 
-      </motion.div>
+      </div>
     );
   };
 
@@ -1444,9 +1418,6 @@ export function DocumentTabsSidebar({
       onDragMove={updateProjection}
       onDragOver={updateProjection}
       onDragCancel={() => {
-        setOptimisticChapters(null);
-        setJustDroppedId(null);
-        if (justDroppedTimerRef.current) clearTimeout(justDroppedTimerRef.current);
         resetDrag();
       }}
       onDragEnd={finishDrag}

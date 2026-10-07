@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback, useRef, startTransition } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, startTransition } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch, apiFetchRemote, countWords, RemoteApiError } from '@/lib/utils';
-import { getCachedChapters, readWorkspaceCache } from '@/lib/workspace-cache';
+import { advanceChapterLayoutRevision, getCachedChapters, readWorkspaceCache, setChapterLayoutPending } from '@/lib/workspace-cache';
+import { createTabDropQueue } from '@/lib/tab-drop-queue';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
 import {
@@ -29,7 +30,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { DocumentTabsSidebar, buildTabTree, flattenTabTree, extractHeadingsFromContent, getSubtreeHeight, type TabTreeNode } from '@/components/editor/document-tabs-sidebar';
-import { applyTabOrder, type TabDrop } from '@novelist/shared';
+import { type TabDrop } from '@novelist/shared';
 import type { EditorHeading } from '@/components/editor/tiptap-editor';
 import { MagicSparkles, GlowingDot } from '@/components/vfx/magic-sparkles';
 import { EditorErrorBoundary } from '@/components/editor/editor-boundary';
@@ -89,11 +90,14 @@ export default function ChapterEditorPage() {
   const chapterId = (params?.chapterId || '') as string;
 
   const [chapter, setChapter] = useState<any>(null);
-  const [allChapters, setAllChapters] = useState<any[]>([]);
+  const [allChapters, setAllChaptersState] = useState<any[]>([]);
+  const allChaptersRef = useRef<any[]>([]);
+  const setAllChapters = useCallback((next: any[] | ((current: any[]) => any[])) => {
+    const chapters = typeof next === 'function' ? next(allChaptersRef.current) : next;
+    allChaptersRef.current = chapters;
+    setAllChaptersState(chapters);
+  }, []);
   const [isMovingTab, setIsMovingTab] = useState(false);
-  const tabDropSavingRef = useRef(false);
-  const tabDropChainRef = useRef<Promise<void>>(Promise.resolve());
-  const queuedDropCountRef = useRef(0);
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [liveHeadings, setLiveHeadings] = useState<EditorHeading[]>([]);
@@ -144,6 +148,31 @@ export default function ChapterEditorPage() {
     setLockState(next);
   }, []);
 
+  const tabDropQueue = useMemo(() => createTabDropQueue<any>({
+    getChapters: () => allChaptersRef.current,
+    setChapters: setAllChapters,
+    saveDrop: async (drop: TabDrop) => {
+      const res = await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
+        method: 'POST',
+        headers: ownedLockRef.current?.token ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token } : undefined,
+        body: JSON.stringify({ chapterIds: drop.chapterIds, move: { chapterId: drop.chapterId, parentId: drop.parentId } })
+      });
+      return Array.isArray(res?.chapters) ? res.chapters : undefined;
+    },
+    onPendingChange: pending => {
+      setChapterLayoutPending(projectId, pending);
+      setIsMovingTab(pending);
+    },
+    onRevisionChange: () => advanceChapterLayoutRevision(projectId),
+    onError: (error, restored) => {
+      const message = error instanceof Error ? error.message : 'Không thể lưu vị trí thẻ.';
+      toast.error(restored ? `${message} Đã khôi phục vị trí đã lưu gần nhất.` : message);
+    },
+    onIdle: () => { void pushSync().catch(() => {}); }
+  }), [projectId, setAllChapters]);
+
+  useEffect(() => () => tabDropQueue.cancel(), [tabDropQueue]);
+
   // Document Tabs sidebar state (persisted)
   const [showTabsSidebar, setShowTabsSidebar] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -175,6 +204,7 @@ export default function ChapterEditorPage() {
 
   const fetchChapterData = useCallback(async (isInitial = true) => {
     if (!chapterId || !projectId) return;
+    const listRevision = tabDropQueue.getRefreshRevision();
     try {
       let res: any;
       let listRes: any;
@@ -242,7 +272,7 @@ export default function ChapterEditorPage() {
           };
         }
       }
-      if (!tabDropSavingRef.current) setAllChapters(getCachedChapters(projectId));
+      tabDropQueue.refresh(getCachedChapters(projectId), listRevision);
     } catch (e: any) {
       toast.error(e.message || 'Lỗi tải thẻ');
     } finally {
@@ -252,7 +282,7 @@ export default function ChapterEditorPage() {
         setTargetChapterInfo(null);
       });
     }
-  }, [chapterId, projectId, router, transitionLockState]);
+  }, [chapterId, projectId, router, tabDropQueue, transitionLockState]);
 
   const handleLockLost = useCallback(async (lock: PublicChapterLock | null) => {
     ownedLockRef.current = null;
@@ -388,11 +418,12 @@ export default function ChapterEditorPage() {
     void pullSync(false).catch(() => {});
 
     const handleSync = async () => {
+      const listRevision = tabDropQueue.getRefreshRevision();
       try {
         const fetcher = hasRemoteChapterApi() ? apiFetchRemote : apiFetch;
         const listRes = await fetcher(`/api/projects/${projectId}/chapters`);
         if (activeChapterIdRef.current === chapterId && Array.isArray(listRes?.chapters)) {
-          if (!tabDropSavingRef.current) setAllChapters(getCachedChapters(projectId));
+          tabDropQueue.refresh(getCachedChapters(projectId), listRevision);
         }
       } catch {}
       if (lockStateRef.current === 'locked' && !isDirtyRef.current && !savingRef.current) {
@@ -402,7 +433,7 @@ export default function ChapterEditorPage() {
     const handleWorkspace = () => {
       if (activeChapterIdRef.current !== chapterId) return;
       const active = getCachedChapters(projectId);
-      if (!tabDropSavingRef.current) setAllChapters(active);
+      tabDropQueue.refresh(active);
       const tombstones = readWorkspaceCache('novelist_tombstones', {});
       if (!tombstones[chapterId] && !tombstones[projectId]) return;
       if (isDirtyRef.current || hasUnsyncedDraftRef.current) {
@@ -446,7 +477,7 @@ export default function ChapterEditorPage() {
       resumeAutoSync(chapterId);
       unprotectChapterFromSync(chapterId);
     };
-  }, [chapterId, fetchChapterData, projectId, transitionLockState]);
+  }, [chapterId, fetchChapterData, projectId, tabDropQueue, transitionLockState]);
 
   useEffect(() => {
     if (lockState !== 'offline' || !hasRemoteChapterApi()) return;
@@ -898,55 +929,7 @@ export default function ChapterEditorPage() {
     }
   };
 
-  const handleDropTab = async (drop: TabDrop) => {
-    const before = new Map(allChapters.map(c => [c.id, { orderIndex: c.orderIndex, parentId: c.parentId || null }]));
-    queuedDropCountRef.current++;
-    tabDropSavingRef.current = true;
-    setIsMovingTab(true);
-
-    try {
-      const reordered = applyTabOrder(allChapters, drop.chapterIds, { chapterId: drop.chapterId, parentId: drop.parentId });
-      setAllChapters(reordered);
-    } catch {
-      queuedDropCountRef.current = Math.max(0, queuedDropCountRef.current - 1);
-      if (queuedDropCountRef.current === 0) {
-        tabDropSavingRef.current = false;
-        setIsMovingTab(false);
-      }
-      return;
-    }
-
-    const executeDrop = async () => {
-      try {
-        const res = await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
-          method: 'POST',
-          headers: ownedLockRef.current?.token ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token } : undefined,
-          body: JSON.stringify({ chapterIds: drop.chapterIds, move: { chapterId: drop.chapterId, parentId: drop.parentId } })
-        });
-        if (Array.isArray(res?.chapters)) {
-          setAllChapters(res.chapters);
-        } else {
-          setAllChapters(getCachedChapters(projectId));
-        }
-        pushSync().catch(() => {});
-      } catch (error: any) {
-        // Restore only the layout metadata, preserving edits made while saving.
-        setAllChapters(current => current.map(c => before.has(c.id) ? { ...c, ...before.get(c.id) } : c));
-        toast.error(error.message || 'Không thể lưu vị trí thẻ. Đã khôi phục vị trí cũ.');
-        throw error;
-      } finally {
-        queuedDropCountRef.current = Math.max(0, queuedDropCountRef.current - 1);
-        if (queuedDropCountRef.current === 0) {
-          tabDropSavingRef.current = false;
-          setIsMovingTab(false);
-        }
-      }
-    };
-
-    const queued = tabDropChainRef.current.then(executeDrop, executeDrop);
-    tabDropChainRef.current = queued;
-    await queued;
-  };
+  const handleDropTab = (drop: TabDrop): Promise<void> => tabDropQueue.drop(drop);
 
   // Move tab strictly swaps among siblings of the same parent (Google Docs standard)
   const handleMoveTab = async (targetId: string, direction: 'up' | 'down') => {

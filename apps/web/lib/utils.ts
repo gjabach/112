@@ -2,7 +2,7 @@ import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { sha256, getCloudAccountKeys, importFullWorkspace, pushSync, pullSync, triggerAutoPush, normalizeEmail, recordTombstone } from './sync';
 import { countWords, getProjectChapterStats } from './sync-core';
-import { cacheChapterApiResponse, getCachedChapters, refreshCachedProjectStats, notifyWorkspaceChanged } from './workspace-cache';
+import { cacheChapterApiResponse, captureChapterLayoutRevisions, getCachedChapters, refreshCachedProjectStats, notifyWorkspaceChanged } from './workspace-cache';
 import { applyTabOrder } from '@novelist/shared';
 export { countWords } from './sync-core';
 
@@ -219,6 +219,7 @@ export class RemoteApiError extends Error {
  * like a successful response containing an older local snapshot.
  */
 export async function apiFetchRemote(path: string, options: RequestInit = {}): Promise<any> {
+  const layoutRevisions = captureChapterLayoutRevisions();
   if (typeof window === 'undefined') throw new RemoteApiError('Không có kết nối trình duyệt');
   const base = API_URL ? API_URL.replace(/\/+$/, '') : '';
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
@@ -241,7 +242,7 @@ export async function apiFetchRemote(path: string, options: RequestInit = {}): P
   if (!response.ok) {
     throw new RemoteApiError(data?.error || data?.message || `Lỗi máy chủ (${response.status})`, response.status, data);
   }
-  return cacheChapterApiResponse(path, data);
+  return cacheChapterApiResponse(path, data, layoutRevisions);
 }
 
 export async function handleLocalApi(path: string, options: RequestInit = {}): Promise<any> {
@@ -1630,6 +1631,7 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
+  const layoutRevisions = captureChapterLayoutRevisions();
   const isBrowser = typeof window !== 'undefined';
   const customApiUrl = process.env.NEXT_PUBLIC_API_URL;
 
@@ -1646,7 +1648,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       const normalizedBase = customApiUrl.replace(/\/+$/, '');
       const normalizedPath = path.startsWith('/') ? path : `/${path}`;
       const res = await fetch(`${normalizedBase}${normalizedPath}`, { cache: 'no-store', ...options, headers });
-      if (res.ok) return isBrowser ? cacheChapterApiResponse(path, await res.json()) : await res.json();
+      if (res.ok) return isBrowser ? cacheChapterApiResponse(path, await res.json(), layoutRevisions) : await res.json();
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
     } catch (e: any) {
@@ -1674,7 +1676,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       });
       const ct = res.headers.get('content-type') || '';
       if (res.ok && ct.includes('application/json')) {
-        return cacheChapterApiResponse(path, await res.json());
+        return cacheChapterApiResponse(path, await res.json(), layoutRevisions);
       }
       // If server returned a meaningful client error (400, 401, 403, 409, 423), throw it!
       // Do NOT silently fall back to local fake user
