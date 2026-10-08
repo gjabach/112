@@ -237,7 +237,7 @@ const postSyncHandler = async (c: any) => {
     : [];
   const existingChapterMap = new Map<string, any>(existingChapters.map((ch: any) => [ch.id, ch]));
 
-  // 3. Process incoming chapters with tombstone gate, lock awareness & recovery idempotency
+  // 3. Process incoming chapters with tombstone and edit-lock checks.
   const incomingChapters = Array.isArray(data.chapters) ? data.chapters : [];
   for (const chapter of incomingChapters) {
     if (!chapter?.id) continue;
@@ -271,6 +271,11 @@ const postSyncHandler = async (c: any) => {
 
     const existingD1 = existingChapterMap.get(chapter.id);
     if (!existingD1) {
+      // Older clients may still push queued recovery cards. Never insert them.
+      if (String(chapter.id).startsWith('recovery_')) {
+        rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: 'RECOVERY_DISABLED' });
+        continue;
+      }
       // New chapter -> insert into D1
       const wordCount = chapter.content ? countWords(chapter.content) : 0;
       const createdChapter = {

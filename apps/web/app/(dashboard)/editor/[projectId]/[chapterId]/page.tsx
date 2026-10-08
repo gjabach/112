@@ -61,7 +61,6 @@ import {
   persistLocalChapterDraft,
   probeApiCapabilities,
   releaseChapterLock,
-  retryPendingRecoveries,
   type ApiConnectionStatus,
   type ChapterVersion,
   type DeviceIdentity,
@@ -412,7 +411,6 @@ export default function ChapterEditorPage() {
     }
     transitionLockState('acquiring');
     setVisibleLock(null);
-    if (navigator.onLine && hasRemoteChapterApi()) void retryPendingRecoveries();
     void fetchChapterData(true);
     void tryAcquireLockRef.current(false);
     void pullSync(false).catch(() => {});

@@ -6,7 +6,7 @@ import { createChapterSchema, updateChapterSchema, applyTabOrder } from '@noveli
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
 import { countWords } from '../utils/validation';
-import { deleteChapterAtomic, handleRecoveryCreation, getAuthoritativeTombstones } from '../services/lifecycle';
+import { deleteChapterAtomic, getAuthoritativeTombstones } from '../services/lifecycle';
 
 type Variables = { db: any; user: AuthUser };
 const chapters = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -266,12 +266,9 @@ chapters.delete('/chapters/:id/lock', async (c) => {
   return c.json({ success: true });
 });
 
-// POST /api/chapters/:id/recoveries - idempotently preserve an offline/conflicting draft
+// Keep a terminal response for older clients; recovery cards are no longer created.
 chapters.post('/chapters/:id/recoveries', async (c) => {
-  const sourceId = c.req.param('id');
-  const body = await c.req.json().catch(() => ({}));
-  const result = await handleRecoveryCreation(c, sourceId, body);
-  return c.json(result.data, result.status as any);
+  return c.json({ error: 'Tính năng tạo thẻ khôi phục đã được gỡ bỏ', code: 'RECOVERY_DISABLED' }, 410);
 });
 
 // POST /api/projects/:projectId/chapters/reorder - Contiguous reorder by array of chapterIds

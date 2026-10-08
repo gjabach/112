@@ -298,54 +298,68 @@ test('REGRESSION D01: DELETE chapter followed by stale POST sync should NOT resu
   assert.equal(resurrected, undefined, `Chapter ${chapter2Id} resurrected via stale POST sync!`);
 });
 
-test('REGRESSION D18: DELETE recovery followed by retry of the same recovery operation should NOT recreate recovery', async () => {
-  const { request } = await setupTestApp();
+test('removed recovery feature rejects old clients without changing chapter order or content', async () => {
+  const { request, sqlite } = await setupTestApp();
+  try {
+    const project = await request('/api/projects', { method: 'POST', body: { title: 'Recovery disabled' } });
+    const projectId = project.data.project.id;
+    await request(`/api/projects/${projectId}/chapters`, { method: 'POST', body: { title: 'Chương 2' } });
+    const before = (await request(`/api/projects/${projectId}/chapters`)).data.chapters;
+    const sourceId = before[0].id;
+    const revisionBefore = sqlite.prepare('SELECT * FROM workspace_sync_state').all();
 
-  // 1. Create project
-  const pRes = await request('/api/projects', {
-    method: 'POST',
-    body: { title: 'Project Recovery Test' }
-  });
-  const projectId = pRes.data.project.id;
-  const listRes = await request(`/api/projects/${projectId}/chapters`);
-  const ch1Id = listRes.data.chapters[0].id;
-
-  // 2. Create recovery from chapter 1
-  const recoveryId = 'recovery_draft_ch1_test123';
-  const recRes = await request(`/api/chapters/${ch1Id}/recoveries`, {
-    method: 'POST',
-    body: {
-      recoveryId,
-      content: 'Bản thảo ngoại tuyến xung đột',
-      deviceLabel: 'Máy tính Chrome'
+    for (const content of ['Bản thảo ngoại tuyến', 'Bản thảo khác', 'Bản thảo ngoại tuyến']) {
+      const response = await request(`/api/chapters/${sourceId}/recoveries`, {
+        method: 'POST',
+        body: { recoveryId: 'recovery_old_client', content, deviceLabel: 'PC' }
+      });
+      assert.equal(response.status, 410);
+      assert.equal(response.data.code, 'RECOVERY_DISABLED');
     }
-  });
-  assert.equal(recRes.status, 201);
-  assert.equal(recRes.data.chapter.id, recoveryId);
+    const after = (await request(`/api/projects/${projectId}/chapters`)).data.chapters;
+    assert.deepEqual(after, before);
+    assert.deepEqual(sqlite.prepare('SELECT * FROM workspace_sync_state').all(), revisionBefore);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM recovery_operations').get().count, 0);
 
-  // 3. User deletes the recovery chapter
-  const delRecRes = await request(`/api/chapters/${recoveryId}`, {
-    method: 'DELETE'
-  });
-  assert.equal(delRecRes.status, 200);
+    const syncResponse = await request('/api/sync', {
+      method: 'POST',
+      body: {
+        lastModified: Date.now(),
+        data: {
+          projects: [project.data.project],
+          chapters: [{ ...before[0], id: 'recovery_queued_client', content: 'Queued recovery' }]
+        }
+      }
+    });
+    assert.equal(syncResponse.status, 200);
+    assert.ok(syncResponse.data.rejectedEntities.some(item => item.id === 'recovery_queued_client' && item.reason === 'RECOVERY_DISABLED'));
+    assert.deepEqual((await request(`/api/projects/${projectId}/chapters`)).data.chapters, before);
+  } finally {
+    sqlite.close();
+  }
+});
 
-  // 4. Client's retry loop retries the same pending recovery draft
-  const retryRecRes = await request(`/api/chapters/${ch1Id}/recoveries`, {
-    method: 'POST',
-    body: {
-      recoveryId,
-      content: 'Bản thảo ngoại tuyến xung đột',
-      deviceLabel: 'Máy tính Chrome'
-    }
-  });
-
-  // EXPECTATION AFTER ROOT CAUSE FIX:
-  // Must return 410 Gone / terminal rejection, or at least NOT recreate the chapter in D1!
-  assert.notEqual(retryRecRes.status, 201, `Recovery ${recoveryId} was recreated after being deleted!`);
-
-  const listAfterRetry = await request(`/api/projects/${projectId}/chapters`);
-  const foundRec = listAfterRetry.data.chapters.find(c => c.id === recoveryId);
-  assert.equal(foundRec, undefined, `Recovery ${recoveryId} was found active in D1 after deletion!`);
+test('legacy recovery cards can still be deleted and cannot be recreated by retries', async () => {
+  const { request, sqlite } = await setupTestApp();
+  try {
+    const project = await request('/api/projects', { method: 'POST', body: { title: 'Legacy recovery' } });
+    const projectId = project.data.project.id;
+    const source = (await request(`/api/projects/${projectId}/chapters`)).data.chapters[0];
+    const recoveryId = 'recovery_legacy_card';
+    sqlite.prepare(`INSERT INTO chapters (id, project_id, title, content, order_index, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(recoveryId, projectId, 'Khôi phục cũ', 'Legacy draft', 1, Date.now(), Date.now());
+    assert.equal((await request(`/api/chapters/${recoveryId}`, { method: 'DELETE' })).status, 200);
+    const retry = await request(`/api/chapters/${source.id}/recoveries`, {
+      method: 'POST', body: { recoveryId, content: 'Legacy draft' }
+    });
+    assert.equal(retry.status, 410);
+    assert.equal(retry.data.code, 'RECOVERY_DISABLED');
+    const chapters = (await request(`/api/projects/${projectId}/chapters`)).data.chapters;
+    assert.equal(chapters.length, 1);
+    assert.equal(chapters[0].id, source.id);
+  } finally {
+    sqlite.close();
+  }
 });
 
 test('REGRESSION D02: Device A deletes, Device B offline pushes stale snapshot -> chapter rejected, D1 stays clean', async () => {
@@ -610,49 +624,6 @@ test('REGRESSION D16: DELETE retry with same operationId is idempotent ack', asy
   });
   assert.equal(del2.status, 200);
   assert.ok(del2.data.deletedIds.includes(ch2Id));
-});
-
-test('REGRESSION D20/D21: Recovery conflict with changed payload (409) and source deleted (410)', async () => {
-  const { request } = await setupTestApp();
-
-  const pRes = await request('/api/projects', { method: 'POST', body: { title: 'Project Rec Conflicts' } });
-  const projectId = pRes.data.project.id;
-
-  const list = await request(`/api/projects/${projectId}/chapters`);
-  const ch1Id = list.data.chapters[0].id;
-
-  const recoveryId = 'recovery_conflict_test_1';
-
-  // 1. Initial recovery
-  const r1 = await request(`/api/chapters/${ch1Id}/recoveries`, {
-    method: 'POST',
-    body: { recoveryId, content: 'Bản gốc conflict', deviceLabel: 'PC' }
-  });
-  assert.equal(r1.status, 201);
-
-  // 2. Duplicate recovery with changed payload must return 409
-  const r2 = await request(`/api/chapters/${ch1Id}/recoveries`, {
-    method: 'POST',
-    body: { recoveryId, content: 'Nội dung khác hoàn toàn', deviceLabel: 'PC' }
-  });
-  assert.equal(r2.status, 409);
-  assert.equal(r2.data.code, 'OPERATION_PAYLOAD_MISMATCH');
-
-  // 3. Add second chapter then delete source chapter ch1Id
-  await request(`/api/projects/${projectId}/chapters`, {
-    method: 'POST',
-    body: { title: 'Chương Phụ Để Giữ Dự Án' }
-  });
-  const delSource = await request(`/api/chapters/${ch1Id}`, { method: 'DELETE' });
-  assert.equal(delSource.status, 200);
-
-  // 4. Recovery request against deleted source must return 410
-  const r3 = await request(`/api/chapters/${ch1Id}/recoveries`, {
-    method: 'POST',
-    body: { recoveryId: 'recovery_new_rec_against_deleted', content: 'Draft', deviceLabel: 'PC' }
-  });
-  assert.equal(r3.status, 410);
-  assert.equal(r3.data.code, 'SOURCE_DELETED');
 });
 
 test('REGRESSION D26: D1 active chapters empty while KV has old chapters -> GET sync does not resurrect from KV', async () => {

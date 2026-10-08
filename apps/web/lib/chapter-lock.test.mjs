@@ -39,25 +39,10 @@ test('serialized autosave always finishes with the newest snapshot', async () =>
   assert.equal(writes.at(-1), 'bản mới nhất');
 });
 
-test('recovery creation is idempotent and never overwrites the original chapter', () => {
-  const chapters = new Map([['chapter-1', { id: 'chapter-1', content: 'bản máy chủ' }]]);
-  const recover = (id, content) => {
-    if (!chapters.has(id)) chapters.set(id, { id, content });
-    return chapters.get(id);
-  };
-  recover('recovery_session_chapter-1', 'bản ngoại tuyến');
-  recover('recovery_session_chapter-1', 'yêu cầu thử lại');
-  assert.equal(chapters.size, 2);
-  assert.equal(chapters.get('chapter-1').content, 'bản máy chủ');
-  assert.equal(chapters.get('recovery_session_chapter-1').content, 'bản ngoại tuyến');
-});
-
-test('offline drafts and failed recoveries survive reloads', async () => {
+test('offline drafts remain available on their original chapter', async () => {
   const clientSource = await readFile(new URL('./chapter-lock.ts', import.meta.url), 'utf8');
   assert.match(clientSource, /novelist_pending_chapter_drafts/);
   assert.match(clientSource, /getPendingChapterDraft/);
-  assert.match(clientSource, /novelist_pending_recoveries/);
-  assert.match(clientSource, /recoveryRequests/);
 });
 
 test('background sync protects the actively edited chapter instead of replacing it', async () => {
