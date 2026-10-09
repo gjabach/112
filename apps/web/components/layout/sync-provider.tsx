@@ -1,7 +1,18 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { initAutoSync, syncBidirectional, exportFullWorkspace, type SyncStatus } from '@/lib/sync';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+} from 'react';
+import {
+  initAutoSync,
+  syncBidirectional,
+  exportFullWorkspace,
+  type SyncStatus,
+} from '@/lib/sync';
 import { Button } from '@/components/ui/button';
 import { Cloud, Check, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -15,7 +26,7 @@ interface SyncContextType {
 const SyncContext = createContext<SyncContextType>({
   status: 'idle',
   lastSynced: null,
-  syncNow: async () => false
+  syncNow: async () => false,
 });
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
@@ -65,19 +76,27 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await syncBidirectional();
       const current = exportFullWorkspace();
-      const totalChapters = Array.isArray(current?.chapters) ? current.chapters.length : 0;
+      const totalChapters = Array.isArray(current?.chapters)
+        ? current.chapters.length
+        : 0;
 
       if (res.success && res.writeAcknowledged) {
         setStatus('synced');
         setLastSynced(Date.now());
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('novelist-sync-updated', { detail: { data: current, fromServer: true, serverAck: true } }));
+          window.dispatchEvent(
+            new CustomEvent('novelist-sync-updated', {
+              detail: { data: current, fromServer: true, serverAck: true },
+            })
+          );
         }
         toast.success(`Đồng bộ hoàn tất! Hiện có ${totalChapters} chương`);
         return true;
       } else {
         setStatus('error');
-        toast.error('Chưa thể kết nối đám mây: ' + (res.error || 'Vui lòng thử lại'));
+        toast.error(
+          'Chưa thể kết nối đám mây: ' + (res.error || 'Vui lòng thử lại')
+        );
         return false;
       }
     } catch (e: any) {
@@ -103,12 +122,12 @@ export function useSync() {
  * Can be rendered on mobile header or desktop toolbar.
  * Provides clear visual feedback and manual one-tap sync.
  */
-export function SyncStatusButton({ 
-  className = '', 
-  compact = false 
-}: { 
-  className?: string; 
-  compact?: boolean; 
+export function SyncStatusButton({
+  className = '',
+  compact = false,
+}: {
+  className?: string;
+  compact?: boolean;
 }) {
   const { status, syncNow } = useSync();
   const [isClicking, setIsClicking] = useState(false);
@@ -131,15 +150,23 @@ export function SyncStatusButton({
         size="icon"
         onClick={handleClick}
         disabled={isSpinning}
-        title={isSpinning ? 'Đang đồng bộ đám mây...' : status === 'error' ? 'Lỗi đồng bộ (Bấm để thử lại)' : status === 'synced' ? 'Đã lưu trên đám mây' : 'Đồng bộ đám mây (Bấm để cập nhật)'}
+        title={
+          isSpinning
+            ? 'Đang đồng bộ đám mây...'
+            : status === 'error'
+              ? 'Lỗi đồng bộ (Bấm để thử lại)'
+              : status === 'synced'
+                ? 'Đã lưu trên đám mây'
+                : 'Đồng bộ đám mây (Bấm để cập nhật)'
+        }
         className={`h-8 w-8 rounded-lg relative ${className}`}
       >
         {isSpinning ? (
           <Loader2 className="w-4 h-4 animate-spin text-primary" />
         ) : status === 'error' ? (
-          <AlertCircle className="w-4 h-4 text-rose-500" />
+          <AlertCircle className="w-4 h-4 text-destructive" />
         ) : status === 'synced' ? (
-          <Cloud className="w-4 h-4 text-emerald-500 hover:text-emerald-400" />
+          <Cloud className="w-4 h-4 text-[hsl(var(--success))] hover:text-[hsl(var(--success))]" />
         ) : (
           <Cloud className="w-4 h-4 text-muted-foreground hover:text-foreground" />
         )}
@@ -155,9 +182,9 @@ export function SyncStatusButton({
       disabled={isSpinning}
       className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition-all ${
         status === 'error'
-          ? 'border-rose-500/40 text-rose-500 hover:bg-rose-500/10'
+          ? 'border-destructive/40 text-destructive hover:bg-destructive/10'
           : status === 'synced'
-            ? 'border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:border-emerald-500/50'
+            ? 'border-emerald-500/30 text-[hsl(var(--success))] hover:border-emerald-500/50'
             : 'border-border/70 hover:border-primary/50 text-foreground'
       } ${className}`}
       title="Bấm để đồng bộ dữ liệu ngay lập tức giữa PC và Điện thoại"
@@ -169,12 +196,12 @@ export function SyncStatusButton({
         </>
       ) : status === 'error' ? (
         <>
-          <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+          <AlertCircle className="w-3.5 h-3.5 text-destructive" />
           <span>Thử lại đồng bộ</span>
         </>
       ) : status === 'synced' ? (
         <>
-          <Cloud className="w-3.5 h-3.5 text-emerald-500" />
+          <Cloud className="w-3.5 h-3.5 text-[hsl(var(--success))]" />
           <span className="hidden sm:inline">Đã đồng bộ</span>
         </>
       ) : (

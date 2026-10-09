@@ -1,66 +1,56 @@
-'use client';
-
 import React from 'react';
-
-interface SparkleProps {
+export function SparkleIcon({
+  size = 16,
+  color = 'currentColor',
+  style,
+}: {
   size?: number;
   color?: string;
   style?: React.CSSProperties;
-}
-
-export function SparkleIcon({ size = 16, color = 'currentColor', style }: SparkleProps) {
+}) {
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
       fill="none"
-      className="inline-block animate-pulse-slow shrink-0"
       style={style}
+      className="inline-block shrink-0"
+      aria-hidden="true"
     >
       <path
-        d="M12 0L14.5 9.5L24 12L14.5 14.5L12 24L9.5 14.5L0 12L9.5 9.5L12 0Z"
-        fill={color}
+        d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
       />
     </svg>
   );
 }
-
-interface MagicSparklesProps {
+export function MagicSparkles({
+  children,
+  className = '',
+}: {
   children: React.ReactNode;
   active?: boolean;
   className?: string;
-}
-
-export function MagicSparkles({ children, active = true, className = '' }: MagicSparklesProps) {
-  if (!active) return <>{children}</>;
-
+}) {
   return (
-    <span className={`relative inline-flex items-center ${className}`}>
-      {/* Top right sparkle */}
-      <span className="absolute -top-1.5 -right-1.5 pointer-events-none z-10 animate-float" style={{ animationDelay: '0.2s' }}>
-        <SparkleIcon size={11} color="#f59e0b" />
-      </span>
-
-      {/* Bottom left sparkle */}
-      <span className="absolute -bottom-1 -left-1.5 pointer-events-none z-10 animate-pulse-slow" style={{ animationDelay: '0.8s' }}>
-        <SparkleIcon size={9} color="#a855f7" />
-      </span>
-
-      {children}
-    </span>
+    <span className={`inline-flex items-center ${className}`}>{children}</span>
   );
 }
-
-export function GlowingDot({ color = 'bg-primary', ping = true, className = '' }: { color?: string; ping?: boolean; className?: string }) {
+export function GlowingDot({
+  color = 'bg-primary',
+  className = '',
+}: {
+  color?: string;
+  ping?: boolean;
+  className?: string;
+}) {
   return (
-    <span className={`relative flex h-2 w-2 ${className}`}>
-      {ping && (
-        <span
-          className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${color}`}
-        />
-      )}
-      <span className={`relative inline-flex rounded-full h-2 w-2 ${color}`} />
-    </span>
+    <span
+      aria-hidden="true"
+      className={`inline-flex h-2 w-2 shrink-0 rounded-full ${color} ${className}`}
+    />
   );
 }

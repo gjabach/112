@@ -23,17 +23,22 @@ interface Particle {
 }
 
 const PALETTES = {
-  celebration: ['#a855f7', '#ec4899', '#3b82f6', '#10b981', '#f59e0b', '#6366f1', '#e11d48'],
-  stardust: ['#fbbf24', '#f59e0b', '#fde68a', '#e0e7ff', '#c084fc', '#ffffff'],
-  milestone: ['#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#f59e0b', '#ffffff'],
+  celebration: ['#256A5D', '#739888', '#B6965D', '#C6B896', '#566D60'],
+  stardust: ['#B6965D', '#D6C49E', '#739888', '#FFFCF6'],
+  milestone: ['#256A5D', '#739888', '#B6965D', '#FFFCF6'],
 };
 
 // Global event bus for firing confetti from anywhere
 const CONFETTI_EVENT = 'novelist-trigger-confetti';
 
 export function fireConfetti(options?: ConfettiOptions) {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(CONFETTI_EVENT, { detail: options || {} }));
+  if (
+    typeof window !== 'undefined' &&
+    !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ) {
+    window.dispatchEvent(
+      new CustomEvent(CONFETTI_EVENT, { detail: options || {} })
+    );
   }
 }
 
@@ -58,7 +63,8 @@ export function ConfettiCanvas() {
 
     const spawnParticles = (opts: ConfettiOptions) => {
       const type = opts.type || 'celebration';
-      const count = opts.particleCount || (type === 'milestone' ? 80 : 50);
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const count = Math.min(opts.particleCount || 24, 32);
       const originX = (opts.origin?.x ?? 0.5) * canvas.width;
       const originY = (opts.origin?.y ?? 0.4) * canvas.height;
       const colors = PALETTES[type] || PALETTES.celebration;
@@ -68,7 +74,8 @@ export function ConfettiCanvas() {
         const speed = Math.random() * (type === 'stardust' ? 6 : 12) + 3;
         const color = colors[Math.floor(Math.random() * colors.length)];
         const shapeRand = Math.random();
-        const shape = shapeRand < 0.4 ? 'circle' : shapeRand < 0.8 ? 'rect' : 'star';
+        const shape =
+          shapeRand < 0.4 ? 'circle' : shapeRand < 0.8 ? 'rect' : 'star';
 
         particles.push({
           x: originX,
@@ -90,7 +97,13 @@ export function ConfettiCanvas() {
       }
     };
 
-    const drawStar = (cx: number, cy: number, spikes: number, outerR: number, innerR: number) => {
+    const drawStar = (
+      cx: number,
+      cy: number,
+      spikes: number,
+      outerR: number,
+      innerR: number
+    ) => {
       let rot = (Math.PI / 2) * 3;
       let x = cx;
       let y = cy;
@@ -157,6 +170,16 @@ export function ConfettiCanvas() {
       }
     };
 
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const stop = () => {
+      if (reduced.matches) {
+        if (animationId) cancelAnimationFrame(animationId);
+        animationId = null;
+        particles = [];
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    };
+    reduced.addEventListener('change', stop);
     const handleTrigger = (e: Event) => {
       const customEvent = e as CustomEvent<ConfettiOptions>;
       spawnParticles(customEvent.detail || {});
@@ -165,6 +188,7 @@ export function ConfettiCanvas() {
     window.addEventListener(CONFETTI_EVENT, handleTrigger);
 
     return () => {
+      reduced.removeEventListener('change', stop);
       window.removeEventListener('resize', resize);
       window.removeEventListener(CONFETTI_EVENT, handleTrigger);
       if (animationId) cancelAnimationFrame(animationId);

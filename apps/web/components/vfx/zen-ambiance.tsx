@@ -1,7 +1,16 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Volume2, VolumeX, CloudRain, Waves, Wind, Moon, Sun, Sparkles } from 'lucide-react';
+import {
+  Volume2,
+  VolumeX,
+  CloudRain,
+  Waves,
+  Wind,
+  Moon,
+  Sun,
+  Sparkles,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export type AmbianceSound = 'off' | 'rain' | 'waves' | 'cosmic';
@@ -11,7 +20,10 @@ interface ZenAmbianceProps {
   className?: string;
 }
 
-export function ZenAmbianceController({ onToggleSpotlight, className = '' }: ZenAmbianceProps) {
+export function ZenAmbianceController({
+  onToggleSpotlight,
+  className = '',
+}: ZenAmbianceProps) {
   const [sound, setSound] = useState<AmbianceSound>('off');
   const [volume, setVolume] = useState<number>(0.3);
   const [spotlight, setSpotlight] = useState<boolean>(false);
@@ -25,7 +37,10 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
   const stopAudio = () => {
     try {
       if (noiseSourceRef.current) {
-        if ('stop' in noiseSourceRef.current && typeof (noiseSourceRef.current as any).stop === 'function') {
+        if (
+          'stop' in noiseSourceRef.current &&
+          typeof (noiseSourceRef.current as any).stop === 'function'
+        ) {
           (noiseSourceRef.current as any).stop();
         }
         noiseSourceRef.current.disconnect();
@@ -54,7 +69,8 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
     if (type === 'off') return;
 
     try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
 
       const ctx = new AudioCtx();
@@ -139,7 +155,10 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
     if (gainNodeRef.current && audioCtxRef.current) {
-      gainNodeRef.current.gain.setValueAtTime(newVol, audioCtxRef.current.currentTime);
+      gainNodeRef.current.gain.setValueAtTime(
+        newVol,
+        audioCtxRef.current.currentTime
+      );
     }
   };
 
@@ -168,7 +187,11 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
         }`}
         title="Không gian viết Zen & Âm thanh thư giãn"
       >
-        {sound !== 'off' ? <Volume2 className="w-3.5 h-3.5 animate-pulse" /> : <Wind className="w-3.5 h-3.5" />}
+        {sound !== 'off' ? (
+          <Volume2 className="w-3.5 h-3.5" />
+        ) : (
+          <Wind className="w-3.5 h-3.5" />
+        )}
         <span className="hidden sm:inline">Zen Ambiance</span>
       </Button>
 
@@ -179,19 +202,28 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
               <Sparkles className="w-3.5 h-3.5 text-primary" />
               Không gian sáng tác Zen
             </span>
-            <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground" onClick={() => setOpen(false)}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 text-muted-foreground"
+              onClick={() => setOpen(false)}
+            >
               ✕
             </Button>
           </div>
 
           {/* Sound options */}
           <div className="space-y-1.5 mb-3">
-            <span className="text-[11px] text-muted-foreground font-medium">Âm thanh tập trung (Offline)</span>
+            <span className="text-[11px] text-muted-foreground font-medium">
+              Âm thanh tập trung (Offline)
+            </span>
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 onClick={() => handleSoundChange('off')}
                 className={`py-1.5 px-2 rounded-lg border text-center transition-all ${
-                  sound === 'off' ? 'bg-primary text-primary-foreground border-primary font-medium' : 'hover:bg-accent border-border/70 text-muted-foreground'
+                  sound === 'off'
+                    ? 'bg-primary text-primary-foreground border-primary font-medium'
+                    : 'hover:bg-accent border-border/70 text-muted-foreground'
                 }`}
               >
                 Tắt âm
@@ -199,7 +231,9 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
               <button
                 onClick={() => handleSoundChange('rain')}
                 className={`py-1.5 px-2 rounded-lg border flex items-center justify-center gap-1 transition-all ${
-                  sound === 'rain' ? 'bg-primary text-primary-foreground border-primary font-medium' : 'hover:bg-accent border-border/70 text-muted-foreground'
+                  sound === 'rain'
+                    ? 'bg-primary text-primary-foreground border-primary font-medium'
+                    : 'hover:bg-accent border-border/70 text-muted-foreground'
                 }`}
               >
                 <CloudRain className="w-3 h-3" /> Mưa rơi
@@ -207,7 +241,9 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
               <button
                 onClick={() => handleSoundChange('waves')}
                 className={`py-1.5 px-2 rounded-lg border flex items-center justify-center gap-1 transition-all ${
-                  sound === 'waves' ? 'bg-primary text-primary-foreground border-primary font-medium' : 'hover:bg-accent border-border/70 text-muted-foreground'
+                  sound === 'waves'
+                    ? 'bg-primary text-primary-foreground border-primary font-medium'
+                    : 'hover:bg-accent border-border/70 text-muted-foreground'
                 }`}
               >
                 <Waves className="w-3 h-3" /> Sóng biển
@@ -215,7 +251,9 @@ export function ZenAmbianceController({ onToggleSpotlight, className = '' }: Zen
               <button
                 onClick={() => handleSoundChange('cosmic')}
                 className={`py-1.5 px-2 rounded-lg border flex items-center justify-center gap-1 transition-all ${
-                  sound === 'cosmic' ? 'bg-primary text-primary-foreground border-primary font-medium' : 'hover:bg-accent border-border/70 text-muted-foreground'
+                  sound === 'cosmic'
+                    ? 'bg-primary text-primary-foreground border-primary font-medium'
+                    : 'hover:bg-accent border-border/70 text-muted-foreground'
                 }`}
               >
                 <Moon className="w-3 h-3" /> Không gian

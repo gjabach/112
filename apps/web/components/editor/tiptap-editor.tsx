@@ -24,7 +24,7 @@ import {
   Redo,
   Strikethrough,
   Highlighter,
-  Search
+  Search,
 } from 'lucide-react';
 import { FindAndReplaceExtension } from './find-replace-extension';
 import { FindReplaceDialog } from './find-replace-dialog';
@@ -50,7 +50,10 @@ function formatPlainTextToHtml(text: string): string {
   if (/<[a-z][\s\S]*>/i.test(text)) return text;
   return text
     .split(/\r?\n/)
-    .map(line => `<p>${line ? line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : '<br>'}</p>`)
+    .map(
+      (line) =>
+        `<p>${line ? line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : '<br>'}</p>`
+    )
     .join('');
 }
 
@@ -68,11 +71,20 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
     if (node.type?.name === 'heading') {
       const level = Number(node.attrs?.level) || 1;
       let text = node.textContent?.trim() || '';
-      if (text && /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+      if (
+        text &&
+        /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(
+          text
+        )
+      ) {
         const next = blocks[i + 1]?.node;
         if (next && next.type?.name === 'paragraph') {
           const nextText = next.textContent?.trim() || '';
-          if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText)) {
+          if (
+            nextText &&
+            nextText.length < 120 &&
+            !detectHeadingFromText(nextText)
+          ) {
             text = `${text} ${nextText}`;
           }
         }
@@ -82,7 +94,7 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
           id: `heading-${pos}`,
           level,
           text,
-          pos
+          pos,
         });
       }
     } else if (node.type?.name === 'paragraph') {
@@ -91,11 +103,19 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
         const detected = detectHeadingFromText(text);
         if (detected) {
           let combinedText = detected.text;
-          if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(combinedText)) {
+          if (
+            /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(
+              combinedText
+            )
+          ) {
             const next = blocks[i + 1]?.node;
             if (next && next.type?.name === 'paragraph') {
               const nextText = next.textContent?.trim() || '';
-              if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText)) {
+              if (
+                nextText &&
+                nextText.length < 120 &&
+                !detectHeadingFromText(nextText)
+              ) {
                 combinedText = `${combinedText} ${nextText}`;
               }
             }
@@ -104,7 +124,7 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
             id: `detected-${pos}`,
             level: detected.level,
             text: combinedText,
-            pos
+            pos,
           });
         }
       }
@@ -113,7 +133,13 @@ function extractHeadingsFromEditor(ed: any): EditorHeading[] {
   return list;
 }
 
-export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu viết...', editable = true, onHeadingsChange }: TiptapEditorProps) {
+export function TiptapEditor({
+  content,
+  onChange,
+  placeholder = 'Bắt đầu viết...',
+  editable = true,
+  onHeadingsChange,
+}: TiptapEditorProps) {
   const lastEmittedContentRef = useRef<string | null>(null);
   const lastUserTypingTimeRef = useRef<number>(0);
   const isApplyingRemoteUpdateRef = useRef<boolean>(false);
@@ -135,7 +161,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: { levels: [1, 2, 3] }
+        heading: { levels: [1, 2, 3] },
       }),
       Placeholder.configure({ placeholder }),
       CharacterCount,
@@ -143,7 +169,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       Link.configure({ openOnClick: false }),
       Image,
       Highlight,
-      FindAndReplaceExtension
+      FindAndReplaceExtension,
     ],
     content: initialContent,
     editable,
@@ -160,7 +186,7 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
         }
       } catch {}
     },
-    immediatelyRender: false
+    immediatelyRender: false,
   });
 
   useEffect(() => {
@@ -172,7 +198,11 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     const { from, to, empty } = editor.state.selection;
     if (!empty && from < to) {
       const selectedText = editor.state.doc.textBetween(from, to, ' ');
-      if (selectedText && selectedText.trim().length > 0 && selectedText.length < 150) {
+      if (
+        selectedText &&
+        selectedText.trim().length > 0 &&
+        selectedText.length < 150
+      ) {
         setInitialSearchQuery(selectedText.trim());
       }
     }
@@ -213,8 +243,14 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
     if (content === lastEmittedContentRef.current) return;
 
     try {
-      const parsed = typeof content === 'object' ? content : (content ? JSON.parse(content) : '');
-      const incomingJsonStr = typeof content === 'string' ? content : JSON.stringify(content);
+      const parsed =
+        typeof content === 'object'
+          ? content
+          : content
+            ? JSON.parse(content)
+            : '';
+      const incomingJsonStr =
+        typeof content === 'string' ? content : JSON.stringify(content);
 
       // Deep compare current editor JSON to avoid unnecessary re-renders if document is identical
       const currentJsonStr = JSON.stringify(editor.getJSON());
@@ -278,7 +314,12 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   // Jump to heading from Document Tabs sidebar
   useEffect(() => {
     const handleJumpHeading = (e: Event) => {
-      const custom = e as CustomEvent<{ pos?: number; text?: string; index?: number; id?: string }>;
+      const custom = e as CustomEvent<{
+        pos?: number;
+        text?: string;
+        index?: number;
+        id?: string;
+      }>;
       if (!editor) return;
       const { pos, text, index } = custom.detail || {};
 
@@ -288,13 +329,21 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       if (text) {
         const candidates: number[] = [];
         editor.state.doc.descendants((node: any, p: number) => {
-          if ((node.type?.name === 'heading' || node.type?.name === 'paragraph') && node.textContent?.trim() === text.trim()) {
+          if (
+            (node.type?.name === 'heading' ||
+              node.type?.name === 'paragraph') &&
+            node.textContent?.trim() === text.trim()
+          ) {
             candidates.push(p);
           }
         });
 
         if (candidates.length > 0) {
-          if (typeof index === 'number' && index >= 0 && index < candidates.length) {
+          if (
+            typeof index === 'number' &&
+            index >= 0 &&
+            index < candidates.length
+          ) {
             targetPos = candidates[index];
           } else if (typeof pos === 'number' && pos >= 0) {
             // Pick candidate closest to given pos
@@ -312,23 +361,45 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
       }
 
       // Fallback to direct position if candidates not found or text not provided
-      if (targetPos < 0 && typeof pos === 'number' && pos >= 0 && pos < editor.state.doc.content.size) {
+      if (
+        targetPos < 0 &&
+        typeof pos === 'number' &&
+        pos >= 0 &&
+        pos < editor.state.doc.content.size
+      ) {
         targetPos = pos;
       }
 
       if (targetPos >= 0) {
         try {
-          editor.chain().focus().setTextSelection(targetPos + 1).scrollIntoView().run();
+          editor
+            .chain()
+            .focus()
+            .setTextSelection(targetPos + 1)
+            .scrollIntoView()
+            .run();
           const domNode = editor.view.nodeDOM(targetPos);
-          const el = domNode instanceof HTMLElement
-            ? domNode
-            : domNode?.parentElement instanceof HTMLElement
-              ? domNode.parentElement
-              : null;
+          const el =
+            domNode instanceof HTMLElement
+              ? domNode
+              : domNode?.parentElement instanceof HTMLElement
+                ? domNode.parentElement
+                : null;
 
           if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.classList.add('bg-primary/20', 'rounded-md', 'transition-all', 'duration-500');
+            el.scrollIntoView({
+              behavior: window.matchMedia('(prefers-reduced-motion: reduce)')
+                .matches
+                ? 'instant'
+                : 'smooth',
+              block: 'center',
+            });
+            el.classList.add(
+              'bg-primary/20',
+              'rounded-md',
+              'transition-all',
+              'duration-500'
+            );
             setTimeout(() => {
               el.classList.remove('bg-primary/20');
             }, 1200);
@@ -349,72 +420,110 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
   // TipTap's default toggleHeading calls ProseMirror's setBlockType on the whole enclosing paragraph,
   // causing any text BEFORE (or after) the selection in the same block to also become enlarged.
   // This helper splits the block before/after the selection so ONLY the highlighted text becomes a heading.
-  const toggleHeadingSafe = useCallback((level: 1 | 2 | 3) => {
-    if (!editor) return;
-    const { from, to, empty } = editor.state.selection;
+  const toggleHeadingSafe = useCallback(
+    (level: 1 | 2 | 3) => {
+      if (!editor) return;
+      const { from, to, empty } = editor.state.selection;
 
-    // If cursor is collapsed (no text selected), use default toggleHeading
-    if (empty || from >= to) {
-      editor.chain().focus().toggleHeading({ level }).run();
-      return;
-    }
-
-    const { tr } = editor.state;
-    const resFrom = tr.doc.resolve(from);
-    const resTo = tr.doc.resolve(to);
-
-    const blockStart = resFrom.start(resFrom.depth);
-    const blockEnd = resTo.end(resTo.depth);
-
-    const hasContentBefore = from > blockStart;
-    const hasContentAfter = to < blockEnd;
-
-    // If the selection covers the entire block from boundary to boundary, standard toggle is fine
-    if (!hasContentBefore && !hasContentAfter && resFrom.depth === resTo.depth) {
-      editor.chain().focus().toggleHeading({ level }).run();
-      return;
-    }
-
-    try {
-      let currentTr = tr;
-      if (hasContentBefore) {
-        currentTr = currentTr.split(from);
-      }
-      const mappedTo = currentTr.mapping.map(to, -1);
-      const resMappedTo = currentTr.doc.resolve(mappedTo);
-      if (mappedTo < resMappedTo.end(resMappedTo.depth)) {
-        currentTr = currentTr.split(mappedTo);
-      }
-
-      const targetStart = currentTr.mapping.map(from, 1);
-      const targetEnd = currentTr.mapping.map(to, -1);
-      const headingType = editor.schema.nodes.heading;
-      const paragraphType = editor.schema.nodes.paragraph;
-
-      if (headingType && paragraphType) {
-        const resTarget = currentTr.doc.resolve(targetStart);
-        const isCurrentHeading = resTarget.parent.type === headingType && resTarget.parent.attrs.level === level;
-        currentTr.setBlockType(targetStart, targetEnd, isCurrentHeading ? paragraphType : headingType, { level });
-        currentTr.setSelection(TextSelection.create(currentTr.doc, targetStart, targetEnd));
-        editor.view.dispatch(currentTr);
-        editor.view.focus();
+      // If cursor is collapsed (no text selected), use default toggleHeading
+      if (empty || from >= to) {
+        editor.chain().focus().toggleHeading({ level }).run();
         return;
       }
-    } catch {
-      // Fallback if split fails on complex block structure
-    }
 
-    editor.chain().focus().toggleHeading({ level }).run();
-  }, [editor]);
+      const { tr } = editor.state;
+      const resFrom = tr.doc.resolve(from);
+      const resTo = tr.doc.resolve(to);
 
-  if (!editor) return <div className="animate-pulse h-64 bg-muted rounded-lg"></div>;
+      const blockStart = resFrom.start(resFrom.depth);
+      const blockEnd = resTo.end(resTo.depth);
+
+      const hasContentBefore = from > blockStart;
+      const hasContentAfter = to < blockEnd;
+
+      // If the selection covers the entire block from boundary to boundary, standard toggle is fine
+      if (
+        !hasContentBefore &&
+        !hasContentAfter &&
+        resFrom.depth === resTo.depth
+      ) {
+        editor.chain().focus().toggleHeading({ level }).run();
+        return;
+      }
+
+      try {
+        let currentTr = tr;
+        if (hasContentBefore) {
+          currentTr = currentTr.split(from);
+        }
+        const mappedTo = currentTr.mapping.map(to, -1);
+        const resMappedTo = currentTr.doc.resolve(mappedTo);
+        if (mappedTo < resMappedTo.end(resMappedTo.depth)) {
+          currentTr = currentTr.split(mappedTo);
+        }
+
+        const targetStart = currentTr.mapping.map(from, 1);
+        const targetEnd = currentTr.mapping.map(to, -1);
+        const headingType = editor.schema.nodes.heading;
+        const paragraphType = editor.schema.nodes.paragraph;
+
+        if (headingType && paragraphType) {
+          const resTarget = currentTr.doc.resolve(targetStart);
+          const isCurrentHeading =
+            resTarget.parent.type === headingType &&
+            resTarget.parent.attrs.level === level;
+          currentTr.setBlockType(
+            targetStart,
+            targetEnd,
+            isCurrentHeading ? paragraphType : headingType,
+            { level }
+          );
+          currentTr.setSelection(
+            TextSelection.create(currentTr.doc, targetStart, targetEnd)
+          );
+          editor.view.dispatch(currentTr);
+          editor.view.focus();
+          return;
+        }
+      } catch {
+        // Fallback if split fails on complex block structure
+      }
+
+      editor.chain().focus().toggleHeading({ level }).run();
+    },
+    [editor]
+  );
+
+  if (!editor)
+    return <div className="animate-pulse h-64 bg-muted rounded-lg"></div>;
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden relative">
       {/* Docked Formatting Toolbar */}
-      <div className={`shrink-0 border-b bg-card/95 backdrop-blur-sm px-2 sm:px-3 py-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar flex-nowrap z-10 shadow-xs ${!editable ? 'opacity-60 pointer-events-none' : ''}`} aria-disabled={!editable}>
-        <Button variant="ghost" size="sm" className="h-7 px-2 shrink-0" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can?.()?.undo?.()} title="Hoàn tác (Ctrl+Z)"><Undo className="w-3.5 h-3.5" /></Button>
-        <Button variant="ghost" size="sm" className="h-7 px-2 shrink-0" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can?.()?.redo?.()} title="Làm lại (Ctrl+Y)"><Redo className="w-3.5 h-3.5" /></Button>
+      <div
+        className={`studio-editor-toolbar shrink-0 border-b bg-card px-2 sm:px-3 py-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar flex-nowrap z-10 shadow-xs ${!editable ? 'opacity-60 pointer-events-none' : ''}`}
+        aria-disabled={!editable}
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 shrink-0"
+          onClick={() => editor.chain().focus().undo().run()}
+          disabled={!editor.can?.()?.undo?.()}
+          title="Hoàn tác (Ctrl+Z)"
+        >
+          <Undo className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 shrink-0"
+          onClick={() => editor.chain().focus().redo().run()}
+          disabled={!editor.can?.()?.redo?.()}
+          title="Làm lại (Ctrl+Y)"
+        >
+          <Redo className="w-3.5 h-3.5" />
+        </Button>
         <Button
           variant={isFindOpen ? 'secondary' : 'ghost'}
           size="sm"
@@ -425,28 +534,127 @@ export function TiptapEditor({ content, onChange, placeholder = 'Bắt đầu vi
           <Search className="w-3.5 h-3.5" />
         </Button>
         <div className="w-[1px] h-4 bg-border mx-1 shrink-0" />
-        <Button variant={editor.isActive?.('bold') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleBold().run()} title="In đậm"><Bold className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('italic') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleItalic().run()} title="In nghiêng"><Italic className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('strike') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleStrike().run()} title="Gạch ngang"><Strikethrough className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('highlight') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleHighlight().run()} title="Đánh dấu highlight"><Highlighter className="w-3.5 h-3.5" /></Button>
+        <Button
+          variant={editor.isActive?.('bold') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleBold().run()}
+          title="In đậm"
+        >
+          <Bold className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={editor.isActive?.('italic') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleItalic().run()}
+          title="In nghiêng"
+        >
+          <Italic className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={editor.isActive?.('strike') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+          title="Gạch ngang"
+        >
+          <Strikethrough className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={editor.isActive?.('highlight') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleHighlight().run()}
+          title="Đánh dấu highlight"
+        >
+          <Highlighter className="w-3.5 h-3.5" />
+        </Button>
         <div className="w-[1px] h-4 bg-border mx-1 shrink-0" />
-        <Button variant={editor.isActive?.('heading', { level: 1 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-bold" onClick={() => toggleHeadingSafe(1)} title="Tiêu đề 1 (H1)"><Heading1 className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('heading', { level: 2 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0 font-semibold" onClick={() => toggleHeadingSafe(2)} title="Tiêu đề 2 (H2)"><Heading2 className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('heading', { level: 3 }) ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => toggleHeadingSafe(3)} title="Tiêu đề 3 (H3)"><Heading3 className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('blockquote') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Trích dẫn"><Quote className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('bulletList') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleBulletList().run()} title="Danh sách"><List className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('orderedList') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Danh sách số"><ListOrdered className="w-3.5 h-3.5" /></Button>
-        <Button variant={editor.isActive?.('codeBlock') ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2.5 shrink-0" onClick={() => editor.chain().focus().toggleCodeBlock().run()} title="Khối mã"><Code className="w-3.5 h-3.5" /></Button>
+        <Button
+          variant={
+            editor.isActive?.('heading', { level: 1 }) ? 'secondary' : 'ghost'
+          }
+          size="sm"
+          className="h-7 px-2.5 shrink-0 font-bold"
+          onClick={() => toggleHeadingSafe(1)}
+          title="Tiêu đề 1 (H1)"
+        >
+          <Heading1 className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={
+            editor.isActive?.('heading', { level: 2 }) ? 'secondary' : 'ghost'
+          }
+          size="sm"
+          className="h-7 px-2.5 shrink-0 font-semibold"
+          onClick={() => toggleHeadingSafe(2)}
+          title="Tiêu đề 2 (H2)"
+        >
+          <Heading2 className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={
+            editor.isActive?.('heading', { level: 3 }) ? 'secondary' : 'ghost'
+          }
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => toggleHeadingSafe(3)}
+          title="Tiêu đề 3 (H3)"
+        >
+          <Heading3 className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={editor.isActive?.('blockquote') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleBlockquote().run()}
+          title="Trích dẫn"
+        >
+          <Quote className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={editor.isActive?.('bulletList') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          title="Danh sách"
+        >
+          <List className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={editor.isActive?.('orderedList') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          title="Danh sách số"
+        >
+          <ListOrdered className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant={editor.isActive?.('codeBlock') ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 px-2.5 shrink-0"
+          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+          title="Khối mã"
+        >
+          <Code className="w-3.5 h-3.5" />
+        </Button>
         <div className="ml-auto shrink-0 flex items-center gap-2 text-[11px] sm:text-xs text-muted-foreground pl-3 pr-1">
           <span>{editor.storage?.characterCount?.words?.() ?? 0} từ</span>
           <span className="hidden sm:inline">•</span>
-          <span className="hidden sm:inline">{editor.storage?.characterCount?.characters?.() ?? 0} ký tự</span>
+          <span className="hidden sm:inline">
+            {editor.storage?.characterCount?.characters?.() ?? 0} ký tự
+          </span>
         </div>
       </div>
 
       {/* Independently Scrollable Manuscript Canvas */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-12 min-h-0">
-        <EditorContent editor={editor} className="max-w-3xl mx-auto prose prose-neutral dark:prose-invert focus:outline-none min-h-[60vh] text-base sm:text-lg" />
+      <div className="flex-1 overflow-y-auto p-0 md:p-8 min-h-0">
+        <EditorContent
+          editor={editor}
+          className="studio-manuscript mx-auto focus:outline-none min-h-[60vh] text-base sm:text-lg"
+        />
       </div>
 
       {/* Google Docs Style Find & Replace Floating Dialog */}

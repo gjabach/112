@@ -3,34 +3,49 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor,
-  useSensor, useSensors, closestCenter, pointerWithin, MeasuringStrategy,
-  type DragMoveEvent, type DragEndEvent, type CollisionDetection, type KeyboardCoordinateGetter
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+  pointerWithin,
+  MeasuringStrategy,
+  type DragMoveEvent,
+  type DragEndEvent,
+  type CollisionDetection,
+  type KeyboardCoordinateGetter,
 } from '@dnd-kit/core';
 import { motion, useReducedMotion } from 'framer-motion';
 import { type TabDrop } from '@novelist/shared';
-import { projectTabDrop, getTabDescendants, type TabProjection } from '@/lib/tab-drag';
+import {
+  projectTabDrop,
+  getTabDescendants,
+  type TabProjection,
+} from '@/lib/tab-drag';
 import { DocumentTabRow } from './document-tab-row';
-import { 
-  FileText, 
-  Plus, 
-  MoreVertical, 
-  ChevronRight, 
-  ChevronDown, 
-  Edit3, 
-  Copy, 
-  Trash2, 
-  ChevronUp, 
-  PanelLeftClose, 
-  PanelLeft, 
-  Check, 
-  X, 
-  CornerDownRight, 
+import {
+  FileText,
+  Plus,
+  MoreVertical,
+  ChevronRight,
+  ChevronDown,
+  Edit3,
+  Copy,
+  Trash2,
+  ChevronUp,
+  PanelLeftClose,
+  PanelLeft,
+  Check,
+  X,
+  CornerDownRight,
   CornerUpLeft,
   Link as LinkIcon,
   Smile,
   ListTree,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,7 +95,10 @@ export interface HeadingTreeNode {
  * - Alphabetic sections: "A, ...", "B, ...", "A. ..."
  * - Markdown headings: "# ...", "## ..."
  */
-export function detectHeadingFromText(rawText: string, options?: { allowPlainNumberList?: boolean }): { level: number; text: string } | null {
+export function detectHeadingFromText(
+  rawText: string,
+  options?: { allowPlainNumberList?: boolean }
+): { level: number; text: string } | null {
   if (!rawText) return null;
   // Normalize Unicode to NFC to handle decomposed diacritics (e.g. from MacOS or Unikey)
   const normalized = rawText.normalize('NFC');
@@ -99,25 +117,33 @@ export function detectHeadingFromText(rawText: string, options?: { allowPlainNum
   // Strict regex: uppercase valid Roman numeral sequences only.
   // Note: Standalone single letters 'A'-'Z' (except 'I', 'V', 'X') are excluded because in Vietnamese and English prose
   // they are outline bullet items (e.g. "A. ", "B. ", "C. ", "D. ", "L. ", "M. ") or abbreviations, NOT headings.
-  const romanMatch = trimmed.match(/^(X{1,3}(?:IX|IV|V?I{0,3})?|XL(?:IX|IV|V?I{0,3})?|IX|IV|V?I{1,3}|V)(?:[.,:\-)]|\s+[–—-])\s*(.*)$/);
+  const romanMatch = trimmed.match(
+    /^(X{1,3}(?:IX|IV|V?I{0,3})?|XL(?:IX|IV|V?I{0,3})?|IX|IV|V?I{1,3}|V)(?:[.,:\-)]|\s+[–—-])\s*(.*)$/
+  );
   if (romanMatch) {
     return { level: 1, text: trimmed };
   }
 
   // 3. Named Structural Titles: Chương, Hồi, Phần, Quyển, Tập, Mục, Tiết, Bài, Cảnh...
   // Added 'iu' flags for unicode case insensitivity (matches PHẦN vs Phần correctly)
-  const namedMajorMatch = trimmed.match(/^(Chương|Hồi|Phần|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu);
+  const namedMajorMatch = trimmed.match(
+    /^(Chương|Hồi|Phần|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu
+  );
   if (namedMajorMatch) {
     return { level: 1, text: trimmed };
   }
 
-  const namedMinorMatch = trimmed.match(/^(Mục|Tiết|Bài|Cảnh|Scene|Section)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu);
+  const namedMinorMatch = trimmed.match(
+    /^(Mục|Tiết|Bài|Cảnh|Scene|Section)\s*([0-9IVXLCDM]+|[A-Z])[.,:\-\s]*(.*)$/iu
+  );
   if (namedMinorMatch) {
     return { level: 2, text: trimmed };
   }
 
   // 4. Hierarchical Numbers: "1.1 ...", "1.2 ...", "2.1 ..."
-  const hierarchicalNumMatch = trimmed.match(/^(\d+\.\d+(\.\d+)?)[.,:\-\s\xA0]\s*(.+)$/);
+  const hierarchicalNumMatch = trimmed.match(
+    /^(\d+\.\d+(\.\d+)?)[.,:\-\s\xA0]\s*(.+)$/
+  );
   if (hierarchicalNumMatch) {
     const dots = (hierarchicalNumMatch[1].match(/\./g) || []).length;
     return { level: Math.min(3, dots + 1), text: trimmed };
@@ -171,14 +197,20 @@ export function extractHeadingsFromContent(
   const list: HeadingItem[] = [];
 
   try {
-    const json = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
+    const json =
+      typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
     if (json && typeof json === 'object') {
       const getNodeSize = (n: any): number => {
         if (!n) return 0;
         if (n.type === 'text') return (n.text || '').length;
         if (n.type === 'hardBreak' || n.type === 'image') return 1;
         if (Array.isArray(n.content)) {
-          return n.content.reduce((acc: number, child: any) => acc + getNodeSize(child), 0) + 2;
+          return (
+            n.content.reduce(
+              (acc: number, child: any) => acc + getNodeSize(child),
+              0
+            ) + 2
+          );
         }
         return 2;
       };
@@ -189,12 +221,27 @@ export function extractHeadingsFromContent(
           const block = json.content[i];
           if (block.type === 'heading') {
             const level = Number(block.attrs?.level) || 1;
-            let text = (block.content || []).map((c: any) => c.text || '').join('').trim();
-            if (text && /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+            let text = (block.content || [])
+              .map((c: any) => c.text || '')
+              .join('')
+              .trim();
+            if (
+              text &&
+              /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(
+                text
+              )
+            ) {
               const nextBlock = json.content[i + 1];
               if (nextBlock && nextBlock.type === 'paragraph') {
-                const nextText = (nextBlock.content || []).map((c: any) => c.text || '').join('').trim();
-                if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText, options)) {
+                const nextText = (nextBlock.content || [])
+                  .map((c: any) => c.text || '')
+                  .join('')
+                  .trim();
+                if (
+                  nextText &&
+                  nextText.length < 120 &&
+                  !detectHeadingFromText(nextText, options)
+                ) {
                   text = `${text} ${nextText}`;
                 }
               }
@@ -204,20 +251,37 @@ export function extractHeadingsFromContent(
                 id: `h-${list.length}-${text.slice(0, 15)}`,
                 level,
                 text,
-                pos: docPos
+                pos: docPos,
               });
             }
-          } else if (block.type === 'paragraph' && !options?.disableAutoHeadings) {
-            const text = (block.content || []).map((c: any) => c.text || '').join('').trim();
+          } else if (
+            block.type === 'paragraph' &&
+            !options?.disableAutoHeadings
+          ) {
+            const text = (block.content || [])
+              .map((c: any) => c.text || '')
+              .join('')
+              .trim();
             if (text) {
               const detected = detectHeadingFromText(text, options);
               if (detected) {
                 let combinedText = detected.text;
-                if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(combinedText)) {
+                if (
+                  /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(
+                    combinedText
+                  )
+                ) {
                   const nextBlock = json.content[i + 1];
                   if (nextBlock && nextBlock.type === 'paragraph') {
-                    const nextText = (nextBlock.content || []).map((c: any) => c.text || '').join('').trim();
-                    if (nextText && nextText.length < 120 && !detectHeadingFromText(nextText, options)) {
+                    const nextText = (nextBlock.content || [])
+                      .map((c: any) => c.text || '')
+                      .join('')
+                      .trim();
+                    if (
+                      nextText &&
+                      nextText.length < 120 &&
+                      !detectHeadingFromText(nextText, options)
+                    ) {
                       combinedText = `${combinedText} ${nextText}`;
                     }
                   }
@@ -226,7 +290,7 @@ export function extractHeadingsFromContent(
                   id: `p-${list.length}-${combinedText.slice(0, 15)}`,
                   level: detected.level,
                   text: combinedText,
-                  pos: docPos
+                  pos: docPos,
                 });
               }
             }
@@ -254,9 +318,18 @@ export function extractHeadingsFromContent(
     if (item.tag.startsWith('h')) {
       const level = parseInt(item.tag[1], 10);
       let text = item.text;
-      if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+      if (
+        /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(
+          text
+        )
+      ) {
         const next = rawMatches[i + 1];
-        if (next && next.tag === 'p' && next.text.length < 120 && !detectHeadingFromText(next.text, options)) {
+        if (
+          next &&
+          next.tag === 'p' &&
+          next.text.length < 120 &&
+          !detectHeadingFromText(next.text, options)
+        ) {
           text = `${text} ${next.text}`;
         }
       }
@@ -265,13 +338,26 @@ export function extractHeadingsFromContent(
       const detected = detectHeadingFromText(item.text, options);
       if (detected) {
         let text = detected.text;
-        if (/^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(text)) {
+        if (
+          /^(Chương|Phần|Hồi|Quyển|Tập|Act|Chapter|Part)\s*([0-9IVXLCDM]+|[A-Z])[:.\-]?$/iu.test(
+            text
+          )
+        ) {
           const next = rawMatches[i + 1];
-          if (next && next.tag === 'p' && next.text.length < 120 && !detectHeadingFromText(next.text, options)) {
+          if (
+            next &&
+            next.tag === 'p' &&
+            next.text.length < 120 &&
+            !detectHeadingFromText(next.text, options)
+          ) {
             text = `${text} ${next.text}`;
           }
         }
-        list.push({ id: `p-${list.length}-${text.slice(0, 15)}`, level: detected.level, text });
+        list.push({
+          id: `p-${list.length}-${text.slice(0, 15)}`,
+          level: detected.level,
+          text,
+        });
       }
     }
   }
@@ -288,14 +374,20 @@ export interface DocumentTabsSidebarProps {
   onToggle: () => void;
   onSelectTab: (chapterId: string) => void;
   onJumpToHeading?: (pos?: number, text?: string, index?: number) => void;
-  onCreateTab: (title: string, parentId?: string | null) => Promise<string | void>;
+  onCreateTab: (
+    title: string,
+    parentId?: string | null
+  ) => Promise<string | void>;
   onRenameTab: (chapterId: string, newTitle: string) => Promise<void>;
   onDeleteTab: (chapterId: string) => Promise<void>;
   onDuplicateTab: (chapterId: string) => Promise<void>;
   onMoveTab: (chapterId: string, direction: 'up' | 'down') => Promise<void>;
   onDropTab: (drop: TabDrop) => Promise<void>;
   isMovingTab?: boolean;
-  onReparentTab?: (chapterId: string, newParentId: string | null) => Promise<void>;
+  onReparentTab?: (
+    chapterId: string,
+    newParentId: string | null
+  ) => Promise<void>;
   onUpdateEmoji?: (chapterId: string, emoji: string | null) => Promise<void>;
   hideHeader?: boolean;
   className?: string;
@@ -316,17 +408,19 @@ export function buildTabTree(chapters: ChapterTab[]): TabTreeNode[] {
     const timeA = a.createdAt || 0;
     const timeB = b.createdAt || 0;
     if (timeA !== timeB) return timeA - timeB;
-    return String(a.title || '').localeCompare(String(b.title || ''), 'vi', { numeric: true });
+    return String(a.title || '').localeCompare(String(b.title || ''), 'vi', {
+      numeric: true,
+    });
   };
 
   const idMap = new Map<string, TabTreeNode>();
-  chapters.forEach(c => {
+  chapters.forEach((c) => {
     idMap.set(c.id, { ...c, children: [], depth: 0 });
   });
 
   const roots: TabTreeNode[] = [];
 
-  chapters.forEach(c => {
+  chapters.forEach((c) => {
     const node = idMap.get(c.id);
     if (!node) return;
 
@@ -356,7 +450,7 @@ export function buildTabTree(chapters: ChapterTab[]): TabTreeNode[] {
 
   const setDepths = (nodes: TabTreeNode[], depth: number) => {
     nodes.sort(compareSiblings);
-    nodes.forEach(n => {
+    nodes.forEach((n) => {
       n.depth = depth;
       if (n.children.length > 0) {
         setDepths(n.children, depth + 1);
@@ -381,11 +475,42 @@ export function flattenTabTree(roots: TabTreeNode[]): ChapterTab[] {
 }
 
 export const PRESET_EMOJIS = [
-  '📄', '📝', '📖', '📑', '🔖', '💡', '✍️', '🔍', 
-  '📌', '🎯', '⭐', '🌟', '🚀', '🔥', '☕', '🌲', 
-  '🌸', '🍀', '🌊', '🎭', '💬', '👤', '🏰', '⚔️', 
-  '🛡️', '💎', '👑', '📦', '🏷️', '🎨', '📜', '🌙', 
-  '☀️', '⚡', '🗝️', '🔮'
+  '📄',
+  '📝',
+  '📖',
+  '📑',
+  '🔖',
+  '💡',
+  '✍️',
+  '🔍',
+  '📌',
+  '🎯',
+  '⭐',
+  '🌟',
+  '🚀',
+  '🔥',
+  '☕',
+  '🌲',
+  '🌸',
+  '🍀',
+  '🌊',
+  '🎭',
+  '💬',
+  '👤',
+  '🏰',
+  '⚔️',
+  '🛡️',
+  '💎',
+  '👑',
+  '📦',
+  '🏷️',
+  '🎨',
+  '📜',
+  '🌙',
+  '☀️',
+  '⚡',
+  '🗝️',
+  '🔮',
 ];
 
 export function DocumentTabsSidebar({
@@ -407,19 +532,23 @@ export function DocumentTabsSidebar({
   onReparentTab,
   onUpdateEmoji,
   hideHeader = false,
-  className = ''
+  className = '',
 }: DocumentTabsSidebarProps) {
   // State for expanded parent tabs (defaults to expanded)
-  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
-    chapters.forEach(c => {
-      init[c.id] = true;
-    });
-    return init;
-  });
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(
+    () => {
+      const init: Record<string, boolean> = {};
+      chapters.forEach((c) => {
+        init[c.id] = true;
+      });
+      return init;
+    }
+  );
 
   // State for expanded headings in auto-detected subtabs
-  const [expandedHeadingIds, setExpandedHeadingIds] = useState<Record<string, boolean>>({});
+  const [expandedHeadingIds, setExpandedHeadingIds] = useState<
+    Record<string, boolean>
+  >({});
 
   // State for inline renaming
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
@@ -435,7 +564,9 @@ export function DocumentTabsSidebar({
   const [customEmojiInput, setCustomEmojiInput] = useState('');
 
   // State for tab outline hidden preference (persisted in localStorage)
-  const [hiddenOutlineTabs, setHiddenOutlineTabs] = useState<Record<string, boolean>>(() => {
+  const [hiddenOutlineTabs, setHiddenOutlineTabs] = useState<
+    Record<string, boolean>
+  >(() => {
     if (typeof window === 'undefined') return {};
     try {
       const raw = localStorage.getItem('novelist_tab_outline_hidden');
@@ -447,18 +578,26 @@ export function DocumentTabsSidebar({
 
   const effectiveChapters = chapters;
 
-  const recoveryTabs = useMemo(() => 
-    effectiveChapters.filter(c => c.id.startsWith('recovery_') || c.title.toLowerCase().startsWith('khôi phục')),
+  const recoveryTabs = useMemo(
+    () =>
+      effectiveChapters.filter(
+        (c) =>
+          c.id.startsWith('recovery_') ||
+          c.title.toLowerCase().startsWith('khôi phục')
+      ),
     [effectiveChapters]
   );
   const [cleaningUp, setCleaningUp] = useState(false);
 
   const toggleOutlineVisibility = (tabId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setHiddenOutlineTabs(prev => {
+    setHiddenOutlineTabs((prev) => {
       const next = { ...prev, [tabId]: !prev[tabId] };
       try {
-        localStorage.setItem('novelist_tab_outline_hidden', JSON.stringify(next));
+        localStorage.setItem(
+          'novelist_tab_outline_hidden',
+          JSON.stringify(next)
+        );
       } catch {}
       return next;
     });
@@ -491,7 +630,10 @@ export function DocumentTabsSidebar({
   // Close emoji picker on outside click
   useEffect(() => {
     const handleClickOutsideEmoji = (e: MouseEvent) => {
-      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
+      if (
+        emojiPickerRef.current &&
+        !emojiPickerRef.current.contains(e.target as Node)
+      ) {
         setEmojiPickerTabId(null);
       }
     };
@@ -504,7 +646,9 @@ export function DocumentTabsSidebar({
   }, [emojiPickerTabId]);
 
   const tree = buildTabTree(effectiveChapters);
-  const treeNodesById = new Map((flattenTabTree(tree) as TabTreeNode[]).map(node => [node.id, node]));
+  const treeNodesById = new Map(
+    (flattenTabTree(tree) as TabTreeNode[]).map((node) => [node.id, node])
+  );
   const reducedMotion = useReducedMotion();
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -530,26 +674,46 @@ export function DocumentTabsSidebar({
   visibleNodesRef.current = visibleNodes;
   const chaptersRef = useRef(effectiveChapters);
   chaptersRef.current = effectiveChapters;
-  const draggedDescendants = draggingId ? getTabDescendants(effectiveChapters, draggingId) : new Set<string>();
-  const remainingNodes = visibleNodes.filter(n => n.id !== draggingId && !draggedDescendants.has(n.id));
-  const dropBeforeId = projection ? remainingNodes[projection.index]?.id : undefined;
+  const draggedDescendants = draggingId
+    ? getTabDescendants(effectiveChapters, draggingId)
+    : new Set<string>();
+  const remainingNodes = visibleNodes.filter(
+    (n) => n.id !== draggingId && !draggedDescendants.has(n.id)
+  );
+  const dropBeforeId = projection
+    ? remainingNodes[projection.index]?.id
+    : undefined;
 
-  const keyboardCoordinates: KeyboardCoordinateGetter = (event, { currentCoordinates, context }) => {
+  const keyboardCoordinates: KeyboardCoordinateGetter = (
+    event,
+    { currentCoordinates, context }
+  ) => {
     if (event.code === 'ArrowRight' || event.code === 'ArrowLeft') {
       event.preventDefault();
-      return { ...currentCoordinates, x: currentCoordinates.x + (event.code === 'ArrowRight' ? 20 : -20) };
+      return {
+        ...currentCoordinates,
+        x: currentCoordinates.x + (event.code === 'ArrowRight' ? 20 : -20),
+      };
     }
     if (event.code !== 'ArrowDown' && event.code !== 'ArrowUp') return;
     event.preventDefault();
-    const descendants = getTabDescendants(chaptersRef.current, String(context.active?.id));
-    const nodes = visibleNodesRef.current.filter(n => !descendants.has(n.id));
-    const index = nodes.findIndex(n => n.id === (context.over?.id || context.active?.id));
+    const descendants = getTabDescendants(
+      chaptersRef.current,
+      String(context.active?.id)
+    );
+    const nodes = visibleNodesRef.current.filter((n) => !descendants.has(n.id));
+    const index = nodes.findIndex(
+      (n) => n.id === (context.over?.id || context.active?.id)
+    );
     const target = nodes[index + (event.code === 'ArrowDown' ? 1 : -1)];
     const rect = target && context.droppableRects.get(target.id);
     if (!rect) return;
     keyboardAfterRef.current = event.code === 'ArrowDown';
     const activeRect = context.active?.rect.current.initial;
-    return { x: currentCoordinates.x, y: rect.top + rect.height / 2 - (activeRect?.height || rect.height) / 2 };
+    return {
+      x: currentCoordinates.x,
+      y: rect.top + rect.height / 2 - (activeRect?.height || rect.height) / 2,
+    };
   };
   const sensors = useSensors(
     useSensor(MouseSensor, {
@@ -565,10 +729,14 @@ export function DocumentTabsSidebar({
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: keyboardCoordinates,
-      keyboardCodes: { start: ['Space'], cancel: ['Escape', 'Tab'], end: ['Space', 'Enter'] }
+      keyboardCodes: {
+        start: ['Space'],
+        cancel: ['Escape', 'Tab'],
+        end: ['Space', 'Enter'],
+      },
     })
   );
-  const detectCollision: CollisionDetection = args => {
+  const detectCollision: CollisionDetection = (args) => {
     pointerYRef.current = args.pointerCoordinates?.y ?? null;
     if (args.pointerCoordinates) {
       const hits = pointerWithin(args);
@@ -584,10 +752,20 @@ export function DocumentTabsSidebar({
     }
     const isKeyboard = event.activatorEvent instanceof KeyboardEvent;
     const centerY = event.active.rect.current.translated
-      ? event.active.rect.current.translated.top + event.active.rect.current.translated.height / 2
+      ? event.active.rect.current.translated.top +
+        event.active.rect.current.translated.height / 2
       : over.rect.top;
-    const after = isKeyboard ? keyboardAfterRef.current : (pointerYRef.current ?? centerY) > over.rect.top + over.rect.height / 2;
-    const next = projectTabDrop(effectiveChapters, visibleNodes, String(event.active.id), String(over.id), after, event.delta.x);
+    const after = isKeyboard
+      ? keyboardAfterRef.current
+      : (pointerYRef.current ?? centerY) > over.rect.top + over.rect.height / 2;
+    const next = projectTabDrop(
+      effectiveChapters,
+      visibleNodes,
+      String(event.active.id),
+      String(over.id),
+      after,
+      event.delta.x
+    );
     if (next) {
       projectionRef.current = next;
       setProjection(next);
@@ -612,12 +790,19 @@ export function DocumentTabsSidebar({
     const next = projectionRef.current;
     const currentList = effectiveChapters;
     const original = dragStartChaptersRef.current;
-    const originalOrder = flattenTabTree(buildTabTree(original)).map(c => c.id);
-    const currentOrder = flattenTabTree(buildTabTree(currentList)).map(c => c.id);
-    const structureChanged = originalOrder.length !== currentOrder.length || originalOrder.some((id, index) => id !== currentOrder[index]) || original.some(c => {
-      const current = currentList.find(item => item.id === c.id);
-      return !current || (current.parentId || null) !== (c.parentId || null);
-    });
+    const originalOrder = flattenTabTree(buildTabTree(original)).map(
+      (c) => c.id
+    );
+    const currentOrder = flattenTabTree(buildTabTree(currentList)).map(
+      (c) => c.id
+    );
+    const structureChanged =
+      originalOrder.length !== currentOrder.length ||
+      originalOrder.some((id, index) => id !== currentOrder[index]) ||
+      original.some((c) => {
+        const current = currentList.find((item) => item.id === c.id);
+        return !current || (current.parentId || null) !== (c.parentId || null);
+      });
 
     if (!next?.valid || next.unchanged) {
       resetDrag();
@@ -633,15 +818,26 @@ export function DocumentTabsSidebar({
     let saving: Promise<void>;
     try {
       // The owner updates the list synchronously before the overlay disappears.
-      saving = onDropTab({ chapterId: next.chapterId, parentId: next.parentId, chapterIds: next.chapterIds });
-      if (next.parentId) setExpandedIds(prev => ({ ...prev, [next.parentId!]: true }));
+      saving = onDropTab({
+        chapterId: next.chapterId,
+        parentId: next.parentId,
+        chapterIds: next.chapterIds,
+      });
+      if (next.parentId)
+        setExpandedIds((prev) => ({ ...prev, [next.parentId!]: true }));
     } catch {
       resetDrag();
       return;
     }
     resetDrag();
     if (event.activatorEvent instanceof KeyboardEvent) {
-      requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next.chapterId)}"]`)?.focus());
+      requestAnimationFrame(() =>
+        listRef.current
+          ?.querySelector<HTMLElement>(
+            `[data-tab-id="${CSS.escape(next.chapterId)}"]`
+          )
+          ?.focus()
+      );
     }
     try {
       await saving;
@@ -651,29 +847,55 @@ export function DocumentTabsSidebar({
     }
   };
   useEffect(() => {
-    if (!draggingId || !dragOverId || getTabDescendants(effectiveChapters, draggingId).has(dragOverId) || dragOverId === draggingId) return;
-    const hovered = effectiveChapters.find(c => c.id === dragOverId);
-    if (!hovered || expandedIds[dragOverId] !== false || !effectiveChapters.some(c => c.parentId === dragOverId)) return;
-    const timer = window.setTimeout(() => setExpandedIds(prev => ({ ...prev, [dragOverId]: true })), 600);
+    if (
+      !draggingId ||
+      !dragOverId ||
+      getTabDescendants(effectiveChapters, draggingId).has(dragOverId) ||
+      dragOverId === draggingId
+    )
+      return;
+    const hovered = effectiveChapters.find((c) => c.id === dragOverId);
+    if (
+      !hovered ||
+      expandedIds[dragOverId] !== false ||
+      !effectiveChapters.some((c) => c.parentId === dragOverId)
+    )
+      return;
+    const timer = window.setTimeout(
+      () => setExpandedIds((prev) => ({ ...prev, [dragOverId]: true })),
+      600
+    );
     return () => window.clearTimeout(timer);
   }, [draggingId, dragOverId, effectiveChapters, expandedIds]);
 
-  const dropIndicator = () => projection && (
-    <div aria-hidden="true" className="relative h-0 z-10 pointer-events-none" style={{ marginLeft: projection.depth * 20 + 8 }}>
-      <div className={`absolute -top-0.5 left-0 right-1 h-0.5 rounded-full transition-all duration-75 ${projection.valid ? 'bg-primary shadow-[0_0_8px_rgba(59,130,246,0.7)]' : 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.7)]'}`}>
-        <span className={`absolute -left-1 -top-0.5 h-1.5 w-1.5 rounded-full ${projection.valid ? 'bg-primary' : 'bg-destructive'}`} />
+  const dropIndicator = () =>
+    projection && (
+      <div
+        aria-hidden="true"
+        className="relative h-0 z-10 pointer-events-none"
+        style={{ marginLeft: projection.depth * 20 + 8 }}
+      >
+        <div
+          className={`absolute -top-0.5 left-0 right-1 h-0.5 rounded-full transition-all duration-75 ${projection.valid ? 'bg-primary shadow-[0_0_8px_rgba(59,130,246,0.7)]' : 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.7)]'}`}
+        >
+          <span
+            className={`absolute -left-1 -top-0.5 h-1.5 w-1.5 rounded-full ${projection.valid ? 'bg-primary' : 'bg-destructive'}`}
+          />
+        </div>
       </div>
-    </div>
-  );
+    );
 
   const isAtMaxLimit = effectiveChapters.length >= 100;
   const isNearLimit = effectiveChapters.length >= 90;
 
   // Active chapter's real-time live heading tree for automatic subtabs (e.g. I, aceererf / II, nrfnerjf)
-  const activeChapter = effectiveChapters.find(c => c.id === currentChapterId);
-  const effectiveHeadings = headings && headings.length > 0
-    ? headings
-    : extractHeadingsFromContent(activeChapter?.content);
+  const activeChapter = effectiveChapters.find(
+    (c) => c.id === currentChapterId
+  );
+  const effectiveHeadings =
+    headings && headings.length > 0
+      ? headings
+      : extractHeadingsFromContent(activeChapter?.content);
   const activeHeadingTree = buildHeadingTree(effectiveHeadings);
 
   // Map occurrence index for identical heading titles
@@ -687,17 +909,17 @@ export function DocumentTabsSidebar({
 
   const toggleExpand = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setExpandedIds(prev => ({
+    setExpandedIds((prev) => ({
       ...prev,
-      [id]: prev[id] === undefined ? false : !prev[id]
+      [id]: prev[id] === undefined ? false : !prev[id],
     }));
   };
 
   const toggleExpandHeading = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setExpandedHeadingIds(prev => ({
+    setExpandedHeadingIds((prev) => ({
       ...prev,
-      [id]: prev[id] === undefined ? false : !prev[id]
+      [id]: prev[id] === undefined ? false : !prev[id],
     }));
   };
 
@@ -715,7 +937,7 @@ export function DocumentTabsSidebar({
     if (!trimmed) {
       return; // Revert silently on empty input
     }
-    const currentTab = effectiveChapters.find(c => c.id === tabId);
+    const currentTab = effectiveChapters.find((c) => c.id === tabId);
     if (currentTab && currentTab.title === trimmed) {
       return; // No change
     }
@@ -769,12 +991,15 @@ export function DocumentTabsSidebar({
     if (typeof window === 'undefined') return;
     const link = `${window.location.origin}/editor/${projectId}/${tabId}`;
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(link).then(() => {
-        playSuccessSound();
-        toast.success('Đã sao chép liên kết tới thẻ');
-      }).catch(() => {
-        copyFallback(link);
-      });
+      navigator.clipboard
+        .writeText(link)
+        .then(() => {
+          playSuccessSound();
+          toast.success('Đã sao chép liên kết tới thẻ');
+        })
+        .catch(() => {
+          copyFallback(link);
+        });
     } else {
       copyFallback(link);
     }
@@ -786,7 +1011,7 @@ export function DocumentTabsSidebar({
       toast.error('Tài liệu đã đạt giới hạn tối đa 100 thẻ');
       return;
     }
-    const rootCount = effectiveChapters.filter(c => !c.parentId).length;
+    const rootCount = effectiveChapters.filter((c) => !c.parentId).length;
     const defaultTitle = `Thẻ ${rootCount + 1}`;
     try {
       const createdId = await onCreateTab(defaultTitle, null);
@@ -801,7 +1026,10 @@ export function DocumentTabsSidebar({
   };
 
   // Create subtab under a parent tab
-  const handleCreateSubTab = async (parentNode: TabTreeNode, e?: React.MouseEvent) => {
+  const handleCreateSubTab = async (
+    parentNode: TabTreeNode,
+    e?: React.MouseEvent
+  ) => {
     if (e) e.stopPropagation();
     setActiveMenuId(null);
 
@@ -816,9 +1044,9 @@ export function DocumentTabsSidebar({
       return;
     }
 
-    setExpandedIds(prev => ({
+    setExpandedIds((prev) => ({
       ...prev,
-      [parentNode.id]: true
+      [parentNode.id]: true,
     }));
 
     const childCount = (parentNode.children || []).length + 1;
@@ -845,7 +1073,9 @@ export function DocumentTabsSidebar({
     const normalizedText = hNode.text.normalize('NFC');
     const romanMatch = normalizedText.match(/^([IVXLCDM]+)[.,:\-)]/i);
     const numMatch = normalizedText.match(/^(\d+[.,:\-)])/);
-    const structMatch = normalizedText.match(/^(Chương|Hồi|Phần|Quyển|Tập|Mục|Tiết|Bài)/iu);
+    const structMatch = normalizedText.match(
+      /^(Chương|Hồi|Phần|Quyển|Tập|Mục|Tiết|Bài)/iu
+    );
 
     const levelBadge = structMatch ? (
       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400 font-mono shrink-0 uppercase">
@@ -860,18 +1090,25 @@ export function DocumentTabsSidebar({
         {numMatch[1]}
       </span>
     ) : hNode.level === 1 ? (
-      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-600 dark:text-purple-400 font-mono shrink-0">H1</span>
+      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono shrink-0">
+        H1
+      </span>
     ) : hNode.level === 2 ? (
-      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-mono shrink-0">H2</span>
+      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-mono shrink-0">
+        H2
+      </span>
     ) : (
-      <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-mono shrink-0">H3</span>
+      <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-mono shrink-0">
+        H3
+      </span>
     );
 
-    const textStyle = hNode.level === 1 
-      ? 'font-semibold text-foreground text-xs' 
-      : hNode.level === 2 
-        ? 'font-medium text-foreground/90 text-[11.5px]' 
-        : 'font-normal text-muted-foreground text-[11px]';
+    const textStyle =
+      hNode.level === 1
+        ? 'font-semibold text-foreground text-xs'
+        : hNode.level === 2
+          ? 'font-medium text-foreground/90 text-[11.5px]'
+          : 'font-normal text-muted-foreground text-[11px]';
 
     return (
       <div key={hNode.id} className="group/heading flex flex-col">
@@ -882,7 +1119,16 @@ export function DocumentTabsSidebar({
             if (onJumpToHeading) {
               onJumpToHeading(hNode.pos, hNode.text, occIndex);
             } else {
-              window.dispatchEvent(new CustomEvent('novelist-jump-heading', { detail: { pos: hNode.pos, text: hNode.text, index: occIndex, id: hNode.id } }));
+              window.dispatchEvent(
+                new CustomEvent('novelist-jump-heading', {
+                  detail: {
+                    pos: hNode.pos,
+                    text: hNode.text,
+                    index: occIndex,
+                    id: hNode.id,
+                  },
+                })
+              );
             }
           }}
           className={`
@@ -897,7 +1143,7 @@ export function DocumentTabsSidebar({
               type="button"
               onClick={(e) => toggleExpandHeading(hNode.id, e)}
               className="p-0.5 -ml-1 text-muted-foreground hover:text-foreground rounded transition-colors shrink-0"
-              title={isExpanded ? "Thu gọn mục con" : "Mở rộng mục con"}
+              title={isExpanded ? 'Thu gọn mục con' : 'Mở rộng mục con'}
             >
               {isExpanded ? (
                 <ChevronDown className="w-3 h-3" />
@@ -911,15 +1157,13 @@ export function DocumentTabsSidebar({
 
           {levelBadge}
 
-          <span className="truncate flex-1">
-            {hNode.text}
-          </span>
+          <span className="truncate flex-1">{hNode.text}</span>
         </div>
 
         {/* Nested child subtabs */}
         {hasChildren && isExpanded && (
           <div className="ml-3 pl-2 border-l border-border/60 space-y-0.5 my-0.5">
-            {hNode.children.map(child => renderHeadingNode(child))}
+            {hNode.children.map((child) => renderHeadingNode(child))}
           </div>
         )}
       </div>
@@ -927,13 +1171,20 @@ export function DocumentTabsSidebar({
   };
 
   // Find previous sibling at the same level for demotion
-  const findPreviousSibling = (node: TabTreeNode, siblings: TabTreeNode[]): TabTreeNode | null => {
-    const idx = siblings.findIndex(s => s.id === node.id);
+  const findPreviousSibling = (
+    node: TabTreeNode,
+    siblings: TabTreeNode[]
+  ): TabTreeNode | null => {
+    const idx = siblings.findIndex((s) => s.id === node.id);
     return idx > 0 ? siblings[idx - 1] : null;
   };
 
   // Recursive tab renderer matching Google Docs Tabs & Subtabs
-  const renderTabNode = (node: TabTreeNode, siblings: TabTreeNode[], isLastChild: boolean) => {
+  const renderTabNode = (
+    node: TabTreeNode,
+    siblings: TabTreeNode[],
+    isLastChild: boolean
+  ) => {
     const isActive = node.id === currentChapterId;
     const hasChildren = node.children && node.children.length > 0;
     const isExpanded = expandedIds[node.id] !== false;
@@ -952,15 +1203,23 @@ export function DocumentTabsSidebar({
     const subtreeNodeCount = countSubtreeNodes(node);
     const canHaveSubtab = node.depth < 2 && !isAtMaxLimit; // Google Docs allows max 3 levels (0, 1, 2)
     const prevSibling = findPreviousSibling(node, siblings);
-    const canDemote = Boolean(prevSibling && (prevSibling.depth + 1 + nodeSubtreeHeight <= 2) && onReparentTab);
+    const canDemote = Boolean(
+      prevSibling &&
+      prevSibling.depth + 1 + nodeSubtreeHeight <= 2 &&
+      onReparentTab
+    );
     const canPromote = Boolean(node.parentId && onReparentTab);
     const isOutlineHidden = Boolean(hiddenOutlineTabs[node.id]);
     const canDelete = effectiveChapters.length > subtreeNodeCount;
-    const canDuplicate = !isAtMaxLimit && (effectiveChapters.length + subtreeNodeCount <= 100);
+    const canDuplicate =
+      !isAtMaxLimit && effectiveChapters.length + subtreeNodeCount <= 100;
 
     return (
-      <div key={node.id}
-        className="relative group/tab flex flex-col" style={{ marginLeft: node.depth * 20 }}>
+      <div
+        key={node.id}
+        className="relative group/tab flex flex-col"
+        style={{ marginLeft: node.depth * 20 }}
+      >
         {/* Tab Row Container */}
         <DocumentTabRow
           id={node.id}
@@ -972,7 +1231,9 @@ export function DocumentTabsSidebar({
           editing={isEditing}
           dropDisabled={isEditing}
           faded={draggedDescendants.has(node.id)}
-          blockClick={() => Boolean(draggingId) || Date.now() < blockClickUntilRef.current}
+          blockClick={() =>
+            Boolean(draggingId) || Date.now() < blockClickUntilRef.current
+          }
           onSelect={() => onSelectTab(node.id)}
           onRename={(e) => {
             e.stopPropagation();
@@ -990,7 +1251,7 @@ export function DocumentTabsSidebar({
               type="button"
               onClick={(e) => toggleExpand(node.id, e)}
               className="p-0.5 -ml-1 text-muted-foreground hover:text-foreground rounded transition-colors shrink-0"
-              title={isExpanded ? "Thu gọn thẻ con" : "Mở rộng thẻ con"}
+              title={isExpanded ? 'Thu gọn thẻ con' : 'Mở rộng thẻ con'}
             >
               {isExpanded ? (
                 <ChevronDown className="w-3.5 h-3.5" />
@@ -1009,7 +1270,9 @@ export function DocumentTabsSidebar({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setEmojiPickerTabId(emojiPickerTabId === node.id ? null : node.id);
+                  setEmojiPickerTabId(
+                    emojiPickerTabId === node.id ? null : node.id
+                  );
                 }}
                 className="text-sm shrink-0 hover:scale-115 transition-transform p-0.5 leading-none"
                 title="Đổi biểu tượng cảm xúc"
@@ -1021,7 +1284,9 @@ export function DocumentTabsSidebar({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setEmojiPickerTabId(emojiPickerTabId === node.id ? null : node.id);
+                  setEmojiPickerTabId(
+                    emojiPickerTabId === node.id ? null : node.id
+                  );
                 }}
                 className={`p-0.5 rounded hover:bg-muted/80 transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`}
                 title="Thêm biểu tượng cảm xúc"
@@ -1056,7 +1321,7 @@ export function DocumentTabsSidebar({
 
                 {/* Popular Emojis Grid */}
                 <div className="grid grid-cols-6 gap-1 max-h-36 overflow-y-auto no-scrollbar p-0.5">
-                  {PRESET_EMOJIS.map(em => (
+                  {PRESET_EMOJIS.map((em) => (
                     <button
                       key={em}
                       type="button"
@@ -1102,8 +1367,8 @@ export function DocumentTabsSidebar({
 
           {/* Title or inline edit input */}
           {isEditing ? (
-            <div 
-              className="flex-1 flex items-center gap-1 min-w-0" 
+            <div
+              className="flex-1 flex items-center gap-1 min-w-0"
               onClick={(e) => e.stopPropagation()}
             >
               <Input
@@ -1184,7 +1449,9 @@ export function DocumentTabsSidebar({
                   </button>
                 ) : (
                   <div className="px-3 py-1 text-[11px] text-muted-foreground/60 italic">
-                    {node.depth >= 2 ? 'Đã đạt tối đa 3 cấp thẻ' : 'Đã đạt giới hạn 100 thẻ'}
+                    {node.depth >= 2
+                      ? 'Đã đạt tối đa 3 cấp thẻ'
+                      : 'Đã đạt giới hạn 100 thẻ'}
                   </div>
                 )}
 
@@ -1251,78 +1518,93 @@ export function DocumentTabsSidebar({
                     <span className="flex-1">Di chuyển</span>
                     <ChevronRight className="w-3 h-3 group-open/move:rotate-90" />
                   </summary>
-                {/* 6. Demote / Promote (Reparenting) */}
-                {canDemote && prevSibling && (
+                  {/* 6. Demote / Promote (Reparenting) */}
+                  {canDemote && prevSibling && (
+                    <button
+                      type="button"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setActiveMenuId(null);
+                        if (onReparentTab) {
+                          await onReparentTab(node.id, prevSibling.id);
+                          setExpandedIds((prev) => ({
+                            ...prev,
+                            [prevSibling.id]: true,
+                          }));
+                        }
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                    >
+                      <CornerDownRight className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>Thụt lề làm thẻ con</span>
+                    </button>
+                  )}
+
+                  {canPromote && (
+                    <button
+                      type="button"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setActiveMenuId(null);
+                        if (onReparentTab) {
+                          const parent = effectiveChapters.find(
+                            (c) => c.id === node.parentId
+                          );
+                          const rawGrandParentId = parent?.parentId || null;
+                          const validGrandParentId =
+                            rawGrandParentId &&
+                            effectiveChapters.some(
+                              (c) => c.id === rawGrandParentId
+                            )
+                              ? rawGrandParentId
+                              : null;
+                          await onReparentTab(node.id, validGrandParentId);
+                        }
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                    >
+                      <CornerUpLeft className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Nâng lên làm thẻ cha</span>
+                    </button>
+                  )}
+
+                  {/* 7. Move Up / Down */}
                   <button
                     type="button"
+                    disabled={isFirstChild}
                     onClick={async (e) => {
                       e.stopPropagation();
+                      if (isFirstChild) return;
                       setActiveMenuId(null);
-                      if (onReparentTab) {
-                        await onReparentTab(node.id, prevSibling.id);
-                        setExpandedIds(prev => ({ ...prev, [prevSibling.id]: true }));
-                      }
+                      await onMoveTab(node.id, 'up');
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-foreground transition-colors text-left ${
+                      isFirstChild
+                        ? 'opacity-40 cursor-not-allowed'
+                        : 'hover:bg-accent'
+                    }`}
                   >
-                    <CornerDownRight className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Thụt lề làm thẻ con</span>
+                    <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Chuyển lên trên</span>
                   </button>
-                )}
-
-                {canPromote && (
                   <button
                     type="button"
+                    disabled={isLastChild}
                     onClick={async (e) => {
                       e.stopPropagation();
+                      if (isLastChild) return;
                       setActiveMenuId(null);
-                      if (onReparentTab) {
-                        const parent = effectiveChapters.find(c => c.id === node.parentId);
-                        const rawGrandParentId = parent?.parentId || null;
-                        const validGrandParentId = rawGrandParentId && effectiveChapters.some(c => c.id === rawGrandParentId) ? rawGrandParentId : null;
-                        await onReparentTab(node.id, validGrandParentId);
-                      }
+                      await onMoveTab(node.id, 'down');
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-foreground transition-colors text-left ${
+                      isLastChild
+                        ? 'opacity-40 cursor-not-allowed'
+                        : 'hover:bg-accent'
+                    }`}
                   >
-                    <CornerUpLeft className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Nâng lên làm thẻ cha</span>
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Chuyển xuống dưới</span>
                   </button>
-                )}
-
-                {/* 7. Move Up / Down */}
-                <button
-                  type="button"
-                  disabled={isFirstChild}
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (isFirstChild) return;
-                    setActiveMenuId(null);
-                    await onMoveTab(node.id, 'up');
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-foreground transition-colors text-left ${
-                    isFirstChild ? 'opacity-40 cursor-not-allowed' : 'hover:bg-accent'
-                  }`}
-                >
-                  <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span>Chuyển lên trên</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={isLastChild}
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (isLastChild) return;
-                    setActiveMenuId(null);
-                    await onMoveTab(node.id, 'down');
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-foreground transition-colors text-left ${
-                    isLastChild ? 'opacity-40 cursor-not-allowed' : 'hover:bg-accent'
-                  }`}
-                >
-                  <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span>Chuyển xuống dưới</span>
-                </button>
                 </details>
 
                 <div className="my-1 border-t border-border/50" />
@@ -1333,8 +1615,12 @@ export function DocumentTabsSidebar({
                   onClick={(e) => toggleOutlineVisibility(node.id, e)}
                   className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-foreground transition-colors text-left"
                 >
-                  <ListTree className="w-3.5 h-3.5 text-violet-500" />
-                  <span>{isOutlineHidden ? 'Hiện dàn ý tài liệu' : 'Ẩn dàn ý tài liệu'}</span>
+                  <ListTree className="w-3.5 h-3.5 text-primary" />
+                  <span>
+                    {isOutlineHidden
+                      ? 'Hiện dàn ý tài liệu'
+                      : 'Ẩn dàn ý tài liệu'}
+                  </span>
                 </button>
 
                 <div className="my-1 border-t border-border/50" />
@@ -1350,7 +1636,7 @@ export function DocumentTabsSidebar({
                       toast.error('Tài liệu phải có tối thiểu 1 thẻ');
                       return;
                     }
-                    const promptMsg = hasChildren 
+                    const promptMsg = hasChildren
                       ? `Xóa thẻ "${node.title}" và toàn bộ ${subtreeNodeCount - 1} thẻ con trực thuộc?`
                       : `Xóa thẻ "${node.title}"?`;
                     if (confirm(promptMsg)) {
@@ -1358,11 +1644,13 @@ export function DocumentTabsSidebar({
                     }
                   }}
                   className={`w-full flex items-center gap-2 px-3 py-1.5 transition-colors text-left font-medium ${
-                    !canDelete 
-                      ? 'opacity-40 cursor-not-allowed text-muted-foreground' 
+                    !canDelete
+                      ? 'opacity-40 cursor-not-allowed text-muted-foreground'
                       : 'hover:bg-destructive/10 text-destructive'
                   }`}
-                  title={!canDelete ? 'Tài liệu phải có tối thiểu 1 thẻ' : undefined}
+                  title={
+                    !canDelete ? 'Tài liệu phải có tối thiểu 1 thẻ' : undefined
+                  }
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Xóa thẻ</span>
@@ -1374,11 +1662,12 @@ export function DocumentTabsSidebar({
 
         {/* Real-time automatic subtabs under active document (Google Docs style: e.g. I, aceererf / II, nrfnerjf) */}
         {isActive && activeHeadingTree.length > 0 && !isOutlineHidden && (
-          <div className={`ml-4 pl-2.5 border-l-2 border-primary/40 space-y-0.5 my-1 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150 ${draggingId === node.id || draggedDescendants.has(node.id) ? 'opacity-30' : ''}`}>
-            {activeHeadingTree.map(hNode => renderHeadingNode(hNode))}
+          <div
+            className={`ml-4 pl-2.5 border-l-2 border-primary/40 space-y-0.5 my-1 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150 ${draggingId === node.id || draggedDescendants.has(node.id) ? 'opacity-30' : ''}`}
+          >
+            {activeHeadingTree.map((hNode) => renderHeadingNode(hNode))}
           </div>
         )}
-
       </div>
     );
   };
@@ -1405,15 +1694,22 @@ export function DocumentTabsSidebar({
       collisionDetection={detectCollision}
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       autoScroll={{ threshold: { x: 0, y: 0.15 } }}
-      onDragStart={event => {
+      onDragStart={(event) => {
         const id = String(event.active.id);
-        dragStartChaptersRef.current = effectiveChapters.map(c => ({ ...c }));
+        dragStartChaptersRef.current = effectiveChapters.map((c) => ({ ...c }));
         blockClickUntilRef.current = Number.POSITIVE_INFINITY;
         keyboardAfterRef.current = false;
         setActiveMenuId(null);
         setEmojiPickerTabId(null);
         setDraggingId(id);
-        const initial = projectTabDrop(effectiveChapters, visibleNodes, id, id, false, 0);
+        const initial = projectTabDrop(
+          effectiveChapters,
+          visibleNodes,
+          id,
+          id,
+          false,
+          0
+        );
         projectionRef.current = initial;
         setProjection(initial);
       }}
@@ -1424,197 +1720,272 @@ export function DocumentTabsSidebar({
       }}
       onDragEnd={finishDrag}
       accessibility={{
-        screenReaderInstructions: { draggable: 'Nhấn phím cách để nhấc thẻ. Dùng mũi tên lên xuống để đổi vị trí, trái phải để đổi cấp. Nhấn cách hoặc Enter để thả, Escape để hủy.' },
+        screenReaderInstructions: {
+          draggable:
+            'Nhấn phím cách để nhấc thẻ. Dùng mũi tên lên xuống để đổi vị trí, trái phải để đổi cấp. Nhấn cách hoặc Enter để thả, Escape để hủy.',
+        },
         announcements: {
-          onDragStart: ({ active }) => `Đã nhấc thẻ ${effectiveChapters.find(c => c.id === active.id)?.title || ''}`,
-          onDragMove: () => projectionRef.current?.reason || (projectionRef.current ? `Vị trí cấp ${projectionRef.current.depth + 1}` : 'Ngoài danh sách thẻ'),
-          onDragOver: () => projectionRef.current?.reason || `Vị trí cấp ${(projectionRef.current?.depth || 0) + 1}`,
+          onDragStart: ({ active }) =>
+            `Đã nhấc thẻ ${effectiveChapters.find((c) => c.id === active.id)?.title || ''}`,
+          onDragMove: () =>
+            projectionRef.current?.reason ||
+            (projectionRef.current
+              ? `Vị trí cấp ${projectionRef.current.depth + 1}`
+              : 'Ngoài danh sách thẻ'),
+          onDragOver: () =>
+            projectionRef.current?.reason ||
+            `Vị trí cấp ${(projectionRef.current?.depth || 0) + 1}`,
           onDragEnd: () => 'Đã kết thúc di chuyển thẻ',
-          onDragCancel: () => 'Đã hủy di chuyển thẻ'
-        }
+          onDragCancel: () => 'Đã hủy di chuyển thẻ',
+        },
       }}
     >
-    <aside
-      className={`
+      <aside
+        className={`
         w-64 lg:w-72 h-full border-r border-border/70 bg-card/95 backdrop-blur-md flex flex-col shrink-0 z-20 select-none
         ${className}
       `}
-    >
-      {/* Header matching Google Docs "Các thẻ trong tài liệu" */}
-      {!hideHeader && (
-        <div className="flex items-center justify-between px-3.5 py-3 border-b border-border/70">
-          <div className="flex items-center gap-2 min-w-0">
-            <FileText className="w-4 h-4 text-primary shrink-0" />
-            <h2 className="font-semibold text-xs sm:text-sm text-foreground truncate">
-              Thẻ tài liệu
-            </h2>
+      >
+        {/* Header matching Google Docs "Các thẻ trong tài liệu" */}
+        {!hideHeader && (
+          <div className="flex items-center justify-between px-3.5 py-3 border-b border-border/70">
+            <div className="flex items-center gap-2 min-w-0">
+              <FileText className="w-4 h-4 text-primary shrink-0" />
+              <h2 className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                Thẻ tài liệu
+              </h2>
+              {isNearLimit && (
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                    isAtMaxLimit
+                      ? 'bg-destructive/20 text-destructive'
+                      : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                  }`}
+                  title={
+                    isAtMaxLimit
+                      ? 'Đã đạt giới hạn tối đa 100 thẻ'
+                      : 'Sắp đạt giới hạn 100 thẻ'
+                  }
+                >
+                  {effectiveChapters.length}/100
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {/* Add Root Tab Button */}
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={isAtMaxLimit || Boolean(draggingId)}
+                className={`h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors ${
+                  isAtMaxLimit ? 'opacity-40 cursor-not-allowed' : ''
+                }`}
+                onClick={handleCreateRootTab}
+                title={
+                  isAtMaxLimit
+                    ? 'Tài liệu đã đạt giới hạn tối đa 100 thẻ'
+                    : 'Thêm thẻ mới (+)'
+                }
+              >
+                <Plus className="w-4 h-4" />
+              </Button>
+
+              {/* Collapse Sidebar Button */}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+                onClick={onToggle}
+                title="Thu gọn thanh thẻ"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Recovery Cards Quick Cleanup Bar */}
+        {recoveryTabs.length > 0 && (
+          <div className="mx-2.5 mt-2.5 p-2 rounded-lg bg-destructive/10 border border-destructive/20 text-xs flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 text-destructive font-medium text-[11px] min-w-0">
+              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
+                Có {recoveryTabs.length} thẻ khôi phục
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={cleaningUp}
+              className="h-6 text-[11px] px-2 py-0 shrink-0 font-medium cursor-pointer"
+              onClick={async () => {
+                if (
+                  window.confirm(
+                    `Xóa toàn bộ ${recoveryTabs.length} thẻ khôi phục cũ này?`
+                  )
+                ) {
+                  setCleaningUp(true);
+                  try {
+                    for (const tab of recoveryTabs) {
+                      await onDeleteTab(tab.id);
+                    }
+                    toast.success(
+                      `Đã xóa ${recoveryTabs.length} thẻ khôi phục`
+                    );
+                  } catch {
+                    toast.error('Có lỗi xảy ra khi dọn dẹp');
+                  } finally {
+                    setCleaningUp(false);
+                  }
+                }
+              }}
+            >
+              {cleaningUp ? 'Đang xóa...' : 'Dọn dẹp'}
+            </Button>
+          </div>
+        )}
+
+        {/* Tabs Tree List */}
+        <div
+          ref={listRef}
+          role="tree"
+          aria-label="Thẻ tài liệu"
+          aria-busy={isMovingTab}
+          className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar"
+        >
+          {tree.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              Chưa có thẻ nào. Bấm nút{' '}
+              <Plus className="w-3 h-3 inline mx-0.5 text-primary" /> để tạo thẻ
+              đầu tiên.
+            </div>
+          ) : (
+            visibleNodes.map((node) => {
+              const siblings = node.parentId
+                ? treeNodesById.get(node.parentId)
+                : undefined;
+              const group = siblings?.children || tree;
+              return (
+                <React.Fragment key={node.id}>
+                  {dropBeforeId === node.id && dropIndicator()}
+                  {renderTabNode(
+                    node,
+                    group,
+                    group[group.length - 1]?.id === node.id
+                  )}
+                </React.Fragment>
+              );
+            })
+          )}
+          {projection && !dropBeforeId && dropIndicator()}
+        </div>
+
+        {/* Footer Info */}
+        <div className="p-2.5 border-t border-border/60 text-[11px] text-muted-foreground flex items-center justify-between bg-muted/20">
+          <div className="flex items-center gap-1.5">
+            <span>{effectiveChapters.length} thẻ tài liệu</span>
             {isNearLimit && (
-              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
-                isAtMaxLimit ? 'bg-destructive/20 text-destructive' : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-              }`} title={isAtMaxLimit ? 'Đã đạt giới hạn tối đa 100 thẻ' : 'Sắp đạt giới hạn 100 thẻ'}>
-                {effectiveChapters.length}/100
+              <span
+                className={`text-[10px] font-mono font-semibold ${isAtMaxLimit ? 'text-destructive font-bold' : 'text-amber-500'}`}
+              >
+                ({effectiveChapters.length}/100)
               </span>
             )}
           </div>
-
-          <div className="flex items-center gap-1 shrink-0">
-            {/* Add Root Tab Button */}
-            <Button
-              size="icon"
-              variant="ghost"
-              disabled={isAtMaxLimit || Boolean(draggingId)}
-              className={`h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors ${
-                isAtMaxLimit ? 'opacity-40 cursor-not-allowed' : ''
-              }`}
-              onClick={handleCreateRootTab}
-              title={isAtMaxLimit ? 'Tài liệu đã đạt giới hạn tối đa 100 thẻ' : 'Thêm thẻ mới (+)'}
-            >
-              <Plus className="w-4 h-4" />
-            </Button>
-
-            {/* Collapse Sidebar Button */}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
-              onClick={onToggle}
-              title="Thu gọn thanh thẻ"
-            >
-              <PanelLeftClose className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Recovery Cards Quick Cleanup Bar */}
-      {recoveryTabs.length > 0 && (
-        <div className="mx-2.5 mt-2.5 p-2 rounded-lg bg-destructive/10 border border-destructive/20 text-xs flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-1.5 text-destructive font-medium text-[11px] min-w-0">
-            <Trash2 className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">Có {recoveryTabs.length} thẻ khôi phục</span>
-          </div>
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={cleaningUp}
-            className="h-6 text-[11px] px-2 py-0 shrink-0 font-medium cursor-pointer"
-            onClick={async () => {
-              if (window.confirm(`Xóa toàn bộ ${recoveryTabs.length} thẻ khôi phục cũ này?`)) {
-                setCleaningUp(true);
-                try {
-                  for (const tab of recoveryTabs) {
-                    await onDeleteTab(tab.id);
-                  }
-                  toast.success(`Đã xóa ${recoveryTabs.length} thẻ khôi phục`);
-                } catch {
-                  toast.error('Có lỗi xảy ra khi dọn dẹp');
-                } finally {
-                  setCleaningUp(false);
-                }
-              }
-            }}
+          <span
+            role="status"
+            title={projection?.reason}
+            className={projection?.valid === false ? 'text-destructive' : ''}
           >
-            {cleaningUp ? 'Đang xóa...' : 'Dọn dẹp'}
-          </Button>
+            {isMovingTab
+              ? 'Đang lưu…'
+              : draggingId
+                ? projection?.valid === false
+                  ? 'Không thể thả'
+                  : 'Thả để đặt thẻ'
+                : ''}
+          </span>
         </div>
-      )}
-
-      {/* Tabs Tree List */}
-      <div ref={listRef} role="tree" aria-label="Thẻ tài liệu" aria-busy={isMovingTab}
-        className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
-        {tree.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            Chưa có thẻ nào. Bấm nút <Plus className="w-3 h-3 inline mx-0.5 text-primary" /> để tạo thẻ đầu tiên.
-          </div>
-        ) : (
-          visibleNodes.map(node => {
-            const siblings = node.parentId
-              ? treeNodesById.get(node.parentId)
-              : undefined;
-            const group = siblings?.children || tree;
-            return <React.Fragment key={node.id}>
-              {dropBeforeId === node.id && dropIndicator()}
-              {renderTabNode(node, group, group[group.length - 1]?.id === node.id)}
-            </React.Fragment>;
-          })
-        )}
-        {projection && !dropBeforeId && dropIndicator()}
-      </div>
-
-      {/* Footer Info */}
-      <div className="p-2.5 border-t border-border/60 text-[11px] text-muted-foreground flex items-center justify-between bg-muted/20">
-        <div className="flex items-center gap-1.5">
-          <span>{effectiveChapters.length} thẻ tài liệu</span>
-          {isNearLimit && (
-            <span className={`text-[10px] font-mono font-semibold ${isAtMaxLimit ? 'text-destructive font-bold' : 'text-amber-500'}`}>
-              ({effectiveChapters.length}/100)
-            </span>
-          )}
-        </div>
-        <span role="status" title={projection?.reason} className={projection?.valid === false ? 'text-destructive' : ''}>
-          {isMovingTab ? 'Đang lưu…' : draggingId ? projection?.valid === false ? 'Không thể thả' : 'Thả để đặt thẻ' : ''}
-        </span>
-      </div>
-    </aside>
-    {portalReady && createPortal(
-      <DragOverlay
-        // The rows already occupy their optimistic destinations on release.
-        // Animating the overlay to its previous measured rect causes a snap back.
-        dropAnimation={null}
-        zIndex={1000}
-      >
-        {draggingId && (() => {
-          const tab = effectiveChapters.find(c => c.id === draggingId);
-          const isValid = projection?.valid !== false;
-          return (
-            <motion.div
-              initial={reducedMotion ? false : { scale: 0.98, rotate: 0, opacity: 0.85 }}
-              animate={reducedMotion ? { scale: 1 } : {
-                scale: 1.05,
-                rotate: [1.5, 2.5, 1.5],
-                y: [-3, 3, -3],
-                transition: {
-                  rotate: { repeat: Infinity, duration: 2.2, ease: "easeInOut" },
-                  y: { repeat: Infinity, duration: 1.8, ease: "easeInOut" },
-                  scale: { duration: 0.15 }
-                }
-              }}
-              className={`
+      </aside>
+      {portalReady &&
+        createPortal(
+          <DragOverlay
+            // The rows already occupy their optimistic destinations on release.
+            // Animating the overlay to its previous measured rect causes a snap back.
+            dropAnimation={null}
+            zIndex={1000}
+          >
+            {draggingId &&
+              (() => {
+                const tab = effectiveChapters.find((c) => c.id === draggingId);
+                const isValid = projection?.valid !== false;
+                return (
+                  <motion.div
+                    initial={
+                      reducedMotion
+                        ? false
+                        : { scale: 0.98, rotate: 0, opacity: 0.85 }
+                    }
+                    animate={
+                      reducedMotion
+                        ? { scale: 1 }
+                        : {
+                            scale: 1.05,
+                            rotate: [1.5, 2.5, 1.5],
+                            y: [-3, 3, -3],
+                            transition: {
+                              rotate: {
+                                repeat: Infinity,
+                                duration: 2.2,
+                                ease: 'easeInOut',
+                              },
+                              y: {
+                                repeat: Infinity,
+                                duration: 1.8,
+                                ease: 'easeInOut',
+                              },
+                              scale: { duration: 0.15 },
+                            },
+                          }
+                    }
+                    className={`
                 flex min-h-10 w-64 items-center gap-2.5 rounded-xl border px-3.5 py-2 text-xs font-medium
                 backdrop-blur-xl pointer-events-none select-none transition-colors duration-150
-                ${isValid
-                  ? 'border-primary/60 bg-card/95 text-foreground shadow-[0_20px_35px_-8px_rgba(59,130,246,0.35),0_10px_20px_-6px_rgba(0,0,0,0.25)] ring-2 ring-primary/40'
-                  : 'border-destructive/70 bg-card/95 text-destructive shadow-[0_20px_35px_-8px_rgba(239,68,68,0.35),0_10px_20px_-6px_rgba(0,0,0,0.25)] ring-2 ring-destructive/40'
+                ${
+                  isValid
+                    ? 'border-primary/60 bg-card/95 text-foreground shadow-[0_20px_35px_-8px_rgba(59,130,246,0.35),0_10px_20px_-6px_rgba(0,0,0,0.25)] ring-2 ring-primary/40'
+                    : 'border-destructive/70 bg-card/95 text-destructive shadow-[0_20px_35px_-8px_rgba(239,68,68,0.35),0_10px_20px_-6px_rgba(0,0,0,0.25)] ring-2 ring-destructive/40'
                 }
               `}
-            >
-              <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-primary/10 text-primary shrink-0">
-                {tab?.emoji ? (
-                  <span className="text-sm">{tab.emoji}</span>
-                ) : (
-                  <FileText className="w-4 h-4 text-primary" />
-                )}
-              </div>
+                  >
+                    <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-primary/10 text-primary shrink-0">
+                      {tab?.emoji ? (
+                        <span className="text-sm">{tab.emoji}</span>
+                      ) : (
+                        <FileText className="w-4 h-4 text-primary" />
+                      )}
+                    </div>
 
-              <span className="min-w-0 flex-1 truncate font-semibold text-foreground">
-                {tab?.title || 'Thẻ không tên'}
-              </span>
+                    <span className="min-w-0 flex-1 truncate font-semibold text-foreground">
+                      {tab?.title || 'Thẻ không tên'}
+                    </span>
 
-              {draggedDescendants.size > 0 && (
-                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/15 text-primary border border-primary/30">
-                  +{draggedDescendants.size} thẻ con
-                </span>
-              )}
+                    {draggedDescendants.size > 0 && (
+                      <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/15 text-primary border border-primary/30">
+                        +{draggedDescendants.size} thẻ con
+                      </span>
+                    )}
 
-              {!isValid && (
-                <AlertCircle className="h-4 w-4 shrink-0 text-destructive animate-pulse" />
-              )}
-            </motion.div>
-          );
-        })()}
-      </DragOverlay>,
-      document.body
-    )}
+                    {!isValid && (
+                      <AlertCircle className="h-4 w-4 shrink-0 text-destructive animate-pulse" />
+                    )}
+                  </motion.div>
+                );
+              })()}
+          </DragOverlay>,
+          document.body
+        )}
     </DndContext>
   );
 }

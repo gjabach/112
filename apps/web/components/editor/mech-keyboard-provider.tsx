@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Keyboard, Volume2, Sparkles, Sliders, Music, Radio, Check } from 'lucide-react';
+import { Keyboard, Volume2, Sparkles, Music, Radio, Check } from 'lucide-react';
 import {
   mechKeyboardManager,
   isMechKeyboardEnabled,
@@ -18,8 +18,14 @@ import {
   MechSwitchProfile,
 } from '@/lib/mech-keyboard';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogTitle } from '@/components/ui/dialog';
+import { useActionMenuOverlay } from '@/components/studio/action-menu';
 
-export function MechKeyboardProvider({ children }: { children: React.ReactNode }) {
+export function MechKeyboardProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const activeKeys = useRef<Set<string>>(new Set());
   const lastCharKeyTime = useRef<number>(0);
   const lastCharKeyCode = useRef<string>('');
@@ -67,7 +73,11 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
         const timeSinceSuppression = now - lastImeSuppressedTime.current;
         const timeSinceCompEnd = now - lastCompositionEndTime.current;
 
-        if (timeSinceLastChar < 85 || timeSinceSuppression < 85 || timeSinceCompEnd < 85) {
+        if (
+          timeSinceLastChar < 85 ||
+          timeSinceSuppression < 85 ||
+          timeSinceCompEnd < 85
+        ) {
           lastImeSuppressedTime.current = now;
           return;
         }
@@ -80,7 +90,11 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
         const timeSinceCompEnd = now - lastCompositionEndTime.current;
         const timeSinceSuppression = now - lastImeSuppressedTime.current;
 
-        if (timeSinceLastChar < 100 || timeSinceCompEnd < 100 || timeSinceSuppression < 100) {
+        if (
+          timeSinceLastChar < 100 ||
+          timeSinceCompEnd < 100 ||
+          timeSinceSuppression < 100
+        ) {
           return;
         }
       }
@@ -90,8 +104,17 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
         e.code.startsWith('Key') ||
         e.code.startsWith('Digit') ||
         [
-          'Minus', 'Equal', 'BracketLeft', 'BracketRight', 'Backslash',
-          'Semicolon', 'Quote', 'Backquote', 'Comma', 'Period', 'Slash'
+          'Minus',
+          'Equal',
+          'BracketLeft',
+          'BracketRight',
+          'Backslash',
+          'Semicolon',
+          'Quote',
+          'Backquote',
+          'Comma',
+          'Period',
+          'Slash',
         ].includes(e.code);
 
       if (isCharKey) {
@@ -121,7 +144,10 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
       if (!e.code || e.code === '' || e.code === 'Unidentified') return;
 
       // Ignore synthetic IME Backspace keyup
-      if (e.code === 'Backspace' && performance.now() - lastImeSuppressedTime.current < 100) {
+      if (
+        e.code === 'Backspace' &&
+        performance.now() - lastImeSuppressedTime.current < 100
+      ) {
         return;
       }
 
@@ -133,14 +159,22 @@ export function MechKeyboardProvider({ children }: { children: React.ReactNode }
 
     document.addEventListener('keydown', handleKeyDown, { capture: true });
     document.addEventListener('keyup', handleKeyUp, { capture: true });
-    document.addEventListener('compositionstart', handleCompositionStart, { capture: true });
-    document.addEventListener('compositionend', handleCompositionEnd, { capture: true });
+    document.addEventListener('compositionstart', handleCompositionStart, {
+      capture: true,
+    });
+    document.addEventListener('compositionend', handleCompositionEnd, {
+      capture: true,
+    });
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown, { capture: true });
       document.removeEventListener('keyup', handleKeyUp, { capture: true });
-      document.removeEventListener('compositionstart', handleCompositionStart, { capture: true });
-      document.removeEventListener('compositionend', handleCompositionEnd, { capture: true });
+      document.removeEventListener('compositionstart', handleCompositionStart, {
+        capture: true,
+      });
+      document.removeEventListener('compositionend', handleCompositionEnd, {
+        capture: true,
+      });
     };
   }, []);
 
@@ -155,7 +189,7 @@ export function MechKeyboardToggle() {
   const [keyUpSound, setKeyUpSound] = useState(true);
   const [open, setOpen] = useState(false);
   const [testText, setTestText] = useState('');
-  const popoverRef = useRef<HTMLDivElement>(null);
+  useActionMenuOverlay(open);
 
   useEffect(() => {
     const syncState = () => {
@@ -168,21 +202,9 @@ export function MechKeyboardToggle() {
 
     syncState();
     window.addEventListener('novelist-mech-keyboard-changed', syncState);
-    return () => window.removeEventListener('novelist-mech-keyboard-changed', syncState);
+    return () =>
+      window.removeEventListener('novelist-mech-keyboard-changed', syncState);
   }, []);
-
-  // Close on click outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
 
   const handleToggle = () => {
     const newState = !enabled;
@@ -221,14 +243,17 @@ export function MechKeyboardToggle() {
     setKeyUpSound(next);
   };
 
-  const currentProfile = SWITCH_PROFILES.find((s) => s.id === switchType) || SWITCH_PROFILES[0];
+  const currentProfile =
+    SWITCH_PROFILES.find((s) => s.id === switchType) || SWITCH_PROFILES[0];
 
   return (
-    <div className="relative inline-block" ref={popoverRef}>
+    <div className="relative inline-block">
       <Button
         variant="ghost"
         size="icon"
         onClick={() => setOpen(!open)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         className={`h-7 w-7 sm:h-8 sm:w-8 transition-all relative ${
           enabled
             ? 'text-primary bg-primary/10 hover:bg-primary/20 shadow-xs'
@@ -239,12 +264,19 @@ export function MechKeyboardToggle() {
       >
         <Keyboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
         {enabled && (
-          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-primary animate-pulse" />
+          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-primary" />
         )}
       </Button>
 
-      {open && (
-        <div className="absolute right-0 mt-2 w-84 sm:w-96 p-4 rounded-2xl border bg-card/98 backdrop-blur-xl shadow-2xl z-50 text-xs animate-in fade-in slide-in-from-top-2 border-border/80 text-foreground">
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        className="max-w-sm rounded-2xl"
+      >
+        <div
+          data-keep-menu
+          className="p-4 rounded-2xl border bg-card shadow-lg text-xs border-border text-foreground"
+        >
           {/* Header */}
           <div className="flex items-center justify-between pb-3 mb-3 border-b border-border/60">
             <div className="flex items-center gap-2">
@@ -252,29 +284,42 @@ export function MechKeyboardToggle() {
                 <Keyboard className="w-4 h-4" />
               </div>
               <div>
-                <span className="font-semibold text-sm block leading-tight">Mô phỏng phím cơ</span>
-                <span className="text-[10px] text-muted-foreground">Âm thanh thực tế chuẩn audiophile</span>
+                <DialogTitle className="font-sans font-semibold text-sm block leading-tight">
+                  Mô phỏng phím cơ
+                </DialogTitle>
+                <span className="text-[10px] text-muted-foreground">
+                  Âm thanh thực tế chuẩn audiophile
+                </span>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
+                type="button"
+                role="switch"
+                aria-checked={enabled}
+                aria-label="Âm thanh bàn phím cơ"
                 onClick={handleToggle}
-                className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors cursor-pointer ${
-                  enabled ? 'bg-primary' : 'bg-muted-foreground/30'
-                }`}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 title={enabled ? 'Nhấn để tắt phím cơ' : 'Nhấn để bật phím cơ'}
                 data-no-sound="true"
               >
                 <span
-                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                    enabled ? 'translate-x-5' : 'translate-x-1'
+                  className={`inline-flex h-5 w-10 items-center rounded-full transition-colors ${
+                    enabled ? 'bg-primary' : 'bg-muted-foreground/30'
                   }`}
-                />
+                  aria-hidden="true"
+                >
+                  <span
+                    className={`h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`}
+                  />
+                </span>
               </button>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 text-muted-foreground hover:text-foreground rounded-full"
+                className="h-11 w-11 text-muted-foreground hover:text-foreground rounded-full"
+                aria-label="Đóng cài đặt bàn phím cơ"
+                data-autofocus
                 onClick={() => setOpen(false)}
                 data-no-sound="true"
               >
@@ -287,12 +332,18 @@ export function MechKeyboardToggle() {
           <div className="mb-3.5 p-2.5 rounded-xl bg-muted/60 border border-border/50 flex items-center justify-between">
             <div className="min-w-0 pr-2">
               <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="font-medium text-xs truncate">{currentProfile.name}</span>
-                <span className={`text-[9px] px-1.5 py-0.2 rounded border font-semibold ${currentProfile.badgeClass}`}>
+                <span className="font-medium text-xs truncate">
+                  {currentProfile.name}
+                </span>
+                <span
+                  className={`text-[9px] px-1.5 py-0.2 rounded border font-semibold ${currentProfile.badgeClass}`}
+                >
                   {currentProfile.badge}
                 </span>
               </div>
-              <p className="text-[10px] text-muted-foreground line-clamp-1">{currentProfile.description}</p>
+              <p className="text-[10px] text-muted-foreground line-clamp-1">
+                {currentProfile.description}
+              </p>
             </div>
             <Button
               size="sm"
@@ -316,7 +367,9 @@ export function MechKeyboardToggle() {
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Chọn loại Switch ({SWITCH_PROFILES.length})
               </span>
-              <span className="text-[10px] text-primary/80">Thu âm vật lý thật 100%</span>
+              <span className="text-[10px] text-primary/80">
+                Thu âm vật lý thật 100%
+              </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-1">
@@ -325,6 +378,8 @@ export function MechKeyboardToggle() {
                 return (
                   <button
                     key={sw.id}
+                    type="button"
+                    aria-pressed={isSelected}
                     onClick={() => handleSwitchTypeChange(sw.id)}
                     data-no-sound="true"
                     className={`p-2 rounded-xl border text-left transition-all relative flex flex-col justify-between ${
@@ -334,10 +389,14 @@ export function MechKeyboardToggle() {
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1 mb-1">
-                      <span className={`text-[11px] font-medium truncate ${isSelected ? 'text-primary font-semibold' : ''}`}>
+                      <span
+                        className={`text-[11px] font-medium truncate ${isSelected ? 'text-primary font-semibold' : ''}`}
+                      >
                         {sw.name}
                       </span>
-                      <span className={`text-[9px] px-1 py-0.2 rounded border shrink-0 font-medium ${sw.badgeClass}`}>
+                      <span
+                        className={`text-[9px] px-1 py-0.2 rounded border shrink-0 font-medium ${sw.badgeClass}`}
+                      >
                         {sw.badge}
                       </span>
                     </div>
@@ -346,7 +405,6 @@ export function MechKeyboardToggle() {
                     </div>
                     {isSelected && (
                       <span className="absolute top-1 right-1 flex h-1.5 w-1.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
                         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" />
                       </span>
                     )}
@@ -368,6 +426,7 @@ export function MechKeyboardToggle() {
               </div>
               <input
                 type="range"
+                aria-label="Âm lượng bàn phím cơ"
                 min="0"
                 max="100"
                 step="5"
@@ -383,6 +442,7 @@ export function MechKeyboardToggle() {
               <button
                 type="button"
                 onClick={handleSpatialToggle}
+                aria-pressed={spatialAudio}
                 data-no-sound="true"
                 className={`p-2 rounded-xl border text-left transition-colors flex items-center justify-between ${
                   spatialAudio
@@ -395,9 +455,13 @@ export function MechKeyboardToggle() {
                   <div className="text-[10px] font-semibold flex items-center gap-1">
                     <Radio className="w-3 h-3 text-primary" /> Âm vòm 3D
                   </div>
-                  <div className="text-[9px] text-muted-foreground truncate">Stereo Panning</div>
+                  <div className="text-[9px] text-muted-foreground truncate">
+                    Stereo Panning
+                  </div>
                 </div>
-                <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center ${spatialAudio ? 'bg-primary text-white' : 'bg-muted border'}`}>
+                <div
+                  className={`w-3.5 h-3.5 rounded-full flex items-center justify-center ${spatialAudio ? 'bg-primary text-primary-foreground' : 'bg-muted border'}`}
+                >
                   {spatialAudio && <Check className="w-2.5 h-2.5" />}
                 </div>
               </button>
@@ -406,6 +470,7 @@ export function MechKeyboardToggle() {
               <button
                 type="button"
                 onClick={handleKeyUpToggle}
+                aria-pressed={keyUpSound}
                 data-no-sound="true"
                 className={`p-2 rounded-xl border text-left transition-colors flex items-center justify-between ${
                   keyUpSound
@@ -418,9 +483,13 @@ export function MechKeyboardToggle() {
                   <div className="text-[10px] font-semibold flex items-center gap-1">
                     <Music className="w-3 h-3 text-primary" /> Tiếng nhả phím
                   </div>
-                  <div className="text-[9px] text-muted-foreground truncate">Key Release</div>
+                  <div className="text-[9px] text-muted-foreground truncate">
+                    Key Release
+                  </div>
                 </div>
-                <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center ${keyUpSound ? 'bg-primary text-white' : 'bg-muted border'}`}>
+                <div
+                  className={`w-3.5 h-3.5 rounded-full flex items-center justify-center ${keyUpSound ? 'bg-primary text-primary-foreground' : 'bg-muted border'}`}
+                >
                   {keyUpSound && <Check className="w-2.5 h-2.5" />}
                 </div>
               </button>
@@ -430,6 +499,7 @@ export function MechKeyboardToggle() {
             <div className="pt-1">
               <input
                 type="text"
+                aria-label="Gõ thử bàn phím cơ"
                 value={testText}
                 onChange={(e) => setTestText(e.target.value)}
                 placeholder="Gõ thử bàn phím tại ô này để cảm nhận..."
@@ -438,7 +508,7 @@ export function MechKeyboardToggle() {
             </div>
           </div>
         </div>
-      )}
+      </Dialog>
     </div>
   );
 }

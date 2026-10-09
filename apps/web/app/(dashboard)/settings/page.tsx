@@ -2,25 +2,79 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '@/components/ui/card';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { PageHeader } from '@/components/studio/page-header';
+import { SyncStatusButton } from '@/components/layout/sync-provider';
+import { SoundToggleButton } from '@/components/layout/sound-provider';
+import {
+  MechKeyboardProvider,
+  MechKeyboardToggle,
+} from '@/components/editor/mech-keyboard-provider';
 import { useAuthStore } from '@/lib/store';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, Save, Download, Upload, Database, RefreshCw, AlertCircle, CheckCircle2, Sun, Moon, Monitor, Cloud, LogOut } from 'lucide-react';
+import {
+  Eye,
+  EyeOff,
+  Save,
+  Download,
+  Upload,
+  Database,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  Sun,
+  Moon,
+  Monitor,
+  Cloud,
+  LogOut,
+  BookOpen,
+} from 'lucide-react';
 
 const providers = [
-  { 
-    id: 'gemini', 
-    name: 'Google Gemini (Khuyên dùng)', 
-    models: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'] 
+  {
+    id: 'gemini',
+    name: 'Google Gemini (Khuyên dùng)',
+    models: [
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+    ],
   },
-  { id: 'groq', name: 'Groq (miễn phí, nhanh)', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
-  { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'] },
-  { id: 'anthropic', name: 'Anthropic Claude', models: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'] },
-  { id: 'ollama', name: 'Ollama Local', models: ['llama3.2', 'mistral', 'gemma2'] }
+  {
+    id: 'groq',
+    name: 'Groq (miễn phí, nhanh)',
+    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic Claude',
+    models: [
+      'claude-sonnet-4-20250514',
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+    ],
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama Local',
+    models: ['llama3.2', 'mistral', 'gemma2'],
+  },
 ];
 
 export default function SettingsPage() {
@@ -32,7 +86,10 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [testingKey, setTestingKey] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
   const [profileName, setProfileName] = useState(user?.name || '');
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -43,13 +100,28 @@ export default function SettingsPage() {
     const savedProvider = localStorage.getItem('ai_provider');
     const savedModel = localStorage.getItem('ai_model');
     const emailClean = (user?.email || '').trim().toLowerCase();
-    const savedKey = (localStorage.getItem('ai_api_key') || '').trim() 
-      || (emailClean ? (localStorage.getItem(`novelist_api_key_${emailClean}`) || '').trim() : '')
-      || (user?.aiApiKey || '').trim();
+    const savedKey =
+      (localStorage.getItem('ai_api_key') || '').trim() ||
+      (emailClean
+        ? (localStorage.getItem(`novelist_api_key_${emailClean}`) || '').trim()
+        : '') ||
+      (user?.aiApiKey || '').trim();
 
     let activeModel = savedModel;
-    const deprecatedModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'];
-    if (activeModel && (deprecatedModels.includes(activeModel) || activeModel.includes('2.0-flash') || activeModel.includes('1.5-flash'))) {
+    const deprecatedModels = [
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+    ];
+    if (
+      activeModel &&
+      (deprecatedModels.includes(activeModel) ||
+        activeModel.includes('2.0-flash') ||
+        activeModel.includes('1.5-flash'))
+    ) {
       activeModel = 'gemini-3.8-flash';
       localStorage.setItem('ai_model', 'gemini-3.8-flash');
     }
@@ -82,10 +154,12 @@ export default function SettingsPage() {
       localStorage.setItem('ai_model', aiModel);
       if (cleanKey) {
         localStorage.setItem('ai_api_key', cleanKey);
-        if (emailClean) localStorage.setItem(`novelist_api_key_${emailClean}`, cleanKey);
+        if (emailClean)
+          localStorage.setItem(`novelist_api_key_${emailClean}`, cleanKey);
       } else {
         localStorage.removeItem('ai_api_key');
-        if (emailClean) localStorage.removeItem(`novelist_api_key_${emailClean}`);
+        if (emailClean)
+          localStorage.removeItem(`novelist_api_key_${emailClean}`);
       }
 
       // 2. Sync to auth store
@@ -94,7 +168,7 @@ export default function SettingsPage() {
           ...user,
           aiProvider,
           aiModel,
-          aiApiKey: cleanKey
+          aiApiKey: cleanKey,
         });
       }
 
@@ -104,7 +178,11 @@ export default function SettingsPage() {
         if (usersStr) {
           const users = JSON.parse(usersStr);
           if (Array.isArray(users)) {
-            const idx = users.findIndex((u: any) => u.id === user?.id || (u.email && u.email.trim().toLowerCase() === emailClean));
+            const idx = users.findIndex(
+              (u: any) =>
+                u.id === user?.id ||
+                (u.email && u.email.trim().toLowerCase() === emailClean)
+            );
             if (idx !== -1) {
               users[idx].aiProvider = aiProvider;
               users[idx].aiModel = aiModel;
@@ -117,7 +195,7 @@ export default function SettingsPage() {
                 fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${userKey}`, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(users[idx])
+                  body: JSON.stringify(users[idx]),
                 }).catch(() => {});
               }
             }
@@ -131,8 +209,8 @@ export default function SettingsPage() {
         body: JSON.stringify({
           aiProvider,
           aiModel,
-          aiApiKey: cleanKey || undefined
-        })
+          aiApiKey: cleanKey || undefined,
+        }),
       });
 
       toast.success('Đã lưu cấu hình AI thành công!');
@@ -158,12 +236,13 @@ export default function SettingsPage() {
         body: JSON.stringify({
           provider: aiProvider,
           model: aiModel,
-          apiKey: cleanKey
-        })
+          apiKey: cleanKey,
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        const finalModel = (data.autoAdjusted && data.model) ? data.model : aiModel;
+        const finalModel =
+          data.autoAdjusted && data.model ? data.model : aiModel;
         if (data.autoAdjusted && data.model) {
           setAiModel(data.model);
           localStorage.setItem('ai_model', data.model);
@@ -175,16 +254,25 @@ export default function SettingsPage() {
         localStorage.setItem('ai_model', finalModel);
         if (cleanKey) {
           localStorage.setItem('ai_api_key', cleanKey);
-          if (emailClean) localStorage.setItem(`novelist_api_key_${emailClean}`, cleanKey);
+          if (emailClean)
+            localStorage.setItem(`novelist_api_key_${emailClean}`, cleanKey);
         }
         if (user) {
-          setUser({ ...user, aiProvider, aiModel: finalModel, aiApiKey: cleanKey });
+          setUser({
+            ...user,
+            aiProvider,
+            aiModel: finalModel,
+            aiApiKey: cleanKey,
+          });
         }
 
         setTestResult({ success: true, message: data.message });
         toast.success(data.message + ' (Đã tự động lưu cấu hình)');
       } else {
-        setTestResult({ success: false, message: data.error || 'Kiểm tra thất bại' });
+        setTestResult({
+          success: false,
+          message: data.error || 'Kiểm tra thất bại',
+        });
         toast.error(data.error || 'Kiểm tra kết nối thất bại');
       }
     } catch (err: any) {
@@ -197,7 +285,10 @@ export default function SettingsPage() {
   };
 
   const saveProfile = () => {
-    if (!profileName.trim()) { toast.error('Vui lòng nhập tên hiển thị'); return; }
+    if (!profileName.trim()) {
+      toast.error('Vui lòng nhập tên hiển thị');
+      return;
+    }
     try {
       const userStr = localStorage.getItem('novelist_current_user');
       const u = userStr ? JSON.parse(userStr) : { email: 'user@example.com' };
@@ -216,7 +307,9 @@ export default function SettingsPage() {
         try {
           const v = localStorage.getItem(key);
           return v ? JSON.parse(v) : fallback;
-        } catch { return fallback; }
+        } catch {
+          return fallback;
+        }
       };
 
       const backupData = {
@@ -225,16 +318,25 @@ export default function SettingsPage() {
         projects: getStored('novelist_projects', []),
         chapters: getStored('novelist_chapters', []),
         characters: getStored('novelist_characters', []),
-        entities: getStored('novelist_worldbuilding', getStored('novelist_entities', [])),
-        timeline: getStored('novelist_timeline', getStored('novelist_timeline_events', [])),
+        entities: getStored(
+          'novelist_worldbuilding',
+          getStored('novelist_entities', [])
+        ),
+        timeline: getStored(
+          'novelist_timeline',
+          getStored('novelist_timeline_events', [])
+        ),
         timelineEras: getStored('novelist_timeline_eras', []),
-        outline: getStored('novelist_outline', getStored('novelist_outlines', [])),
+        outline: getStored(
+          'novelist_outline',
+          getStored('novelist_outlines', [])
+        ),
         user: getStored('novelist_current_user', null),
         aiConfig: {
           provider: localStorage.getItem('ai_provider') || 'gemini',
           model: localStorage.getItem('ai_model') || 'gemini-3.8-flash',
-          apiKey: localStorage.getItem('ai_api_key') || ''
-        }
+          apiKey: localStorage.getItem('ai_api_key') || '',
+        },
       };
 
       const jsonStr = JSON.stringify(backupData, null, 2);
@@ -266,46 +368,79 @@ export default function SettingsPage() {
         }
 
         if (Array.isArray(data.projects)) {
-          localStorage.setItem('novelist_projects', JSON.stringify(data.projects));
+          localStorage.setItem(
+            'novelist_projects',
+            JSON.stringify(data.projects)
+          );
         }
         if (Array.isArray(data.chapters)) {
-          localStorage.setItem('novelist_chapters', JSON.stringify(data.chapters));
+          localStorage.setItem(
+            'novelist_chapters',
+            JSON.stringify(data.chapters)
+          );
         }
         if (Array.isArray(data.characters)) {
-          localStorage.setItem('novelist_characters', JSON.stringify(data.characters));
+          localStorage.setItem(
+            'novelist_characters',
+            JSON.stringify(data.characters)
+          );
         }
 
         const entitiesData = data.entities || data.worldbuilding || [];
         if (Array.isArray(entitiesData)) {
-          localStorage.setItem('novelist_worldbuilding', JSON.stringify(entitiesData));
-          localStorage.setItem('novelist_entities', JSON.stringify(entitiesData));
+          localStorage.setItem(
+            'novelist_worldbuilding',
+            JSON.stringify(entitiesData)
+          );
+          localStorage.setItem(
+            'novelist_entities',
+            JSON.stringify(entitiesData)
+          );
         }
 
         const timelineData = data.timeline || data.timelineEvents || [];
         if (Array.isArray(timelineData)) {
-          localStorage.setItem('novelist_timeline', JSON.stringify(timelineData));
-          localStorage.setItem('novelist_timeline_events', JSON.stringify(timelineData));
+          localStorage.setItem(
+            'novelist_timeline',
+            JSON.stringify(timelineData)
+          );
+          localStorage.setItem(
+            'novelist_timeline_events',
+            JSON.stringify(timelineData)
+          );
         }
 
         if (Array.isArray(data.timelineEras)) {
-          localStorage.setItem('novelist_timeline_eras', JSON.stringify(data.timelineEras));
+          localStorage.setItem(
+            'novelist_timeline_eras',
+            JSON.stringify(data.timelineEras)
+          );
         }
 
         const outlineData = data.outline || data.outlines || [];
         if (outlineData) {
           localStorage.setItem('novelist_outline', JSON.stringify(outlineData));
-          localStorage.setItem('novelist_outlines', JSON.stringify(outlineData));
+          localStorage.setItem(
+            'novelist_outlines',
+            JSON.stringify(outlineData)
+          );
         }
 
         if (data.user) {
-          localStorage.setItem('novelist_current_user', JSON.stringify(data.user));
+          localStorage.setItem(
+            'novelist_current_user',
+            JSON.stringify(data.user)
+          );
           if (data.user.name) setProfileName(data.user.name);
         }
 
         if (data.aiConfig) {
-          if (data.aiConfig.provider) localStorage.setItem('ai_provider', data.aiConfig.provider);
-          if (data.aiConfig.model) localStorage.setItem('ai_model', data.aiConfig.model);
-          if (data.aiConfig.apiKey) localStorage.setItem('ai_api_key', data.aiConfig.apiKey);
+          if (data.aiConfig.provider)
+            localStorage.setItem('ai_provider', data.aiConfig.provider);
+          if (data.aiConfig.model)
+            localStorage.setItem('ai_model', data.aiConfig.model);
+          if (data.aiConfig.apiKey)
+            localStorage.setItem('ai_api_key', data.aiConfig.apiKey);
           setAiProvider(data.aiConfig.provider || 'gemini');
           setAiModel(data.aiConfig.model || 'gemini-3.8-flash');
           setApiKey(data.aiConfig.apiKey || '');
@@ -324,282 +459,473 @@ export default function SettingsPage() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="p-6 md:p-8 max-w-4xl mx-auto space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold">Cài đặt</h1>
-          <p className="text-muted-foreground">Quản lý tài khoản và AI</p>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Thông tin cá nhân</CardTitle>
-            <CardDescription>Email: {user?.email}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input placeholder="Tên hiển thị" value={profileName} onChange={e => setProfileName(e.target.value)} />
-            <div className="flex flex-wrap items-center gap-3">
-              <Button variant="outline" onClick={saveProfile}><Save className="w-4 h-4 mr-2" /> Lưu profile</Button>
-              <Button 
-                variant="destructive" 
-                onClick={() => {
-                  logout();
-                  toast.success('Đã đăng xuất tài khoản thành công');
-                  router.push('/login');
-                }}
+    <MechKeyboardProvider>
+      <DashboardLayout>
+        <div className="p-5 sm:p-8 lg:p-10 max-w-4xl mx-auto space-y-6">
+          <PageHeader
+            eyebrow="Theo cách của bạn"
+            title="Cài đặt phòng viết"
+            description="Tài khoản, công cụ AI và những điều giúp bạn viết thoải mái hơn."
+          />
+          <nav
+            aria-label="Các nhóm cài đặt"
+            className="flex flex-wrap gap-2 pb-2"
+          >
+            {[
+              ['account', 'Tài khoản'],
+              ['ai-config', 'Trợ lý AI'],
+              ['sound', 'Âm thanh'],
+              ['appearance', 'Giao diện'],
+            ].map(([id, label]) => (
+              <a
+                key={id}
+                href={'#' + id}
+                className="inline-flex min-h-11 items-center rounded-lg border bg-card px-4 text-xs hover:bg-accent"
               >
-                <LogOut className="w-4 h-4 mr-2" /> Đăng xuất
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+                {label}
+              </a>
+            ))}
+          </nav>
 
-        <Card className="border-primary/20">
-          <CardHeader>
-            <CardTitle>🤖 Cấu hình AI (BYOK - Bring Your Own Key)</CardTitle>
-            <CardDescription>
-              Bạn tự nhập API key từ provider. Key được mã hóa AES-256-GCM trước khi lưu vào D1. Chúng tôi không lưu lịch sử chat lên server AI provider ngoài nội dung bạn gửi.
-              <br /><br />
-              <strong>Gợi ý miễn phí:</strong> Groq cho tốc độ cực nhanh free tier, hoặc Ollama chạy local hoàn toàn miễn phí.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div>
-              <label className="text-sm font-medium mb-2 block">AI Provider</label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {providers.map(p => (
-                  <button key={p.id} onClick={() => { setAiProvider(p.id); setAiModel(p.models[0]); }} className={`p-3 rounded-lg border text-left text-sm transition-all ${aiProvider === p.id ? 'border-primary bg-primary/10' : 'border-input hover:border-primary/50'}`}>
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-muted-foreground">{p.models[0]}</div>
+          <Card id="account">
+            <CardHeader>
+              <CardTitle>Tài khoản</CardTitle>
+              <CardDescription>Email: {user?.email}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                aria-label="Tên hiển thị"
+                placeholder="Tên hiển thị"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="outline" onClick={saveProfile}>
+                  <Save className="w-4 h-4 mr-2" /> Lưu tên hiển thị
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    logout();
+                    toast.success('Đã đăng xuất tài khoản thành công');
+                    router.push('/login');
+                  }}
+                >
+                  <LogOut className="w-4 h-4 mr-2" /> Đăng xuất
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card id="ai-config" className="border-primary/20">
+            <CardHeader>
+              <CardTitle>Trợ lý AI · Khóa API của bạn</CardTitle>
+              <CardDescription>
+                Chọn nhà cung cấp và nhập khóa API của bạn. Cấu hình được lưu
+                trên thiết bị; nội dung yêu cầu sẽ được gửi đến dịch vụ AI đã
+                chọn.
+                <br />
+                <br />
+                <strong>Gợi ý miễn phí:</strong> Groq cho tốc độ cực nhanh free
+                tier, hoặc Ollama chạy local hoàn toàn miễn phí.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div>
+                <label className="text-sm font-medium mb-2 block">
+                  AI Provider
+                </label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {providers.map((p) => (
+                    <button
+                      key={p.id}
+                      aria-pressed={aiProvider === p.id}
+                      onClick={() => {
+                        setAiProvider(p.id);
+                        setAiModel(p.models[0]);
+                      }}
+                      className={`min-w-0 p-3 rounded-lg border text-left text-sm transition-colors ${aiProvider === p.id ? 'border-primary bg-primary/10' : 'border-input hover:border-primary/50'}`}
+                    >
+                      <div className="font-medium">{p.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {p.models[0]}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="ai-model"
+                  className="text-sm font-medium mb-2 block"
+                >
+                  Model
+                </label>
+                <select
+                  className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  id="ai-model"
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                >
+                  {providers
+                    .find((p) => p.id === aiProvider)
+                    ?.models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium mb-2 block">
+                  API Key {aiProvider !== 'ollama' && '*'}
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="ai-key"
+                      aria-label="Khóa API hoặc địa chỉ Ollama"
+                      className="pr-14"
+                      type={showKey ? 'text' : 'password'}
+                      placeholder={
+                        aiProvider === 'ollama'
+                          ? 'http://localhost:11434 (optional)'
+                          : `sk-... hoặc API key của ${aiProvider}`
+                      }
+                      value={apiKey}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setApiKey(val);
+                        const clean = val.trim();
+                        if (clean) {
+                          localStorage.setItem('ai_api_key', clean);
+                          if (user?.email)
+                            localStorage.setItem(
+                              `novelist_api_key_${user.email.trim().toLowerCase()}`,
+                              clean
+                            );
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={showKey ? 'Ẩn khóa API' : 'Hiện khóa API'}
+                      aria-pressed={showKey}
+                      onClick={() => setShowKey(!showKey)}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent"
+                    >
+                      {showKey ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground mt-2 space-y-1.5">
+                  {aiProvider === 'openai' && (
+                    <p>Lấy key tại: platform.openai.com/api-keys</p>
+                  )}
+                  {aiProvider === 'anthropic' && (
+                    <p>Lấy key tại: console.anthropic.com</p>
+                  )}
+                  {aiProvider === 'gemini' && (
+                    <div className="space-y-1">
+                      <p>
+                        Lấy key tại:{' '}
+                        <a
+                          href="https://aistudio.google.com/app/apikey"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline text-primary font-medium"
+                        >
+                          aistudio.google.com/app/apikey
+                        </a>{' '}
+                        (miễn phí)
+                      </p>
+                      <p className="text-amber-600 dark:text-amber-400 font-medium bg-amber-500/10 border border-amber-500/20 p-2 rounded">
+                        💡 <strong>Mẹo quan trọng:</strong> Tại Google AI
+                        Studio, hãy bấm nút <strong>"Create API key"</strong>{' '}
+                        -&gt; chọn{' '}
+                        <strong>"Create API key in new project"</strong> (dự án
+                        mới) để Google tự động kích hoạt API và hạn mức miễn phí
+                        (tránh lỗi bị chặn dịch vụ khi chọn dự án cũ).
+                      </p>
+                    </div>
+                  )}
+                  {aiProvider === 'groq' && (
+                    <p>Lấy key tại: console.groq.com/keys (miễn phí, nhanh)</p>
+                  )}
+                  {aiProvider === 'ollama' && (
+                    <p>Cài Ollama local: ollama.ai, không cần key</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={saveAISettings}
+                  disabled={loading || testingKey}
+                  className="w-full sm:w-auto"
+                >
+                  <Save className="w-4 h-4 mr-2" /> Lưu cài đặt AI
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={testAIConnection}
+                  disabled={
+                    testingKey ||
+                    loading ||
+                    (!apiKey.trim() && aiProvider !== 'ollama')
+                  }
+                  className="w-full sm:w-auto border-primary/40 hover:bg-primary/10"
+                >
+                  <RefreshCw
+                    className={`w-4 h-4 mr-2 ${testingKey ? 'animate-spin' : ''}`}
+                  />
+                  {testingKey ? 'Đang kiểm tra...' : '⚡ Kiểm tra kết nối'}
+                </Button>
+              </div>
+
+              {testResult && (
+                <div
+                  className={`p-3.5 rounded-lg border text-sm flex items-start gap-3 transition-all ${
+                    testResult.success ? 'studio-success' : 'studio-danger'
+                  }`}
+                >
+                  {testResult.success ? (
+                    <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0 text-[hsl(var(--success))]" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 mt-0.5 shrink-0 text-destructive" />
+                  )}
+                  <div>
+                    <div className="font-semibold">
+                      {testResult.success
+                        ? '✅ Kết nối thành công!'
+                        : '❌ Kết nối thất bại:'}
+                    </div>
+                    <div className="text-xs mt-1 opacity-90 leading-relaxed font-mono whitespace-pre-wrap">
+                      {testResult.message}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-muted p-4 rounded-lg text-sm">
+                <div className="font-medium mb-1">🔒 Bảo mật</div>
+                <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                  <li>
+                    Cấu hình AI được lưu trên thiết bị để dùng cho lần viết tiếp
+                    theo.
+                  </li>
+                  <li>
+                    Khi dịch vụ có kết nối, cấu hình tài khoản có thể được đồng
+                    bộ.
+                  </li>
+                  <li>
+                    Nội dung yêu cầu được gửi đến nhà cung cấp AI bạn chọn.
+                  </li>
+                  <li>
+                    Bạn có thể thay đổi khóa và nhà cung cấp trong phần này.
+                  </li>
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Account Cloud Auto-Save Status */}
+          <Card className="border-primary/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-primary" />
+                Lưu trữ & đồng bộ
+              </CardTitle>
+              <CardDescription>
+                Bản thảo được lưu trên thiết bị. Khi dịch vụ có kết nối, bạn có
+                thể đồng bộ giữa các thiết bị cùng tài khoản. Kiểm tra trạng
+                thái đồng bộ trước khi chuyển thiết bị.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border bg-card/60">
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">
+                    Tài khoản đang liên kết:
+                  </div>
+                  <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-primary inline-block" />
+                    {user?.email || 'Chưa đăng nhập'}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Lưu trên thiết bị; kiểm tra trạng thái trước khi chuyển sang
+                    thiết bị khác.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <SyncStatusButton />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-amber-500/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-amber-500" />
+                Sao lưu & Phục hồi dữ liệu (Backup & Restore)
+              </CardTitle>
+              <CardDescription>
+                Toàn bộ tiểu thuyết, chương, nhân vật, dàn ý và thiết lập được
+                lưu an toàn trong trình duyệt của bạn (LocalStorage). Xuất file
+                dự phòng để không bao giờ sợ mất dữ liệu khi đổi trình duyệt,
+                dọn máy hoặc đổi link Vercel.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="studio-warning border rounded-lg p-3 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Mẹo quan trọng:</strong> Khi truy cập trên Vercel, hãy
+                  luôn dùng <strong>đường link Production chính cố định</strong>{' '}
+                  của bạn thay vì link Preview tạm thời. Dùng cùng một địa chỉ
+                  giúp bạn truy cập đúng dữ liệu đã lưu trên thiết bị. Hãy tải
+                  bản sao lưu định kỳ.
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="outline"
+                  onClick={exportAllData}
+                  className="flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4 text-emerald-500" />
+                  Tải về bản sao lưu (.json)
+                </Button>
+
+                <label className="inline-flex">
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={handleImportFile}
+                  />
+                  <Button
+                    variant="outline"
+                    asChild
+                    className="cursor-pointer flex items-center gap-2"
+                  >
+                    <span>
+                      <Upload className="w-4 h-4 text-sky-500" />
+                      Phục hồi từ file sao lưu
+                    </span>
+                  </Button>
+                </label>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card id="sound">
+            <CardHeader>
+              <CardTitle>Âm thanh</CardTitle>
+              <CardDescription>
+                Chọn âm thanh thao tác và bàn phím theo sở thích.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4">
+                <div>
+                  <p className="text-sm font-medium">Âm thanh phòng viết</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Điều chỉnh ngay tại đây hoặc trong menu của trình viết.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <SoundToggleButton />
+                  <MechKeyboardToggle />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card id="appearance">
+            <CardHeader>
+              <CardTitle>Giao diện</CardTitle>
+              <CardDescription>
+                Chọn ánh sáng phù hợp với nhịp viết của bạn.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  {
+                    id: 'light',
+                    label: 'Giấy ấm',
+                    desc: 'Sáng và thoáng, như một trang sách.',
+                    color: '#F7F4ED',
+                    ink: '#242923',
+                    Icon: Sun,
+                  },
+                  {
+                    id: 'dark',
+                    label: 'Mực đêm',
+                    desc: 'Nền tối ấm cho những giờ viết muộn.',
+                    color: '#191E1B',
+                    ink: '#ECEDE5',
+                    Icon: Moon,
+                  },
+                  {
+                    id: 'sepia',
+                    label: 'Sepia',
+                    desc: 'Sắc giấy ngả nâu, nét mực cổ điển.',
+                    color: '#E9DECA',
+                    ink: '#59422E',
+                    Icon: BookOpen,
+                  },
+                  {
+                    id: 'system',
+                    label: 'Theo thiết bị',
+                    desc: 'Tự chuyển giữa sáng và tối.',
+                    color: '#D9DED9',
+                    ink: '#242923',
+                    Icon: Monitor,
+                  },
+                ].map(({ id, label, desc, color, ink, Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={mounted && theme === id}
+                    onClick={() => setTheme(id)}
+                    className={
+                      'flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ' +
+                      (mounted && theme === id
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                        : 'hover:bg-accent')
+                    }
+                  >
+                    <span
+                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border"
+                      style={{ background: color, color: ink }}
+                    >
+                      <Icon className="h-5 w-5" strokeWidth={1.5} />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold">
+                        {label}
+                      </span>
+                      <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                        {desc}
+                      </span>
+                    </span>
                   </button>
                 ))}
               </div>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium mb-2 block">Model</label>
-              <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm" value={aiModel} onChange={e => setAiModel(e.target.value)}>
-                {providers.find(p => p.id === aiProvider)?.models.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium mb-2 block">API Key {aiProvider !== 'ollama' && '*'}</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Input 
-                    type={showKey ? 'text' : 'password'} 
-                    placeholder={aiProvider === 'ollama' ? 'http://localhost:11434 (optional)' : `sk-... hoặc API key của ${aiProvider}`} 
-                    value={apiKey} 
-                    onChange={e => {
-                      const val = e.target.value;
-                      setApiKey(val);
-                      const clean = val.trim();
-                      if (clean) {
-                        localStorage.setItem('ai_api_key', clean);
-                        if (user?.email) localStorage.setItem(`novelist_api_key_${user.email.trim().toLowerCase()}`, clean);
-                      }
-                    }} 
-                  />
-                  <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">{showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
-                </div>
-              </div>
-              <div className="text-xs text-muted-foreground mt-2 space-y-1.5">
-                {aiProvider === 'openai' && <p>Lấy key tại: platform.openai.com/api-keys</p>}
-                {aiProvider === 'anthropic' && <p>Lấy key tại: console.anthropic.com</p>}
-                {aiProvider === 'gemini' && (
-                  <div className="space-y-1">
-                    <p>Lấy key tại: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="underline text-primary font-medium">aistudio.google.com/app/apikey</a> (miễn phí)</p>
-                    <p className="text-amber-600 dark:text-amber-400 font-medium bg-amber-500/10 border border-amber-500/20 p-2 rounded">
-                      💡 <strong>Mẹo quan trọng:</strong> Tại Google AI Studio, hãy bấm nút <strong>"Create API key"</strong> -&gt; chọn <strong>"Create API key in new project"</strong> (dự án mới) để Google tự động kích hoạt API và hạn mức miễn phí (tránh lỗi bị chặn dịch vụ khi chọn dự án cũ).
-                    </p>
-                  </div>
-                )}
-                {aiProvider === 'groq' && <p>Lấy key tại: console.groq.com/keys (miễn phí, nhanh)</p>}
-                {aiProvider === 'ollama' && <p>Cài Ollama local: ollama.ai, không cần key</p>}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={saveAISettings} disabled={loading || testingKey} className="w-full sm:w-auto">
-                <Save className="w-4 h-4 mr-2" /> Lưu cài đặt AI
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={testAIConnection}
-                disabled={testingKey || loading || (!apiKey.trim() && aiProvider !== 'ollama')}
-                className="w-full sm:w-auto border-primary/40 hover:bg-primary/10"
-              >
-                <RefreshCw className={`w-4 h-4 mr-2 ${testingKey ? 'animate-spin' : ''}`} />
-                {testingKey ? 'Đang kiểm tra...' : '⚡ Kiểm tra kết nối'}
-              </Button>
-            </div>
-
-            {testResult && (
-              <div className={`p-3.5 rounded-lg border text-sm flex items-start gap-3 transition-all ${
-                testResult.success
-                  ? 'bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-300'
-                  : 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300'
-              }`}>
-                {testResult.success ? (
-                  <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0 text-green-600 dark:text-green-400" />
-                ) : (
-                  <AlertCircle className="w-5 h-5 mt-0.5 shrink-0 text-red-600 dark:text-red-400" />
-                )}
-                <div>
-                  <div className="font-semibold">{testResult.success ? '✅ Kết nối thành công!' : '❌ Kết nối thất bại:'}</div>
-                  <div className="text-xs mt-1 opacity-90 leading-relaxed font-mono whitespace-pre-wrap">{testResult.message}</div>
-                </div>
-              </div>
-            )}
-
-            <div className="bg-muted p-4 rounded-lg text-sm">
-              <div className="font-medium mb-1">🔒 Bảo mật</div>
-              <ul className="list-disc list-inside text-muted-foreground space-y-1">
-                <li>API key mã hóa AES-256-GCM trước khi lưu D1</li>
-                <li>Chỉ bạn mới có thể dùng key của mình (row-level security)</li>
-                <li>Streaming trực tiếp, không lưu log nhạy cảm</li>
-                <li>Có thể xóa key bất kỳ lúc nào</li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Account Cloud Auto-Save Status */}
-        <Card className="border-emerald-500/20 bg-gradient-to-br from-card to-emerald-500/5">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Cloud className="w-5 h-5 text-emerald-500" />
-              Lưu trữ đám mây tự động theo tài khoản (Cloud Auto-Save)
-            </CardTitle>
-            <CardDescription>
-              Tất cả dự án và bản thảo của bạn được tự động lưu trữ và đồng bộ hóa 24/7 theo tài khoản. Khi bạn đăng nhập cùng tài khoản trên điện thoại, máy tính bảng hay máy tính khác, toàn bộ tiểu thuyết sẽ tự động xuất hiện.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border bg-card/60">
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Tài khoản đang liên kết:</div>
-                <div className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
-                  {user?.email || 'Chưa đăng nhập'}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Trạng thái: Tự động lưu và cập nhật bản thảo giữa PC và Điện thoại
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Đang hoạt động tự động
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-amber-500/20">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Database className="w-5 h-5 text-amber-500" />
-              Sao lưu & Phục hồi dữ liệu (Backup & Restore)
-            </CardTitle>
-            <CardDescription>
-              Toàn bộ tiểu thuyết, chương, nhân vật, dàn ý và thiết lập được lưu an toàn trong trình duyệt của bạn (LocalStorage).
-              Xuất file dự phòng để không bao giờ sợ mất dữ liệu khi đổi trình duyệt, dọn máy hoặc đổi link Vercel.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>
-                <strong>Mẹo quan trọng:</strong> Khi truy cập trên Vercel, hãy luôn dùng <strong>đường link Production chính cố định</strong> của bạn thay vì link Preview tạm thời. Dữ liệu trên link cố định sẽ <strong>không bao giờ bị mất</strong> qua các lần cập nhật code.
-              </span>
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              <Button variant="outline" onClick={exportAllData} className="flex items-center gap-2">
-                <Download className="w-4 h-4 text-emerald-500" />
-                Tải về bản sao lưu (.json)
-              </Button>
-
-              <label className="inline-flex">
-                <input
-                  type="file"
-                  accept=".json,application/json"
-                  className="hidden"
-                  onChange={handleImportFile}
-                />
-                <Button variant="outline" asChild className="cursor-pointer flex items-center gap-2">
-                  <span>
-                    <Upload className="w-4 h-4 text-sky-500" />
-                    Phục hồi từ file sao lưu
-                  </span>
-                </Button>
-              </label>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Giao diện & Chủ đề (Theme)</CardTitle>
-            <CardDescription>Tùy chỉnh màu sắc để tối ưu trải nghiệm sáng tác và bảo vệ mắt</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <button
-                type="button"
-                onClick={() => setTheme('dark')}
-                className={`p-4 rounded-xl border text-left transition-all flex items-center gap-3 ${
-                  mounted && theme === 'dark' ? 'border-primary bg-primary/10 ring-2 ring-primary/20' : 'border-input hover:bg-muted/50'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center text-white shrink-0">
-                  <Moon className="w-5 h-5 text-indigo-400" />
-                </div>
-                <div>
-                  <div className="font-semibold text-sm">Giao diện Tối (Dark)</div>
-                  <div className="text-xs text-muted-foreground">Dịu mắt, thích hợp viết đêm</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setTheme('light')}
-                className={`p-4 rounded-xl border text-left transition-all flex items-center gap-3 ${
-                  mounted && theme === 'light' ? 'border-primary bg-primary/10 ring-2 ring-primary/20' : 'border-input hover:bg-muted/50'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-lg bg-white border border-slate-300 flex items-center justify-center text-slate-800 shadow-sm shrink-0">
-                  <Sun className="w-5 h-5 text-amber-500" />
-                </div>
-                <div>
-                  <div className="font-semibold text-sm">Giao diện Sáng (Light)</div>
-                  <div className="text-xs text-muted-foreground">Rõ nét, độ tương phản cao</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setTheme('system')}
-                className={`p-4 rounded-xl border text-left transition-all flex items-center gap-3 ${
-                  mounted && theme === 'system' ? 'border-primary bg-primary/10 ring-2 ring-primary/20' : 'border-input hover:bg-muted/50'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center text-muted-foreground shrink-0">
-                  <Monitor className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-semibold text-sm">Hệ thống (System)</div>
-                  <div className="text-xs text-muted-foreground">Tự đồng bộ theo thiết bị</div>
-                </div>
-              </button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </DashboardLayout>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    </MechKeyboardProvider>
   );
 }

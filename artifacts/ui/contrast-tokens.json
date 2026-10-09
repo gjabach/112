@@ -1,0 +1,77 @@
+[
+  {
+    "theme": ":root",
+    "body": 13.47,
+    "muted": 5.59,
+    "primary": 6.22,
+    "button": 6.22,
+    "statuses": [
+      {
+        "name": "success",
+        "contrast": 5.61
+      },
+      {
+        "name": "warning",
+        "contrast": 5.44
+      },
+      {
+        "name": "info",
+        "contrast": 5.97
+      },
+      {
+        "name": "destructive",
+        "contrast": 5.92
+      }
+    ]
+  },
+  {
+    "theme": ".dark",
+    "body": 14.12,
+    "muted": 6.73,
+    "primary": 7.48,
+    "button": 8.02,
+    "statuses": [
+      {
+        "name": "success",
+        "contrast": 6.81
+      },
+      {
+        "name": "warning",
+        "contrast": 7.01
+      },
+      {
+        "name": "info",
+        "contrast": 6.24
+      },
+      {
+        "name": "destructive",
+        "contrast": 5.29
+      }
+    ]
+  },
+  {
+    "theme": ".sepia",
+    "body": 10.24,
+    "muted": 5.8,
+    "primary": 6.43,
+    "button": 6.81,
+    "statuses": [
+      {
+        "name": "success",
+        "contrast": 5.16
+      },
+      {
+        "name": "warning",
+        "contrast": 5.02
+      },
+      {
+        "name": "info",
+        "contrast": 5.5
+      },
+      {
+        "name": "destructive",
+        "contrast": 5.46
+      }
+    ]
+  }
+]

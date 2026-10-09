@@ -1,161 +1,176 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/utils';
-import { toast } from 'sonner';
-import { ArrowLeft, Download, FileText, BookOpen, File } from 'lucide-react';
+import { Download, FileText, BookOpen, File, ArrowUpRight } from 'lucide-react';
 import { ExportDialog } from '@/components/export/export-dialog';
-
+import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { PageHeader, StudioState } from '@/components/studio/page-header';
+const formats = [
+  {
+    id: 'pdf',
+    label: 'PDF',
+    title: 'Một bản thảo để đọc',
+    description:
+      'Bố cục A4, mục lục và số trang. Mở bản in rồi lưu PDF từ trình duyệt.',
+    note: 'Đọc lại & in ấn',
+    icon: FileText,
+  },
+  {
+    id: 'docx',
+    label: 'DOCX',
+    title: 'Sẵn sàng để biên tập',
+    description:
+      'Tiếp tục chỉnh sửa trong Word hoặc Google Docs, giữ tiêu đề chương và ngắt trang.',
+    note: 'Word & Google Docs',
+    icon: File,
+  },
+  {
+    id: 'epub',
+    label: 'EPUB',
+    title: 'Câu chuyện đi cùng bạn',
+    description:
+      'Mang sách lên thiết bị đọc và ứng dụng ebook, với mục lục và thông tin tác giả.',
+    note: 'Thiết bị đọc sách',
+    icon: BookOpen,
+  },
+];
 export default function ExportPage() {
-  const params = useParams();
-  const projectId = params.projectId as string;
-
+  const projectId = useParams().projectId as string;
   const [project, setProject] = useState<any>(null);
   const [chapters, setChapters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showExportDialog, setShowExportDialog] = useState(false);
-  const [dialogFormat, setDialogFormat] = useState('pdf');
-
-  useEffect(() => {
-    fetchData();
-  }, [projectId]);
-
-  const openExportModal = (format: string = 'pdf') => {
-    setDialogFormat(format);
-    setShowExportDialog(true);
-  };
-
-  const fetchData = async () => {
+  const [error, setError] = useState('');
+  const [open, setOpen] = useState(false);
+  const [format, setFormat] = useState('pdf');
+  const fetchData = useCallback(async () => {
+    setError('');
+    setLoading(true);
     try {
-      const [projRes, chapRes] = await Promise.all([
-        apiFetch(`/api/projects/${projectId}`),
-        apiFetch(`/api/projects/${projectId}/chapters`)
+      const [p, c] = await Promise.all([
+        apiFetch('/api/projects/' + projectId),
+        apiFetch('/api/projects/' + projectId + '/chapters'),
       ]);
-      setProject(projRes.project);
-      setChapters(chapRes.chapters);
+      setProject(p.project);
+      setChapters(c.chapters || []);
     } catch (e: any) {
-      toast.error(e.message);
+      setError(e.message || 'Không thể tải bản thảo');
     } finally {
       setLoading(false);
     }
-  };
-
-  if (loading) return <div className="p-8 text-sm text-muted-foreground animate-pulse">Đang tải...</div>;
-  if (!project) return <div className="p-8 text-sm">Không tìm thấy dự án</div>;
-
-  const totalWords = chapters.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
-
+  }, [projectId]);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
   return (
-    <div className="min-h-screen bg-background w-full max-w-full overflow-x-clip">
-      <header className="border-b bg-card sticky top-0 z-10 shadow-xs">
-        <div className="flex items-center gap-2 sm:gap-4 p-3 sm:p-4 max-w-6xl mx-auto justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <Link href={`/editor/${projectId}`} className="shrink-0">
-              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9" title="Quay lại tác phẩm">
-                <ArrowLeft className="w-4 h-4" />
+    <DashboardLayout projectId={projectId} mode="project">
+      <div className="mx-auto max-w-6xl p-5 sm:p-8 lg:p-10">
+        <PageHeader
+          eyebrow="Từ bản thảo đến cuốn sách"
+          title="Mang câu chuyện ra thế giới"
+          description={
+            project
+              ? project.title
+              : 'Chọn định dạng phù hợp cho bước tiếp theo của tác phẩm.'
+          }
+        />
+        {loading ? (
+          <StudioState
+            busy
+            title="Đang chuẩn bị bản thảo"
+            description="Tải các chương để xuất bản…"
+          />
+        ) : error ? (
+          <StudioState
+            title="Chưa thể mở bản thảo"
+            description={error}
+            action={<Button onClick={fetchData}>Thử lại</Button>}
+          />
+        ) : !project ? (
+          <StudioState title="Không tìm thấy tác phẩm" />
+        ) : (
+          <>
+            <div className="mb-8 flex flex-wrap items-center justify-between gap-5 rounded-xl border bg-card px-6 py-5">
+              <div>
+                <p className="studio-eyebrow mb-2">Bản thảo hiện tại</p>
+                <p className="text-sm text-muted-foreground">
+                  {chapters.length} chương ·{' '}
+                  {chapters
+                    .reduce((sum, c) => sum + (c.wordCount || 0), 0)
+                    .toLocaleString()}{' '}
+                  từ
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setFormat('pdf');
+                  setOpen(true);
+                }}
+                disabled={!chapters.length}
+              >
+                <Download />
+                Tùy chỉnh xuất bản
               </Button>
-            </Link>
-            <div className="min-w-0">
-              <h1 className="font-bold text-sm sm:text-lg truncate">Xuất bản - {project.title}</h1>
-              <p className="text-[11px] sm:text-xs text-muted-foreground truncate">{chapters.length} chương • {totalWords.toLocaleString()} từ</p>
             </div>
-          </div>
-          <div className="ml-auto shrink-0">
-            <Button size="sm" className="h-8 px-2.5 text-xs" onClick={() => setShowExportDialog(true)}>
-              <Download className="w-3.5 h-3.5 sm:mr-1.5" />
-              <span className="hidden sm:inline">Xuất bản mới</span>
-              <span className="sm:hidden">Xuất bản</span>
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-6">
-        {/* Quick export cards */}
-        <div>
-          <h2 className="font-semibold text-base mb-3">Tùy chọn xuất bản</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="hover:shadow-lg transition-all cursor-pointer border-2 hover:border-red-500/50" onClick={() => openExportModal('pdf')}>
-              <CardHeader className="pb-3">
-                <div className="w-12 h-12 bg-red-500 rounded-xl flex items-center justify-center text-white mb-2 shadow-md shadow-red-500/25">
-                  <FileText className="w-6 h-6" />
-                </div>
-                <CardTitle className="text-base">PDF - Sách in A4</CardTitle>
-                <CardDescription className="text-xs leading-relaxed">
-                  Layout sách A4 tiêu chuẩn, mục lục, đánh số trang, font tiếng Việt sắc nét. Mở bản in & Lưu PDF trực tiếp.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-2">
-                  <Badge variant="secondary" className="text-xs">A4 Chuẩn</Badge>
-                  <Badge variant="secondary" className="text-xs">Lưu PDF</Badge>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="hover:shadow-lg transition-all cursor-pointer border-2 hover:border-blue-500/50" onClick={() => openExportModal('docx')}>
-              <CardHeader className="pb-3">
-                <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-white mb-2 shadow-md shadow-blue-500/25">
-                  <File className="w-6 h-6" />
-                </div>
-                <CardTitle className="text-base">DOCX - Word</CardTitle>
-                <CardDescription className="text-xs leading-relaxed">
-                  Gửi nhà xuất bản, chỉnh sửa trong Word, Google Docs. Giữ tiêu đề chương, giãn dòng 1.5, ngắt trang.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-2">
-                  <Badge variant="secondary" className="text-xs">Word .docx</Badge>
-                  <Badge variant="secondary" className="text-xs">Chuẩn NXB</Badge>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="hover:shadow-lg transition-all cursor-pointer border-2 hover:border-emerald-500/50" onClick={() => openExportModal('epub')}>
-              <CardHeader className="pb-3">
-                <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center text-white mb-2 shadow-md shadow-emerald-500/25">
-                  <BookOpen className="w-6 h-6" />
-                </div>
-                <CardTitle className="text-base">EPUB - Ebook</CardTitle>
-                <CardDescription className="text-xs leading-relaxed">
-                  Đọc trên Kindle, điện thoại, Apple Books. Có mục lục, phân trang và thông tin tác giả.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-2">
-                  <Badge variant="secondary" className="text-xs">Kindle</Badge>
-                  <Badge variant="secondary" className="text-xs">Ebook</Badge>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-
-        {/* Info */}
-        <Card className="bg-primary/5 border-primary/20">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">💡 Hướng dẫn xuất bản</CardTitle>
-          </CardHeader>
-          <CardContent className="text-xs text-muted-foreground space-y-2">
-            <p><strong>PDF:</strong> Mở cửa sổ in ấn A4 sắc nét, hỗ trợ căn chỉnh lề, mục lục, số trang và chuẩn tiếng Việt.</p>
-            <p><strong>DOCX:</strong> Xuất định dạng Word chuẩn OpenXML với lề thụt dòng đầu, giãn cách 1.5, ngắt trang từng chương để nộp bản thảo cho biên tập viên và nhà xuất bản.</p>
-            <p><strong>EPUB:</strong> Đóng gói file ebook tiêu chuẩn, đọc mượt mà trên Kindle, Google Play Books, Apple Books.</p>
-          </CardContent>
-        </Card>
+            <div className="grid gap-5 xl:grid-cols-3">
+              {formats.map(
+                ({ id, label, title, description, note, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={!chapters.length}
+                    onClick={() => {
+                      setFormat(id);
+                      setOpen(true);
+                    }}
+                    className="studio-surface glow-card flex flex-col p-7 text-left disabled:opacity-60"
+                  >
+                    <div className="mb-10 flex items-center justify-between">
+                      <Icon
+                        className="h-8 w-8 text-primary"
+                        strokeWidth={1.3}
+                      />
+                      <span className="rounded-md border px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                        {label}
+                      </span>
+                    </div>
+                    <h2 className="mb-3 font-serif text-2xl">{title}</h2>
+                    <p className="flex-1 text-sm leading-relaxed text-muted-foreground">
+                      {description}
+                    </p>
+                    <div className="mt-8 flex items-center justify-between border-t pt-4 text-xs text-primary">
+                      <span>{note}</span>
+                      <ArrowUpRight className="h-4 w-4" />
+                    </div>
+                  </button>
+                )
+              )}
+            </div>
+            {!chapters.length && (
+              <p className="mt-6 text-sm text-muted-foreground">
+                Thêm chương đầu tiên vào tác phẩm để bắt đầu xuất bản.
+              </p>
+            )}
+            <div className="mt-10 rounded-xl border border-dashed p-6">
+              <p className="text-sm font-medium">Cần một định dạng khác?</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                HTML, Markdown, văn bản thuần và JSON đều có trong tùy chỉnh
+                xuất bản.
+              </p>
+            </div>
+            <ExportDialog
+              projectId={projectId}
+              projectTitle={project.title}
+              chapters={chapters}
+              open={open}
+              onOpenChange={setOpen}
+              initialFormat={format}
+            />
+          </>
+        )}
       </div>
-
-      <ExportDialog
-        projectId={projectId}
-        projectTitle={project.title}
-        open={showExportDialog}
-        onOpenChange={setShowExportDialog}
-        chapters={chapters}
-        initialFormat={dialogFormat}
-      />
-    </div>
+    </DashboardLayout>
   );
 }

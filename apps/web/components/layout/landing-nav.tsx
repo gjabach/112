@@ -26,9 +26,9 @@ export function LandingNav() {
     return (
       <div className="flex items-center gap-3">
         <Link href="/projects">
-          <Button className="font-semibold text-sm shadow-md shadow-primary/25 bg-primary hover:bg-primary/90 flex items-center gap-2">
+          <Button className="font-semibold text-sm  bg-primary hover:bg-primary/90 flex items-center gap-2">
             <LayoutDashboard className="w-4 h-4" />
-            <span>Vào phòng viết ({userName})</span>
+            <span>Phòng viết</span>
             <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
           </Button>
         </Link>
@@ -39,12 +39,17 @@ export function LandingNav() {
   return (
     <div className="flex items-center gap-3">
       <Link href="/login">
-        <Button variant="ghost" className="font-medium text-sm">Đăng nhập</Button>
+        <Button
+          variant="ghost"
+          className="hidden sm:inline-flex font-medium text-sm"
+        >
+          Đăng nhập
+        </Button>
       </Link>
       <Link href="/register">
         <MagicSparkles>
-          <Button className="font-medium text-sm shadow-md shadow-primary/25 bg-primary hover:bg-primary/90">
-            Bắt đầu viết miễn phí
+          <Button className="font-medium text-sm  bg-primary hover:bg-primary/90">
+            Bắt đầu viết
           </Button>
         </MagicSparkles>
       </Link>

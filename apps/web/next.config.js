@@ -4,10 +4,12 @@ const nextConfig = {
   transpilePackages: ['@novelist/shared', '@novelist/ai-core'],
   images: {
     unoptimized: true,
-    remotePatterns: [
-      { hostname: '**' }
-    ]
+    remotePatterns: [{ hostname: '**' }],
   },
 };
 
-export default nextConfig;
+// Keep production builds from replacing a running preview's compiled files.
+export default (phase) => ({
+  ...nextConfig,
+  distDir: phase === 'phase-development-server' ? '.next-dev' : '.next',
+});

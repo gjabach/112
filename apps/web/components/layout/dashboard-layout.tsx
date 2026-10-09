@@ -3,158 +3,219 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
-import { 
-  BookOpen, 
-  LayoutDashboard, 
-  Users, 
-  Map, 
-  Sparkles, 
-  Settings, 
-  LogOut, 
-  PenTool, 
-  BarChart3, 
-  LayoutList, 
-  Clock,
-  Cloud,
-  CheckCircle2,
-  Loader2
+import {
+  BookOpen,
+  Sparkles,
+  Settings,
+  LogOut,
+  Menu,
+  ArrowUpRight,
+  ListTree,
+  Download,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { initAutoSync } from '@/lib/sync';
-import { AmbientBackground } from '@/components/vfx/ambient-background';
-import { SparkleIcon } from '@/components/vfx/magic-sparkles';
 import { SyncStatusButton } from './sync-provider';
+import { StudioBrand } from '@/components/studio/brand';
+import { StudioState } from '@/components/studio/page-header';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
-const navItems = [
-  { href: '/projects', label: 'Dự án', icon: LayoutDashboard },
-  { href: '/settings', label: 'Cài đặt', icon: Settings },
-];
-
-export function DashboardLayout({ children }: { children: React.ReactNode }) {
+export function DashboardLayout({
+  children,
+  projectId,
+  mode = 'library',
+}: {
+  children: React.ReactNode;
+  projectId?: string | null;
+  mode?: 'library' | 'project' | 'writing';
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isAuthenticated, logout } = useAuthStore();
   const [isReady, setIsReady] = useState(false);
-
+  const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('token');
-      const userStr = localStorage.getItem('novelist_current_user');
-      if (token && userStr) {
-        try {
-          const u = JSON.parse(userStr);
-          if (!useAuthStore.getState().isAuthenticated) {
-            useAuthStore.getState().setAuth(u, token);
-          }
-          setIsReady(true);
-          initAutoSync();
-          return;
-        } catch {}
-      }
+    const token = localStorage.getItem('token');
+    const userStr = localStorage.getItem('novelist_current_user');
+    if (token && userStr) {
+      try {
+        const u = JSON.parse(userStr);
+        if (!useAuthStore.getState().isAuthenticated)
+          useAuthStore.getState().setAuth(u, token);
+        setIsReady(true);
+        initAutoSync();
+        return;
+      } catch {}
     }
-
-    if (!useAuthStore.getState().isAuthenticated) {
-      router.push('/login');
-    } else {
+    if (!useAuthStore.getState().isAuthenticated) router.push('/login');
+    else {
       setIsReady(true);
       initAutoSync();
     }
   }, [router]);
-
-  if (!isReady && !isAuthenticated) {
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+  const items = [
+    { href: '/projects', label: 'Tác phẩm', icon: BookOpen },
+    {
+      href: projectId
+        ? `/ai-assistant?projectId=${projectId}`
+        : '/ai-assistant',
+      label: 'Trợ lý AI',
+      icon: Sparkles,
+    },
+    { href: '/settings', label: 'Cài đặt', icon: Settings },
+  ];
+  const projectItems = projectId
+    ? [
+        { href: `/editor/${projectId}`, label: 'Tổng quan', icon: ListTree },
+        { href: `/export/${projectId}`, label: 'Xuất bản', icon: Download },
+      ]
+    : [];
+  const navigation = (
+    <>
+      <p className="studio-eyebrow mb-4 px-3">Không gian của bạn</p>
+      {items.map((item) => {
+        const Icon = item.icon;
+        const active = pathname === item.href.split('?')[0];
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={() => setMenuOpen(false)}
+            aria-current={active ? 'page' : undefined}
+            className={cn(
+              'mb-1 flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm transition-colors',
+              active
+                ? 'bg-primary/10 font-semibold text-primary'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+            )}
+          >
+            <Icon className="h-4 w-4" strokeWidth={1.6} />
+            {item.label}
+          </Link>
+        );
+      })}
+      {projectItems.length > 0 && (
+        <div className="mt-8 border-t pt-6">
+          <p className="studio-eyebrow mb-4 px-3">Tác phẩm đang mở</p>
+          {projectItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={() => setMenuOpen(false)}
+              aria-current={pathname === item.href ? 'page' : undefined}
+              className={cn(
+                'mb-1 flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm',
+                pathname === item.href
+                  ? 'bg-primary/10 text-primary font-semibold'
+                  : 'text-muted-foreground hover:bg-accent'
+              )}
+            >
+              <item.icon className="h-4 w-4" />
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      )}
+    </>
+  );
+  const account = (
+    <div className="space-y-4 border-t p-5">
+      <SyncStatusButton className="w-full justify-center" />
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 font-serif text-primary">
+          {user?.name?.[0] || user?.email?.[0]?.toUpperCase()}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">
+            {user?.name || 'Nhà văn'}
+          </p>
+          <p className="truncate text-[11px] text-muted-foreground">
+            {user?.email}
+          </p>
+        </div>
+      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="w-full justify-start text-muted-foreground"
+        onClick={() => {
+          logout();
+          router.push('/');
+        }}
+      >
+        <LogOut />
+        Đăng xuất
+      </Button>
+    </div>
+  );
+  if (!isReady)
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        <span className="text-xs text-muted-foreground animate-pulse">Đang khôi phục phiên làm việc...</span>
+      <div className="flex min-h-dvh items-center justify-center p-6">
+        <StudioState
+          busy
+          title="Đang mở phòng viết"
+          description="Khôi phục phiên làm việc của bạn…"
+        />
       </div>
     );
-  }
-
+  if (mode === 'writing') return <>{children}</>;
   return (
-    <div className="relative min-h-screen bg-background flex flex-col md:flex-row pb-16 md:pb-0 overflow-x-hidden">
-      {/* Ambient background VFX lighting */}
-      <AmbientBackground intensity="subtle" />
-
-      {/* Mobile Top Header */}
-      <header className="md:hidden flex items-center justify-between px-4 py-3 border-b bg-card/80 backdrop-blur-md sticky top-0 z-40">
-        <Link href="/projects" className="flex items-center gap-2 font-bold text-base">
-          <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-sm shadow-sm">N</div>
-          <span className="tracking-tight">Novelist Studio</span>
-        </Link>
-        <div className="flex items-center gap-2">
-          <SyncStatusButton compact />
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="truncate max-w-[120px]">{user?.name || user?.email?.split('@')[0]}</span>
-          </div>
+    <div className="flex min-h-dvh min-w-0">
+      <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col border-r bg-card/65 lg:flex xl:w-60">
+        <div className="px-6 py-7">
+          <StudioBrand href="/projects" />
         </div>
-      </header>
-
-      {/* Desktop Sidebar */}
-      <aside className="w-64 border-r border-border/60 bg-card/75 backdrop-blur-xl hidden md:flex flex-col shrink-0 z-20">
-        <div className="p-6 border-b border-border/50">
-          <Link href="/projects" className="flex items-center gap-2 font-bold text-lg group">
-            <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center text-primary-foreground shadow-md shadow-primary/25 group-hover:scale-105 transition-transform">
-              N
-            </div>
-            <span className="tracking-tight group-hover:text-primary transition-colors">Novelist Studio</span>
-          </Link>
-        </div>
-        
-        <nav className="flex-1 p-4 space-y-1">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const isActive = pathname.startsWith(item.href);
-            return (
-              <Link key={item.href} href={item.href} className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>
-                <Icon className="w-4 h-4" />
-                {item.label}
-              </Link>
-            );
-          })}
+        <nav
+          aria-label="Điều hướng studio"
+          className="flex-1 overflow-y-auto p-4 pt-6"
+        >
+          {navigation}
         </nav>
-
-        <div className="p-4 border-t space-y-3">
-          <SyncStatusButton className="w-full justify-center" />
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center text-sm font-medium">{user?.name?.[0] || user?.email?.[0]?.toUpperCase()}</div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{user?.name || 'Nhà văn'}</p>
-              <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
-            </div>
-          </div>
-          <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { logout(); router.push('/'); }}>
-            <LogOut className="w-4 h-4 mr-2" /> Đăng xuất
-          </Button>
+        <div className="mx-5 mb-5 rounded-xl border bg-muted/30 p-4">
+          <p className="font-serif text-lg italic">Cứ viết tiếp.</p>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            Một đoạn văn hôm nay.
+            <br />
+            Một câu chuyện ngày mai.
+          </p>
         </div>
+        {account}
       </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto pb-16 md:pb-0">
-        {children}
-      </main>
-
-      {/* Mobile Bottom Navigation Bar with Glassmorphism */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-card/85 backdrop-blur-xl border-t border-border/60 flex items-center justify-around px-2 z-40 shadow-lg">
-        <Link 
-          href="/projects" 
-          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 transition-all active:scale-95 ${
-            pathname.startsWith('/projects') ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <LayoutDashboard className="w-4 h-4" />
-          <span>Dự án</span>
-        </Link>
-        <Link 
-          href="/settings" 
-          className={`flex flex-col items-center justify-center text-[10px] gap-1 flex-1 py-1 transition-all active:scale-95 ${
-            pathname.startsWith('/settings') ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Settings className="w-4 h-4" />
-          <span>Cài đặt</span>
-        </Link>
-      </nav>
+      <div className="min-w-0 flex-1">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-3 border-b bg-background/95 px-4 lg:hidden">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Mở điều hướng"
+              onClick={() => setMenuOpen(true)}
+            >
+              <Menu />
+            </Button>
+            <StudioBrand href="/projects" compact />
+          </div>
+          <SyncStatusButton compact />
+        </header>
+        <main id="studio-content" className="min-w-0">
+          {children}
+        </main>
+      </div>
+      <Dialog open={menuOpen} onOpenChange={setMenuOpen} drawer>
+        <DialogContent className="flex min-h-dvh flex-col rounded-none border-0 p-4">
+          <div className="mb-8 pr-8">
+            <StudioBrand href="/projects" />
+            <DialogTitle className="sr-only">Điều hướng studio</DialogTitle>
+          </div>
+          <nav aria-label="Điều hướng di động" className="flex-1">
+            {navigation}
+          </nav>
+          {account}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

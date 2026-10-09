@@ -4,11 +4,31 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { apiFetch } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Download, FileText, BookOpen, File, Code, FileJson, Check, Loader2, Printer } from 'lucide-react';
-import { parseChapterParagraphs, generatePrintableBookHtml, sortChapters } from '@/lib/export-helpers';
+import {
+  Download,
+  FileText,
+  BookOpen,
+  File,
+  Code,
+  FileJson,
+  Check,
+  Loader2,
+  Printer,
+} from 'lucide-react';
+import {
+  parseChapterParagraphs,
+  generatePrintableBookHtml,
+  sortChapters,
+} from '@/lib/export-helpers';
 import { fireConfetti } from '@/components/vfx/confetti';
 
 interface ExportDialogProps {
@@ -21,19 +41,83 @@ interface ExportDialogProps {
 }
 
 const formats = [
-  { id: 'pdf', name: 'PDF (Sách in)', desc: 'Bản in A4, layout sách, font tiếng Việt sắc nét, đánh số trang', icon: FileText, color: 'bg-red-500', ext: 'pdf' },
-  { id: 'docx', name: 'DOCX (Word)', desc: 'Gửi nhà xuất bản, biên tập trong Word/Google Docs, giữ styles', icon: File, color: 'bg-blue-500', ext: 'docx' },
-  { id: 'epub', name: 'EPUB (Ebook)', desc: 'Đọc trên Kindle, Kobo, điện thoại, máy tính bảng', icon: BookOpen, color: 'bg-green-500', ext: 'epub' },
-  { id: 'html', name: 'HTML (Web)', desc: 'Website sách tĩnh hoặc đọc ngoại tuyến đầy đủ', icon: Code, color: 'bg-orange-500', ext: 'html' },
-  { id: 'md', name: 'Markdown', desc: 'Lưu trữ Obsidian, Notion, GitHub', icon: FileText, color: 'bg-gray-700', ext: 'md' },
-  { id: 'txt', name: 'Plain Text', desc: 'Văn bản thuần, nhẹ và tương thích mọi thiết bị', icon: FileText, color: 'bg-gray-500', ext: 'txt' },
-  { id: 'json', name: 'JSON Backup', desc: 'Dữ liệu cấu trúc để import hoặc lập trình', icon: FileJson, color: 'bg-purple-500', ext: 'json' }
+  {
+    id: 'pdf',
+    name: 'PDF (Sách in)',
+    desc: 'Bản in A4, layout sách, font tiếng Việt sắc nét, đánh số trang',
+    icon: FileText,
+    color: 'bg-red-500',
+    ext: 'pdf',
+  },
+  {
+    id: 'docx',
+    name: 'DOCX (Word)',
+    desc: 'Gửi nhà xuất bản, biên tập trong Word/Google Docs, giữ styles',
+    icon: File,
+    color: 'bg-blue-500',
+    ext: 'docx',
+  },
+  {
+    id: 'epub',
+    name: 'EPUB (Ebook)',
+    desc: 'Đọc trên Kindle, Kobo, điện thoại, máy tính bảng',
+    icon: BookOpen,
+    color: 'bg-green-500',
+    ext: 'epub',
+  },
+  {
+    id: 'html',
+    name: 'HTML (Web)',
+    desc: 'Website sách tĩnh hoặc đọc ngoại tuyến đầy đủ',
+    icon: Code,
+    color: 'bg-orange-500',
+    ext: 'html',
+  },
+  {
+    id: 'md',
+    name: 'Markdown',
+    desc: 'Lưu trữ Obsidian, Notion, GitHub',
+    icon: FileText,
+    color: 'bg-gray-700',
+    ext: 'md',
+  },
+  {
+    id: 'txt',
+    name: 'Plain Text',
+    desc: 'Văn bản thuần, nhẹ và tương thích mọi thiết bị',
+    icon: FileText,
+    color: 'bg-gray-500',
+    ext: 'txt',
+  },
+  {
+    id: 'json',
+    name: 'JSON Backup',
+    desc: 'Dữ liệu cấu trúc để import hoặc lập trình',
+    icon: FileJson,
+    color: 'bg-[#256A5D]',
+    ext: 'json',
+  },
 ];
 
 const styles = [
-  { id: 'modern', name: 'Modern', desc: 'Hiện đại, sans-serif, màu thanh lịch', preview: 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200' },
-  { id: 'classic', name: 'Classic', desc: 'Cổ điển, Times New Roman, chuẩn xuất bản', preview: 'bg-amber-50 border-amber-200' },
-  { id: 'minimal', name: 'Minimal', desc: 'Tối giản, trắng đen, lề rộng thoáng đãng', preview: 'bg-white border-gray-200' }
+  {
+    id: 'modern',
+    name: 'Modern',
+    desc: 'Hiện đại, sans-serif, màu thanh lịch',
+    preview: 'bg-[#F0F5F2] border-[#BED2C8]',
+  },
+  {
+    id: 'classic',
+    name: 'Classic',
+    desc: 'Cổ điển, Times New Roman, chuẩn xuất bản',
+    preview: 'bg-amber-50 border-amber-200',
+  },
+  {
+    id: 'minimal',
+    name: 'Minimal',
+    desc: 'Tối giản, trắng đen, lề rộng thoáng đãng',
+    preview: 'bg-white border-gray-200',
+  },
 ];
 
 export function ExportDialog({
@@ -42,10 +126,12 @@ export function ExportDialog({
   open,
   onOpenChange,
   chapters = [],
-  initialFormat
+  initialFormat,
 }: ExportDialogProps) {
   const [selectedFormat, setSelectedFormat] = useState(initialFormat || 'pdf');
-  const [selectedStyle, setSelectedStyle] = useState<'modern' | 'classic' | 'minimal'>('classic');
+  const [selectedStyle, setSelectedStyle] = useState<
+    'modern' | 'classic' | 'minimal'
+  >('classic');
   const [includeFrontMatter, setIncludeFrontMatter] = useState(true);
   const [includeToc, setIncludeToc] = useState(true);
   const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
@@ -62,7 +148,9 @@ export function ExportDialog({
 
       // Read author name from user profile or localStorage
       try {
-        const userStr = localStorage.getItem('novelist_current_user') || localStorage.getItem('auth-storage');
+        const userStr =
+          localStorage.getItem('novelist_current_user') ||
+          localStorage.getItem('auth-storage');
         if (userStr) {
           const parsed = JSON.parse(userStr);
           const name = parsed.name || parsed.state?.user?.name || '';
@@ -73,8 +161,8 @@ export function ExportDialog({
   }, [open, chapters, initialFormat]);
 
   const toggleChapter = (id: string) => {
-    setSelectedChapters(prev =>
-      prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+    setSelectedChapters((prev) =>
+      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]
     );
   };
 
@@ -95,11 +183,16 @@ export function ExportDialog({
       chapters.filter((c: any) => selectedChapters.includes(c.id))
     );
 
-    const html = generatePrintableBookHtml(projectTitle, authorName, filteredChapters, {
-      style: selectedStyle,
-      includeFrontMatter,
-      includeToc
-    });
+    const html = generatePrintableBookHtml(
+      projectTitle,
+      authorName,
+      filteredChapters,
+      {
+        style: selectedStyle,
+        includeFrontMatter,
+        includeToc,
+      }
+    );
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     downloadBlob(blob, `${projectTitle}_ban_in_A4.html`);
@@ -122,11 +215,16 @@ export function ExportDialog({
     try {
       // 1. Specialized handling for PDF: Open formatted A4 Book print window
       if (selectedFormat === 'pdf') {
-        const html = generatePrintableBookHtml(projectTitle, authorName, filteredChapters, {
-          style: selectedStyle,
-          includeFrontMatter,
-          includeToc
-        });
+        const html = generatePrintableBookHtml(
+          projectTitle,
+          authorName,
+          filteredChapters,
+          {
+            style: selectedStyle,
+            includeFrontMatter,
+            includeToc,
+          }
+        );
 
         const printWin = window.open('', '_blank');
         if (printWin) {
@@ -139,18 +237,21 @@ export function ExportDialog({
               printWin.print();
             } catch {}
           }, 400);
-          toast.success('Đã mở bản in A4! Chọn "Lưu dưới dạng PDF" (Save as PDF) để lưu tệp.');
+          toast.success(
+            'Đã mở bản in A4! Chọn "Lưu dưới dạng PDF" (Save as PDF) để lưu tệp.'
+          );
         } else {
           // If popup is blocked, download printable HTML directly
           const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
           downloadBlob(blob, `${projectTitle}_ban_in_A4.html`);
-          toast.info('Trình duyệt đã chặn cửa sổ in. Đã tự động tải file HTML; bạn chỉ cần mở file và nhấn Ctrl+P để lưu PDF!');
+          toast.info(
+            'Trình duyệt đã chặn cửa sổ in. Đã tự động tải file HTML; bạn chỉ cần mở file và nhấn Ctrl+P để lưu PDF!'
+          );
         }
 
         setResult({
           format: 'pdf',
           extension: 'pdf',
-          size: filteredChapters.length * 2048
         });
         setLoading(false);
         return;
@@ -169,12 +270,14 @@ export function ExportDialog({
             options: {
               style: selectedStyle,
               includeFrontMatter,
-              includeToc
-            }
-          })
+              includeToc,
+            },
+          }),
         });
 
-        if (res && res.success) {
+        // The local API may return TXT for an unsupported format. Only accept
+        // the requested format; otherwise use the existing client generator.
+        if (res && res.success && res.extension === selectedFormat) {
           if (res.downloadBase64) {
             const binaryStr = atob(res.downloadBase64);
             const bytes = new Uint8Array(binaryStr.length);
@@ -190,12 +293,17 @@ export function ExportDialog({
             const blob = new Blob([res.textContent], { type: res.mimeType });
             downloadBlob(blob, `${projectTitle}.${res.extension}`);
             setResult(res);
-            toast.success(`Đã xuất tệp ${selectedFormat.toUpperCase()} thành công!`);
+            toast.success(
+              `Đã xuất tệp ${selectedFormat.toUpperCase()} thành công!`
+            );
             serverHandled = true;
           }
         }
       } catch (err) {
-        console.warn('API /api/export failed, switching to client generation:', err);
+        console.warn(
+          'API /api/export failed, switching to client generation:',
+          err
+        );
       }
 
       if (serverHandled) {
@@ -217,7 +325,7 @@ export function ExportDialog({
           AlignmentType,
           PageBreak,
           Footer,
-          PageNumber
+          PageNumber,
         } = await import('docx');
 
         const docChildren: any[] = [];
@@ -234,9 +342,9 @@ export function ExportDialog({
                   text: projectTitle,
                   size: 40,
                   bold: true,
-                  font: 'Times New Roman'
-                })
-              ]
+                  font: 'Times New Roman',
+                }),
+              ],
             }),
             ...(authorName
               ? [
@@ -248,10 +356,10 @@ export function ExportDialog({
                         text: `Tác giả: ${authorName}`,
                         size: 24,
                         italics: true,
-                        font: 'Times New Roman'
-                      })
-                    ]
-                  })
+                        font: 'Times New Roman',
+                      }),
+                    ],
+                  }),
                 ]
               : []),
             new Paragraph({
@@ -262,9 +370,9 @@ export function ExportDialog({
                   text: `Xuất bản ngày ${new Date().toLocaleDateString('vi-VN')} qua Novelist`,
                   size: 18,
                   color: '888888',
-                  font: 'Times New Roman'
-                })
-              ]
+                  font: 'Times New Roman',
+                }),
+              ],
             }),
             new Paragraph({ children: [new PageBreak()] })
           );
@@ -282,9 +390,9 @@ export function ExportDialog({
                   text: 'MỤC LỤC',
                   size: 28,
                   bold: true,
-                  font: 'Times New Roman'
-                })
-              ]
+                  font: 'Times New Roman',
+                }),
+              ],
             })
           );
 
@@ -296,9 +404,9 @@ export function ExportDialog({
                   new TextRun({
                     text: ch.title || `Chương ${idx + 1}`,
                     size: 22,
-                    font: 'Times New Roman'
-                  })
-                ]
+                    font: 'Times New Roman',
+                  }),
+                ],
               })
             );
           });
@@ -322,9 +430,9 @@ export function ExportDialog({
                   text: ch.title || `Chương ${idx + 1}`,
                   size: 30,
                   bold: true,
-                  font: 'Times New Roman'
-                })
-              ]
+                  font: 'Times New Roman',
+                }),
+              ],
             })
           );
 
@@ -333,17 +441,22 @@ export function ExportDialog({
             docChildren.push(
               new Paragraph({
                 spacing: { after: 160 },
-                children: [new TextRun({ text: '', font: 'Times New Roman' })]
+                children: [new TextRun({ text: '', font: 'Times New Roman' })],
               })
             );
           } else {
             paragraphs.forEach((pText: string) => {
-              const subLines = pText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+              const subLines = pText
+                .split(/\r?\n/)
+                .map((l) => l.trim())
+                .filter(Boolean);
               if (subLines.length === 0) {
                 docChildren.push(
                   new Paragraph({
                     spacing: { after: 120 },
-                    children: [new TextRun({ text: '', font: 'Times New Roman' })]
+                    children: [
+                      new TextRun({ text: '', font: 'Times New Roman' }),
+                    ],
                   })
                 );
               } else {
@@ -357,9 +470,9 @@ export function ExportDialog({
                         new TextRun({
                           text: line,
                           size: 24,
-                          font: 'Times New Roman'
-                        })
-                      ]
+                          font: 'Times New Roman',
+                        }),
+                      ],
                     })
                   );
                 });
@@ -382,22 +495,22 @@ export function ExportDialog({
                           text: 'Trang ',
                           size: 18,
                           color: '666666',
-                          font: 'Times New Roman'
+                          font: 'Times New Roman',
                         }),
                         new TextRun({
                           children: [PageNumber.CURRENT],
                           size: 18,
                           color: '666666',
-                          font: 'Times New Roman'
-                        })
-                      ]
-                    })
-                  ]
-                })
+                          font: 'Times New Roman',
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
               },
-              children: docChildren
-            }
-          ]
+              children: docChildren,
+            },
+          ],
         });
 
         blob = await Packer.toBlob(doc);
@@ -461,10 +574,12 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
           const paragraphs = parseChapterParagraphs(ch.content);
           const parasHtml =
             paragraphs.length > 0
-              ? paragraphs.map(p => {
-                  const safe = escapeXml(p).replace(/\n/g, '<br/>');
-                  return `<p>${safe}</p>`;
-                }).join('\n')
+              ? paragraphs
+                  .map((p) => {
+                    const safe = escapeXml(p).replace(/\n/g, '<br/>');
+                    return `<p>${safe}</p>`;
+                  })
+                  .join('\n')
               : '<p></p>';
 
           zip.file(
@@ -483,7 +598,9 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
 </html>`
           );
 
-          chapterManifestItems.push(`<item id="${fileId}" href="${fileName}" media-type="application/xhtml+xml"/>`);
+          chapterManifestItems.push(
+            `<item id="${fileId}" href="${fileName}" media-type="application/xhtml+xml"/>`
+          );
           chapterSpineItems.push(`<itemref idref="${fileId}"/>`);
           navPoints.push(`
     <navPoint id="navPoint-${idx + 1}" playOrder="${idx + 2}">
@@ -534,14 +651,22 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
 </package>`
         );
 
-        blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip' });
+        blob = await zip.generateAsync({
+          type: 'blob',
+          mimeType: 'application/epub+zip',
+        });
         ext = 'epub';
       } else if (selectedFormat === 'html') {
-        const html = generatePrintableBookHtml(projectTitle, authorName, filteredChapters, {
-          style: selectedStyle,
-          includeFrontMatter,
-          includeToc
-        });
+        const html = generatePrintableBookHtml(
+          projectTitle,
+          authorName,
+          filteredChapters,
+          {
+            style: selectedStyle,
+            includeFrontMatter,
+            includeToc,
+          }
+        );
         blob = new Blob([html], { type: 'text/html;charset=utf-8' });
       } else if (selectedFormat === 'md') {
         let md = `# ${projectTitle}\n\n`;
@@ -551,7 +676,10 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
           const paras = parseChapterParagraphs(ch.content);
           const mdLines: string[] = [];
           paras.forEach((p: string) => {
-            const sub = p.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            const sub = p
+              .split(/\r?\n/)
+              .map((l) => l.trim())
+              .filter(Boolean);
             if (sub.length > 0) {
               mdLines.push(sub.join('  \n'));
             }
@@ -568,10 +696,12 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
             id: ch.id,
             title: ch.title,
             paragraphs: parseChapterParagraphs(ch.content),
-            wordCount: ch.wordCount
-          }))
+            wordCount: ch.wordCount,
+          })),
         };
-        blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        blob = new Blob([JSON.stringify(exportData, null, 2)], {
+          type: 'application/json',
+        });
       } else {
         // Plain text
         let text = `${projectTitle}\r\n${authorName ? `Tác giả: ${authorName}\r\n` : ''}\r\n====================\r\n\r\n`;
@@ -580,7 +710,7 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
           const paras = parseChapterParagraphs(ch.content);
           const lines: string[] = [];
           paras.forEach((p: string) => {
-            p.split(/\r?\n/).forEach(l => {
+            p.split(/\r?\n/).forEach((l) => {
               const t = l.trim();
               if (t) lines.push(t);
             });
@@ -601,17 +731,22 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
     }
   };
 
-  const selectedFormatInfo = formats.find(f => f.id === selectedFormat);
+  const selectedFormatInfo = formats.find((f) => f.id === selectedFormat);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent onClose={() => onOpenChange(false)} className="max-w-4xl max-h-[90vh] overflow-auto">
+    <Dialog open={open} onOpenChange={onOpenChange} className="max-w-4xl">
+      <DialogContent
+        onClose={() => onOpenChange(false)}
+        className="max-w-4xl max-h-[90vh] overflow-auto"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl font-bold">
-            <Download className="w-5 h-5 text-primary" /> Xuất bản tác phẩm - {projectTitle}
+            <Download className="w-5 h-5 text-primary" /> Xuất bản tác phẩm -{' '}
+            {projectTitle}
           </DialogTitle>
           <DialogDescription>
-            Tạo sách in A4 (PDF), tệp Word biên tập (DOCX), sách điện tử (EPUB) chuẩn tiếng Việt
+            Tạo sách in A4 (PDF), tệp Word biên tập (DOCX), sách điện tử (EPUB)
+            chuẩn tiếng Việt
           </DialogDescription>
         </DialogHeader>
 
@@ -620,30 +755,48 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
           <div className="md:col-span-2 space-y-6">
             {/* Format selection */}
             <div>
-              <h4 className="font-semibold text-sm mb-3">1. Chọn định dạng xuất</h4>
+              <h4 className="font-semibold text-sm mb-3">
+                1. Chọn định dạng xuất
+              </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {formats.map(fmt => {
+                {formats.map((fmt) => {
                   const Icon = fmt.icon;
                   const isSelected = selectedFormat === fmt.id;
                   return (
                     <button
                       key={fmt.id}
-                      onClick={() => setSelectedFormat(fmt.id)}
+                      data-autofocus={isSelected ? true : undefined}
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        setSelectedFormat(fmt.id);
+                        setResult(null);
+                      }}
                       className={`p-3 rounded-xl border text-left transition-all flex items-start gap-3 ${
                         isSelected
                           ? 'border-primary ring-2 ring-primary/20 bg-primary/5'
                           : 'border-input hover:border-primary/50'
                       }`}
                     >
-                      <div className={`w-8 h-8 rounded-lg ${fmt.color} flex items-center justify-center text-white shrink-0 mt-0.5`}>
+                      <div
+                        className={`w-8 h-8 rounded-lg ${fmt.color} flex items-center justify-center text-white shrink-0 mt-0.5`}
+                      >
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-sm flex items-center justify-between">
                           {fmt.name}
-                          {isSelected && <Badge variant="default" className="text-[10px] h-4 px-1.5">Chọn</Badge>}
+                          {isSelected && (
+                            <Badge
+                              variant="default"
+                              className="text-[10px] h-4 px-1.5"
+                            >
+                              Chọn
+                            </Badge>
+                          )}
                         </div>
-                        <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{fmt.desc}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                          {fmt.desc}
+                        </div>
                       </div>
                     </button>
                   );
@@ -653,13 +806,16 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
 
             {/* Style selection for PDF / DOCX */}
             <div>
-              <h4 className="font-semibold text-sm mb-3">2. Bố cục & Phong cách sách</h4>
-              <div className="grid grid-cols-3 gap-3">
-                {styles.map(st => {
+              <h4 className="font-semibold text-sm mb-3">
+                2. Bố cục & Phong cách sách
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {styles.map((st) => {
                   const isSelected = selectedStyle === st.id;
                   return (
                     <button
                       key={st.id}
+                      aria-pressed={isSelected}
                       onClick={() => setSelectedStyle(st.id as any)}
                       className={`p-3 rounded-xl border text-left transition-all ${
                         isSelected
@@ -668,7 +824,9 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
                       }`}
                     >
                       <div className="font-medium text-sm">{st.name}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{st.desc}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {st.desc}
+                      </div>
                     </button>
                   );
                 })}
@@ -683,25 +841,33 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
                   <input
                     type="checkbox"
                     checked={includeFrontMatter}
-                    onChange={e => setIncludeFrontMatter(e.target.checked)}
+                    onChange={(e) => setIncludeFrontMatter(e.target.checked)}
                     className="rounded text-primary focus:ring-primary w-4 h-4"
                   />
-                  <span>Bao gồm trang bìa (Tên tác phẩm, tác giả, dấu mốc xuất bản)</span>
+                  <span>
+                    Bao gồm trang bìa (Tên tác phẩm, tác giả, dấu mốc xuất bản)
+                  </span>
                 </label>
                 <label className="flex items-center gap-2.5 text-sm cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={includeToc}
-                    onChange={e => setIncludeToc(e.target.checked)}
+                    onChange={(e) => setIncludeToc(e.target.checked)}
                     className="rounded text-primary focus:ring-primary w-4 h-4"
                   />
                   <span>Bao gồm mục lục tiểu thuyết</span>
                 </label>
                 <div className="pt-1">
-                  <label className="text-xs font-medium text-muted-foreground">Tên tác giả / Bút danh (in trên trang bìa):</label>
+                  <label
+                    htmlFor="export-author"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    Tên tác giả / Bút danh (in trên trang bìa):
+                  </label>
                   <Input
+                    id="export-author"
                     value={authorName}
-                    onChange={e => setAuthorName(e.target.value)}
+                    onChange={(e) => setAuthorName(e.target.value)}
                     placeholder="Nhập tên bút danh..."
                     className="mt-1 h-8 text-sm"
                   />
@@ -711,35 +877,60 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
 
             {/* Chapters selection */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-sm">4. Chọn chương xuất bản ({selectedChapters.length}/{chapters.length})</h4>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <h4 className="font-semibold text-sm">
+                  4. Chọn chương xuất bản ({selectedChapters.length}/
+                  {chapters.length})
+                </h4>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => setSelectedChapters(chapters.map((c: any) => c.id))}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-xs px-2"
+                    onClick={() =>
+                      setSelectedChapters(chapters.map((c: any) => c.id))
+                    }
+                  >
                     Chọn tất cả
                   </Button>
-                  <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => setSelectedChapters([])}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-xs px-2"
+                    onClick={() => setSelectedChapters([])}
+                  >
                     Bỏ chọn
                   </Button>
                 </div>
               </div>
               <div className="border rounded-xl max-h-48 overflow-auto divide-y bg-card">
                 {chapters.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-muted-foreground">Chưa có chương nào trong dự án</div>
+                  <div className="p-4 text-center text-xs text-muted-foreground">
+                    Chưa có chương nào trong dự án
+                  </div>
                 ) : (
-                  sortChapters(chapters)
-                    .map((ch: any, idx: number) => (
-                      <label key={ch.id} className="flex items-center gap-2.5 p-2.5 hover:bg-accent/50 cursor-pointer text-sm">
-                        <input
-                          type="checkbox"
-                          checked={selectedChapters.includes(ch.id)}
-                          onChange={() => toggleChapter(ch.id)}
-                          className="rounded text-primary focus:ring-primary w-4 h-4"
-                        />
-                        <span className="font-medium text-xs text-muted-foreground w-6">{idx + 1}.</span>
-                        <span className="flex-1 truncate">{ch.title || 'Chương không tên'}</span>
-                        <Badge variant="secondary" className="text-[10px]">{ch.wordCount || 0} từ</Badge>
-                      </label>
-                    ))
+                  sortChapters(chapters).map((ch: any, idx: number) => (
+                    <label
+                      key={ch.id}
+                      className="flex items-center gap-2.5 p-2.5 hover:bg-accent/50 cursor-pointer text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedChapters.includes(ch.id)}
+                        onChange={() => toggleChapter(ch.id)}
+                        className="rounded text-primary focus:ring-primary w-4 h-4"
+                      />
+                      <span className="font-medium text-xs text-muted-foreground w-6">
+                        {idx + 1}.
+                      </span>
+                      <span className="flex-1 truncate">
+                        {ch.title || 'Chương không tên'}
+                      </span>
+                      <Badge variant="secondary" className="text-[10px]">
+                        {ch.wordCount || 0} từ
+                      </Badge>
+                    </label>
+                  ))
                 )}
               </div>
             </div>
@@ -749,25 +940,48 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
           <div className="space-y-4">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Xem trước cấu hình</CardTitle>
+                <CardTitle className="text-sm font-semibold">
+                  Xem trước cấu hình
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className={`w-full aspect-[3/4] rounded-xl border-2 flex flex-col items-center justify-center p-4 text-center ${
-                  styles.find(s => s.id === selectedStyle)?.preview || 'bg-white'
-                }`}>
-                  <div className={`w-10 h-10 rounded-xl ${selectedFormatInfo?.color} flex items-center justify-center text-white mb-3 shadow-md`}>
-                    {selectedFormatInfo && <selectedFormatInfo.icon className="w-5 h-5" />}
+                <div
+                  className={`w-full aspect-[3/4] text-[#242923] rounded-xl border-2 flex flex-col items-center justify-center p-4 text-center ${
+                    styles.find((s) => s.id === selectedStyle)?.preview ||
+                    'bg-white'
+                  }`}
+                >
+                  <div
+                    className={`w-10 h-10 rounded-xl ${selectedFormatInfo?.color} flex items-center justify-center text-white mb-3 shadow-md`}
+                  >
+                    {selectedFormatInfo && (
+                      <selectedFormatInfo.icon className="w-5 h-5" />
+                    )}
                   </div>
-                  <div className="font-bold text-sm truncate w-full px-2">{projectTitle}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{authorName || 'Tác giả'}</div>
-                  <div className="mt-4 text-[10px] text-muted-foreground leading-relaxed">
-                    {selectedChapters.length} chương được chọn<br />
-                    Định dạng: <strong>{selectedFormatInfo?.name}</strong><br />
+                  <div className="font-bold text-sm truncate w-full px-2">
+                    {projectTitle}
+                  </div>
+                  <div className="text-xs text-[#626A60] mt-1">
+                    {authorName || 'Tác giả'}
+                  </div>
+                  <div className="mt-4 text-[10px] text-[#626A60] leading-relaxed">
+                    {selectedChapters.length} chương được chọn
+                    <br />
+                    Định dạng: <strong>{selectedFormatInfo?.name}</strong>
+                    <br />
                     Phong cách: <strong>{selectedStyle}</strong>
                   </div>
                   <div className="flex flex-wrap gap-1 justify-center mt-3">
-                    {includeFrontMatter && <Badge variant="secondary" className="text-[10px]">Có bìa</Badge>}
-                    {includeToc && <Badge variant="secondary" className="text-[10px]">Có mục lục</Badge>}
+                    {includeFrontMatter && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Có bìa
+                      </Badge>
+                    )}
+                    {includeToc && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Có mục lục
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
@@ -777,12 +991,18 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
                     <Button
                       onClick={handleExport}
                       disabled={loading || selectedChapters.length === 0}
-                      className="w-full bg-red-600 hover:bg-red-700 text-white shadow-sm"
+                      className="w-full shadow-sm"
                     >
                       {loading ? (
-                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang chuẩn bị...</>
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang
+                          chuẩn bị...
+                        </>
                       ) : (
-                        <><Printer className="w-4 h-4 mr-2" /> 🖨️ Mở bản in & Lưu PDF (A4)</>
+                        <>
+                          <Printer className="w-4 h-4 mr-2" /> 🖨️ Mở bản in &
+                          Lưu PDF (A4)
+                        </>
                       )}
                     </Button>
                     <Button
@@ -793,19 +1013,26 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
                       disabled={loading || selectedChapters.length === 0}
                       className="w-full text-xs"
                     >
-                      <Code className="w-3.5 h-3.5 mr-1" /> Tải file HTML Sách Offline
+                      <Code className="w-3.5 h-3.5 mr-1" /> Tải file HTML Sách
+                      Offline
                     </Button>
                   </div>
                 ) : selectedFormat === 'docx' ? (
                   <Button
                     onClick={handleExport}
                     disabled={loading || selectedChapters.length === 0}
-                    className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
+                    className="w-full mt-4 shadow-sm"
                   >
                     {loading ? (
-                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang tạo tệp Word...</>
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang
+                        tạo tệp Word...
+                      </>
                     ) : (
-                      <><File className="w-4 h-4 mr-2" /> 📄 Xuất tệp Word (.docx)</>
+                      <>
+                        <File className="w-4 h-4 mr-2" /> 📄 Xuất tệp Word
+                        (.docx)
+                      </>
                     )}
                   </Button>
                 ) : (
@@ -815,20 +1042,36 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
                     className="w-full mt-4 shadow-sm"
                   >
                     {loading ? (
-                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang xử lý...</>
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang
+                        xử lý...
+                      </>
                     ) : (
-                      <><Download className="w-4 h-4 mr-2" /> Xuất {selectedFormat.toUpperCase()}</>
+                      <>
+                        <Download className="w-4 h-4 mr-2" /> Xuất{' '}
+                        {selectedFormat.toUpperCase()}
+                      </>
                     )}
                   </Button>
                 )}
 
                 {result && (
-                  <div className="mt-3 p-3 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 text-xs">
-                    <div className="font-semibold text-green-800 dark:text-green-300 flex items-center gap-1.5">
-                      <Check className="w-4 h-4" /> Xuất bản thành công!
+                  <div className="studio-success mt-3 p-3 rounded-lg border text-xs">
+                    <div className="font-semibold  flex items-center gap-1.5">
+                      <Check className="w-4 h-4" />{' '}
+                      {result.format === 'pdf'
+                        ? 'Bản in đã sẵn sàng'
+                        : 'Xuất bản thành công!'}
                     </div>
-                    <div className="text-green-700 dark:text-green-400 mt-1">
-                      Định dạng: .{result.extension} • Dung lượng: {(result.size / 1024).toFixed(1)} KB
+                    <div className=" mt-1">
+                      {result.format === 'pdf' ? (
+                        'Chọn “Lưu dưới dạng PDF” trong cửa sổ in, hoặc mở tệp HTML vừa tải về.'
+                      ) : (
+                        <>
+                          Định dạng: .{result.extension} • Dung lượng:{' '}
+                          {(result.size / 1024).toFixed(1)} KB
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -836,10 +1079,19 @@ p { text-indent: 1.5em; margin: 0 0 0.8em 0; text-align: justify; white-space: p
             </Card>
 
             <div className="text-xs text-muted-foreground bg-muted/40 p-3.5 rounded-xl border border-border/50 space-y-1.5">
-              <div className="font-semibold text-foreground text-xs">💡 Lưu ý quan trọng:</div>
+              <div className="font-semibold text-foreground text-xs">
+                💡 Lưu ý quan trọng:
+              </div>
               <ul className="list-disc list-inside space-y-1 leading-relaxed text-[11px]">
-                <li><strong>PDF A4:</strong> Mở cửa sổ in ấn, trong mục máy in chọn <strong>"Save as PDF" / "Lưu dưới dạng PDF"</strong> để xuất tệp vector sắc nét 100% tiếng Việt.</li>
-                <li><strong>DOCX Word:</strong> Chuẩn OpenXML đầy đủ lề, giãn dòng 1.5, ngắt trang và số trang cho nhà xuất bản.</li>
+                <li>
+                  <strong>PDF A4:</strong> Mở cửa sổ in ấn, trong mục máy in
+                  chọn <strong>"Save as PDF" / "Lưu dưới dạng PDF"</strong> để
+                  xuất tệp vector sắc nét 100% tiếng Việt.
+                </li>
+                <li>
+                  <strong>DOCX Word:</strong> Chuẩn OpenXML đầy đủ lề, giãn dòng
+                  1.5, ngắt trang và số trang cho nhà xuất bản.
+                </li>
               </ul>
             </div>
           </div>

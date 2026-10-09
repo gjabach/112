@@ -7,14 +7,15 @@ import {
   FindMatch,
   FindOptions,
   findMatchesInDoc,
-  processReplacementText
+  processReplacementText,
 } from '@/lib/find-replace';
 import {
   clearFindDecorations,
   updateMatchDecorations,
-  goToMatch
+  goToMatch,
 } from './find-replace-extension';
 import { toast } from 'sonner';
+import { Dialog, DialogTitle } from '@/components/ui/dialog';
 
 interface FindReplaceDialogProps {
   editor: Editor | null;
@@ -27,7 +28,7 @@ export function FindReplaceDialog({
   editor,
   isOpen,
   onClose,
-  initialSearch = ''
+  initialSearch = '',
 }: FindReplaceDialogProps) {
   const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [replaceTerm, setReplaceTerm] = useState('');
@@ -63,7 +64,7 @@ export function FindReplaceDialog({
     const options: FindOptions = {
       caseSensitive,
       useRegex,
-      ignoreDiacritics
+      ignoreDiacritics,
     };
 
     const found = findMatchesInDoc(doc, searchTerm, options);
@@ -128,7 +129,7 @@ export function FindReplaceDialog({
         const options: FindOptions = {
           caseSensitive,
           useRegex,
-          ignoreDiacritics
+          ignoreDiacritics,
         };
 
         const found = findMatchesInDoc(transaction.doc, searchTerm, options);
@@ -185,7 +186,8 @@ export function FindReplaceDialog({
     const curMatches = matchesRef.current;
     if (curMatches.length === 0 || !editor) return;
 
-    const prev = (activeIndexRef.current - 1 + curMatches.length) % curMatches.length;
+    const prev =
+      (activeIndexRef.current - 1 + curMatches.length) % curMatches.length;
     activeIndexRef.current = prev;
     setActiveIndex(prev);
     goToMatch(editor, curMatches, prev);
@@ -212,21 +214,32 @@ export function FindReplaceDialog({
 
     isInternalOperationRef.current = true;
     try {
-      const tr = editor.state.tr.insertText(replacement, active.from, active.to);
+      const tr = editor.state.tr.insertText(
+        replacement,
+        active.from,
+        active.to
+      );
       editor.view.dispatch(tr);
 
       // Re-scan after replacement
       const options: FindOptions = {
         caseSensitive,
         useRegex,
-        ignoreDiacritics
+        ignoreDiacritics,
       };
-      const newMatches = findMatchesInDoc(editor.state.doc, searchTerm, options);
+      const newMatches = findMatchesInDoc(
+        editor.state.doc,
+        searchTerm,
+        options
+      );
       matchesRef.current = newMatches;
       setMatches(newMatches);
 
       if (newMatches.length > 0) {
-        const nextIdx = activeIndexRef.current < newMatches.length ? activeIndexRef.current : 0;
+        const nextIdx =
+          activeIndexRef.current < newMatches.length
+            ? activeIndexRef.current
+            : 0;
         activeIndexRef.current = nextIdx;
         setActiveIndex(nextIdx);
         goToMatch(editor, newMatches, nextIdx);
@@ -238,7 +251,14 @@ export function FindReplaceDialog({
     } finally {
       isInternalOperationRef.current = false;
     }
-  }, [editor, replaceTerm, useRegex, caseSensitive, searchTerm, ignoreDiacritics]);
+  }, [
+    editor,
+    replaceTerm,
+    useRegex,
+    caseSensitive,
+    searchTerm,
+    ignoreDiacritics,
+  ]);
 
   // Replace all matches in one atomic transaction
   const handleReplaceAll = useCallback(() => {
@@ -313,187 +333,165 @@ export function FindReplaceDialog({
     : '';
 
   return (
-    <div
-      ref={dialogRef}
-      className="fixed top-14 sm:top-16 right-2 sm:right-6 z-50 w-[95vw] max-w-[390px] sm:max-w-[420px] rounded-2xl bg-[#282a2d] text-neutral-100 border border-neutral-700/80 shadow-2xl p-5 select-none animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md"
-      role="dialog"
-      aria-label="Tìm và thay thế"
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      className="max-w-md"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between pb-3.5">
-        <h2 className="text-[19px] font-medium tracking-tight text-white">
-          Tìm và thay thế
-        </h2>
-        <button
-          onClick={onClose}
-          type="button"
-          className="text-neutral-400 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors focus:outline-none"
-          title="Đóng (Esc)"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Inputs */}
-      <div className="space-y-3">
-        {/* Find Input */}
-        <div className="relative">
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="Tìm"
-            className="w-full bg-[#1e1f21] border border-neutral-600/80 focus:border-blue-400 focus:ring-1 focus:ring-blue-400 rounded-lg px-3.5 py-2.5 text-sm text-neutral-100 placeholder:text-neutral-400 outline-none transition-all pr-16"
-          />
-          {matchIndicator && (
-            <span
-              className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono font-medium ${
-                hasMatches ? 'text-blue-400' : 'text-neutral-400'
-              }`}
-            >
-              {matchIndicator}
-            </span>
-          )}
-        </div>
-
-        {/* Replace Input */}
-        <div>
-          <input
-            type="text"
-            value={replaceTerm}
-            onChange={(e) => setReplaceTerm(e.target.value)}
-            onKeyDown={handleReplaceKeyDown}
-            placeholder="Thay thế bằng"
-            className="w-full bg-[#1e1f21] border border-neutral-600/80 focus:border-blue-400 focus:ring-1 focus:ring-blue-400 rounded-lg px-3.5 py-2.5 text-sm text-neutral-100 placeholder:text-neutral-400 outline-none transition-all"
-          />
-        </div>
-      </div>
-
-      {/* Options Checkboxes */}
-      <div className="mt-4 space-y-2.5">
-        {/* Match Case */}
-        <label className="flex items-center gap-3 cursor-pointer group">
-          <div
-            onClick={() => setCaseSensitive(!caseSensitive)}
-            className={`w-[18px] h-[18px] rounded border flex items-center justify-center transition-all ${
-              caseSensitive
-                ? 'bg-blue-500 border-blue-500 text-white'
-                : 'border-neutral-500 bg-transparent group-hover:border-neutral-400'
-            }`}
+      <div
+        ref={dialogRef}
+        className="relative w-full rounded-2xl bg-card text-foreground border border-border shadow-2xl p-5 select-none animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between pb-3.5">
+          <DialogTitle className="text-2xl font-serif font-medium">
+            Tìm và thay thế
+          </DialogTitle>
+          <button
+            onClick={onClose}
+            type="button"
+            className="text-muted-foreground hover:text-foreground p-1 rounded-full hover:bg-accent transition-colors focus:outline-none"
+            title="Đóng (Esc)"
           >
-            {caseSensitive && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-          </div>
-          <span className="text-[13px] text-neutral-200 group-hover:text-white transition-colors">
-            Khớp chữ hoa chữ thường
-          </span>
-        </label>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
-        {/* Use Regular Expressions */}
-        <div>
-          <div className="flex items-center justify-between">
-            <label className="flex items-start gap-3 cursor-pointer group flex-1">
-              <div
-                onClick={() => setUseRegex(!useRegex)}
-                className={`w-[18px] h-[18px] rounded border flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-                  useRegex
-                    ? 'bg-blue-500 border-blue-500 text-white'
-                    : 'border-neutral-500 bg-transparent group-hover:border-neutral-400'
+        {/* Inputs */}
+        <div className="space-y-3">
+          {/* Find Input */}
+          <div className="relative">
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              aria-label="Tìm trong bản thảo"
+              placeholder="Tìm"
+              className="w-full bg-background border border-input focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all pr-16"
+            />
+            {matchIndicator && (
+              <span
+                className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono font-medium ${
+                  hasMatches ? 'text-primary' : 'text-muted-foreground'
                 }`}
               >
-                {useRegex && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-              </div>
-              <span className="text-[13px] text-neutral-200 leading-snug group-hover:text-white transition-colors">
-                Sử dụng biểu thức chính quy (ví dụ: \n cho dòng mới, \t cho ký tự tab){' '}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setShowRegexHelp(!showRegexHelp);
-                  }}
-                  className="text-blue-400 hover:text-blue-300 underline font-normal ml-0.5"
-                >
-                  Trợ giúp
-                </button>
+                {matchIndicator}
               </span>
-            </label>
+            )}
           </div>
 
-          {/* Regex quick helper popup */}
-          {showRegexHelp && (
-            <div className="mt-2 p-2.5 rounded-lg bg-[#1e1f21] border border-neutral-700 text-xs text-neutral-300 space-y-1 animate-in fade-in duration-150">
-              <div className="font-semibold text-blue-400 mb-1">Mẹo Regular Expressions:</div>
-              <div><code className="text-white bg-black/40 px-1 rounded">\n</code> : Xuống dòng</div>
-              <div><code className="text-white bg-black/40 px-1 rounded">\t</code> : Ký tự Tab</div>
-              <div><code className="text-white bg-black/40 px-1 rounded">\d+</code> : Tìm một hoặc nhiều chữ số</div>
-              <div><code className="text-white bg-black/40 px-1 rounded">\w+</code> : Tìm từ chữ cái</div>
-              <div><code className="text-white bg-black/40 px-1 rounded">^ / $</code> : Khớp đầu dòng / cuối dòng</div>
-            </div>
-          )}
+          {/* Replace Input */}
+          <div>
+            <input
+              type="text"
+              value={replaceTerm}
+              onChange={(e) => setReplaceTerm(e.target.value)}
+              onKeyDown={handleReplaceKeyDown}
+              aria-label="Thay thế bằng"
+              placeholder="Thay thế bằng"
+              className="w-full bg-background border border-input focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all"
+            />
+          </div>
         </div>
 
-        {/* Ignore Diacritics */}
-        <label className="flex items-center gap-3 cursor-pointer group">
-          <div
-            onClick={() => setIgnoreDiacritics(!ignoreDiacritics)}
-            className={`w-[18px] h-[18px] rounded border flex items-center justify-center transition-all ${
-              ignoreDiacritics
-                ? 'bg-blue-500 border-blue-500 text-white'
-                : 'border-neutral-500 bg-transparent group-hover:border-neutral-400'
-            }`}
-          >
-            {ignoreDiacritics && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+        {/* Native controls keep every search option keyboard accessible. */}
+        <div className="mt-4 space-y-2 text-sm">
+          <label className="flex min-h-11 cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              checked={caseSensitive}
+              onChange={(event) => setCaseSensitive(event.target.checked)}
+            />
+            Khớp chữ hoa chữ thường
+          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex min-h-11 cursor-pointer items-center gap-3">
+              <input
+                type="checkbox"
+                checked={useRegex}
+                onChange={(event) => setUseRegex(event.target.checked)}
+              />
+              Sử dụng biểu thức chính quy
+            </label>
+            <button
+              type="button"
+              aria-expanded={showRegexHelp}
+              className="min-h-11 text-xs text-primary underline"
+              onClick={() => setShowRegexHelp(!showRegexHelp)}
+            >
+              Trợ giúp
+            </button>
           </div>
-          <span className="text-[13px] text-neutral-200 group-hover:text-white transition-colors">
-            Bỏ qua các dấu (ví dụ: ā = a, E = É, א = א)
-          </span>
-        </label>
+          {showRegexHelp && (
+            <div className="rounded-lg border bg-muted p-3 text-xs leading-relaxed text-muted-foreground">
+              <p>
+                <code>\\n</code>: xuống dòng · <code>\\t</code>: tab
+              </p>
+              <p>
+                <code>\\d+</code>: chữ số · <code>\\w+</code>: từ
+              </p>
+              <p>
+                <code>^ / $</code>: đầu dòng / cuối dòng
+              </p>
+            </div>
+          )}
+          <label className="flex min-h-11 cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              checked={ignoreDiacritics}
+              onChange={(event) => setIgnoreDiacritics(event.target.checked)}
+            />
+            Bỏ qua dấu (ví dụ: mùa = mua)
+          </label>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="mt-6 pt-3 flex items-center justify-between border-t border-border flex-wrap gap-1">
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handleReplace}
+            disabled={!hasMatches}
+            className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-primary hover:text-primary hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent disabled:cursor-not-allowed"
+          >
+            Thay thế
+          </button>
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handleReplaceAll}
+            disabled={!hasMatches}
+            className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-primary hover:text-primary hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent disabled:cursor-not-allowed"
+          >
+            Thay thế tất cả
+          </button>
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handlePrev}
+            disabled={!hasMatches}
+            className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-primary hover:text-primary hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent disabled:cursor-not-allowed"
+          >
+            Trước
+          </button>
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handleNext}
+            disabled={!hasMatches}
+            className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-primary hover:text-primary hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent disabled:cursor-not-allowed"
+          >
+            Tiếp
+          </button>
+        </div>
       </div>
-
-      {/* Action Buttons */}
-      <div className="mt-6 pt-3 flex items-center justify-between border-t border-neutral-700/60 flex-wrap gap-1">
-        <button
-          type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={handleReplace}
-          disabled={!hasMatches}
-          className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
-        >
-          Thay thế
-        </button>
-
-        <button
-          type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={handleReplaceAll}
-          disabled={!hasMatches}
-          className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
-        >
-          Thay thế tất cả
-        </button>
-
-        <button
-          type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={handlePrev}
-          disabled={!hasMatches}
-          className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
-        >
-          Trước
-        </button>
-
-        <button
-          type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={handleNext}
-          disabled={!hasMatches}
-          className="text-xs sm:text-[13px] font-medium px-2 sm:px-2.5 py-1.5 rounded transition-colors text-blue-400 hover:text-blue-300 hover:bg-white/5 disabled:text-neutral-500 disabled:hover:bg-transparent disabled:cursor-not-allowed"
-        >
-          Tiếp
-        </button>
-      </div>
-    </div>
+    </Dialog>
   );
 }

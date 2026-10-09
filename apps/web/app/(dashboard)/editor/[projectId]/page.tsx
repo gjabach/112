@@ -9,7 +9,27 @@ import { apiFetch } from '@/lib/utils';
 import { getProjectChapterStats } from '@/lib/sync-core';
 import { getCachedChapters } from '@/lib/workspace-cache';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, FileText, GripVertical, Trash2, Edit3, Sparkles, Download, ChevronUp, ChevronDown, ChevronRight, Search, Check, X, Upload, Image as ImageIcon, BookOpen } from 'lucide-react';
+import {
+  ArrowLeft,
+  Plus,
+  FileText,
+  GripVertical,
+  Trash2,
+  Edit3,
+  Sparkles,
+  Download,
+  ChevronUp,
+  ChevronDown,
+  ChevronRight,
+  Search,
+  Check,
+  X,
+  Upload,
+  Image as ImageIcon,
+  BookOpen,
+} from 'lucide-react';
+import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { PageHeader, StudioState } from '@/components/studio/page-header';
 import { useProjectStore } from '@/lib/store';
 import { BookCoverArt } from '@/components/vfx/book-cover';
 import { fireConfetti } from '@/components/vfx/confetti';
@@ -19,14 +39,30 @@ import { SoundToggleButton } from '@/components/layout/sound-provider';
 import { SyncStatusButton } from '@/components/layout/sync-provider';
 import { pushSync, pullSync } from '@/lib/sync';
 import { deleteChapterWithSync } from '@/lib/delete-service';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { buildTabTree, flattenTabTree, TabTreeNode } from '@/components/editor/document-tabs-sidebar';
+import {
+  buildTabTree,
+  flattenTabTree,
+  TabTreeNode,
+} from '@/components/editor/document-tabs-sidebar';
 
 const genreLabels: Record<string, string> = {
-  fantasy: 'Huyền Huyễn', scifi: 'Khoa Huyễn', romance: 'Lãng Mạn', mystery: 'Trinh Thám',
-  thriller: 'Giật Gân', horror: 'Kinh Dị', literary: 'Văn Học', historical: 'Lịch Sử',
-  blank: 'Chung'
+  fantasy: 'Huyền Huyễn',
+  scifi: 'Khoa Huyễn',
+  romance: 'Lãng Mạn',
+  mystery: 'Trinh Thám',
+  thriller: 'Giật Gân',
+  horror: 'Kinh Dị',
+  literary: 'Văn Học',
+  historical: 'Lịch Sử',
+  blank: 'Chung',
 };
 
 interface Chapter {
@@ -45,19 +81,25 @@ export default function ProjectEditorPage() {
   const [project, setProject] = useState<any>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
+  const [showChapterDialog, setShowChapterDialog] = useState(false);
+  const [chapterParentId, setChapterParentId] = useState<string | null>(null);
+  const [creatingChapter, setCreatingChapter] = useState(false);
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [searchChapter, setSearchChapter] = useState('');
-  const [activeTab, setActiveTab] = useState<'chapters' | 'overview'>('chapters');
+  const [activeTab, setActiveTab] = useState<'chapters' | 'overview'>(
+    'chapters'
+  );
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
-  const setCurrentProjectId = useProjectStore(s => s.setCurrentProjectId);
+  const setCurrentProjectId = useProjectStore((s) => s.setCurrentProjectId);
 
   const toggleExpand = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setExpandedIds(prev => ({
+    setExpandedIds((prev) => ({
       ...prev,
-      [id]: prev[id] === undefined ? false : !prev[id]
+      [id]: prev[id] === undefined ? false : !prev[id],
     }));
   };
 
@@ -70,7 +112,7 @@ export default function ProjectEditorPage() {
     genre: 'fantasy',
     coverUrl: '',
     wordCountGoal: 50000,
-    status: 'planning'
+    status: 'planning',
   });
 
   const openEditDialog = (proj: any) => {
@@ -81,7 +123,7 @@ export default function ProjectEditorPage() {
       genre: proj?.genre || 'fantasy',
       coverUrl: proj?.coverUrl || '',
       wordCountGoal: proj?.wordCountGoal || 50000,
-      status: proj?.status || 'planning'
+      status: proj?.status || 'planning',
     });
     setShowEditDialog(true);
   };
@@ -121,10 +163,10 @@ export default function ProjectEditorPage() {
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
           const compressed = canvas.toDataURL('image/jpeg', 0.82);
-          setEditForm(prev => ({ ...prev, coverUrl: compressed }));
+          setEditForm((prev) => ({ ...prev, coverUrl: compressed }));
           toast.success('Đã tải ảnh bìa lên thành công!');
         } else {
-          setEditForm(prev => ({ ...prev, coverUrl: dataUrl }));
+          setEditForm((prev) => ({ ...prev, coverUrl: dataUrl }));
         }
       };
       img.src = dataUrl;
@@ -148,8 +190,8 @@ export default function ProjectEditorPage() {
           genre: editForm.genre,
           coverUrl: editForm.coverUrl.trim(),
           wordCountGoal: Number(editForm.wordCountGoal) || 50000,
-          status: editForm.status
-        })
+          status: editForm.status,
+        }),
       });
       toast.success('Đã cập nhật thông tin và ảnh bìa thành công!');
       setShowEditDialog(false);
@@ -178,13 +220,15 @@ export default function ProjectEditorPage() {
       return;
     }
     const prevChapters = [...chapters];
-    setChapters(prev => prev.map(c => c.id === chapterId ? { ...c, title: trimmed } : c));
+    setChapters((prev) =>
+      prev.map((c) => (c.id === chapterId ? { ...c, title: trimmed } : c))
+    );
     setEditingChapterId(null);
 
     try {
       await apiFetch(`/api/chapters/${chapterId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ title: trimmed })
+        body: JSON.stringify({ title: trimmed }),
       });
       playSuccessSound();
       toast.success('Đã cập nhật tên chương thành công');
@@ -209,7 +253,7 @@ export default function ProjectEditorPage() {
     try {
       await apiFetch(`/api/projects/${projectId}/chapters/reorder`, {
         method: 'POST',
-        body: JSON.stringify({ chapterIds: newChapters.map(c => c.id) })
+        body: JSON.stringify({ chapterIds: newChapters.map((c) => c.id) }),
       });
       toast.success(`Đã chuyển vị trí chương`);
       pushSync().catch(() => {});
@@ -239,33 +283,42 @@ export default function ProjectEditorPage() {
     const handleWorkspace = () => {
       const active = getCachedChapters(projectId);
       setChapters(active);
-      setProject((prev: any) => prev ? { ...prev, ...getProjectChapterStats(active, projectId) } : prev);
+      setProject((prev: any) =>
+        prev ? { ...prev, ...getProjectChapterStats(active, projectId) } : prev
+      );
     };
     window.addEventListener('novelist-sync-updated', handleSync);
     window.addEventListener('novelist-chapters-deleted', handleChapterDeleted);
     window.addEventListener('novelist-workspace-updated', handleWorkspace);
     return () => {
       window.removeEventListener('novelist-sync-updated', handleSync);
-      window.removeEventListener('novelist-chapters-deleted', handleChapterDeleted);
+      window.removeEventListener(
+        'novelist-chapters-deleted',
+        handleChapterDeleted
+      );
       window.removeEventListener('novelist-workspace-updated', handleWorkspace);
     };
   }, [projectId]);
 
   const fetchData = async () => {
+    setFetchError('');
     const gen = ++fetchGenerationRef.current;
     try {
       const [projRes] = await Promise.all([
         apiFetch(`/api/projects/${projectId}`),
-        apiFetch(`/api/projects/${projectId}/chapters`)
+        apiFetch(`/api/projects/${projectId}/chapters`),
       ]);
       if (gen !== fetchGenerationRef.current) return;
 
       const activeChapters = getCachedChapters(projectId);
-      setProject({ ...projRes.project, ...getProjectChapterStats(activeChapters, projectId) });
+      setProject({
+        ...projRes.project,
+        ...getProjectChapterStats(activeChapters, projectId),
+      });
       setChapters(activeChapters);
     } catch (e: any) {
       if (gen === fetchGenerationRef.current) {
-        toast.error(e.message);
+        setFetchError(e.message || 'Không thể tải dự án');
       }
     } finally {
       if (gen === fetchGenerationRef.current) {
@@ -275,18 +328,26 @@ export default function ProjectEditorPage() {
   };
 
   const createChapter = async () => {
-    if (!newChapterTitle.trim()) return;
+    if (!newChapterTitle.trim() || creatingChapter) return;
+    setCreatingChapter(true);
     try {
-      const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
+      const maxOrder =
+        chapters.length > 0
+          ? Math.max(...chapters.map((c) => c.orderIndex || 0))
+          : 0;
       await apiFetch(`/api/projects/${projectId}/chapters`, {
         method: 'POST',
         body: JSON.stringify({
           title: newChapterTitle.trim(),
           orderIndex: maxOrder + 1,
-          status: 'outline'
-        })
+          status: 'outline',
+          parentId: chapterParentId,
+        }),
       });
       setNewChapterTitle('');
+      setShowChapterDialog(false);
+      if (chapterParentId)
+        setExpandedIds((prev) => ({ ...prev, [chapterParentId]: true }));
       playSuccessSound();
       toast.success('Tạo chương mới thành công');
       fireConfetti({ type: 'stardust', particleCount: 20 });
@@ -294,6 +355,8 @@ export default function ProjectEditorPage() {
       pushSync().catch(() => {});
     } catch (e: any) {
       toast.error(e.message);
+    } finally {
+      setCreatingChapter(false);
     }
   };
 
@@ -302,7 +365,7 @@ export default function ProjectEditorPage() {
     try {
       const res = await deleteChapterWithSync({
         projectId,
-        chapterId: id
+        chapterId: id,
       });
       if (!res.success) {
         toast.error(res.error || 'Lỗi khi xóa chương');
@@ -316,669 +379,663 @@ export default function ProjectEditorPage() {
     }
   };
 
-  if (loading) return <div className="p-8 animate-pulse text-muted-foreground text-sm">Đang tải dự án...</div>;
-  if (!project) return <div className="p-8 text-sm">Không tìm thấy dự án</div>;
+  if (loading)
+    return (
+      <DashboardLayout projectId={projectId} mode="project">
+        <div className="p-6">
+          <StudioState
+            busy
+            title="Đang mở tác phẩm"
+            description="Tải mục lục và bản thảo…"
+          />
+        </div>
+      </DashboardLayout>
+    );
+  if (fetchError || !project)
+    return (
+      <DashboardLayout projectId={projectId} mode="project">
+        <div className="p-6">
+          <StudioState
+            title="Chưa thể mở tác phẩm"
+            description={fetchError || 'Không tìm thấy tác phẩm'}
+            action={
+              <Button
+                onClick={() => {
+                  setLoading(true);
+                  void fetchData();
+                }}
+              >
+                Thử lại
+              </Button>
+            }
+          />
+        </div>
+      </DashboardLayout>
+    );
 
-  const goalProgress = project.wordCountGoal && project.wordCount
-    ? Math.min(100, Math.round(((project.wordCount || 0) / project.wordCountGoal) * 100))
-    : 0;
+  const goalProgress =
+    project.wordCountGoal && project.wordCount
+      ? Math.min(
+          100,
+          Math.round(((project.wordCount || 0) / project.wordCountGoal) * 100)
+        )
+      : 0;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Top Header */}
-      <header className="border-b bg-card sticky top-0 z-20 shadow-sm">
-        <div className="flex items-center gap-2.5 p-3 sm:p-4 max-w-7xl mx-auto w-full">
-          <Link href="/projects">
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
-
-          <div className="flex-1 min-w-0 pr-1">
-            <h1 className="font-bold text-base sm:text-lg truncate leading-tight" title={project.title}>
-              {project.title}
-            </h1>
-            <p className="text-[11px] sm:text-xs text-muted-foreground truncate mt-0.5">
-              {(project.wordCount || 0).toLocaleString()} từ • {chapters.length} chương
-            </p>
-          </div>
-
-          {/* Mobile Action Buttons */}
-          <div className="flex md:hidden items-center gap-1.5 shrink-0">
-            <SyncStatusButton compact />
-            <SoundToggleButton />
-            <Button
-              size="sm"
-              onClick={() => {
-                const title = prompt('Nhập tên chương mới:');
-                if (title?.trim()) {
-                  setNewChapterTitle(title.trim());
-                  const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
-                  apiFetch(`/api/projects/${projectId}/chapters`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      title: title.trim(),
-                      orderIndex: maxOrder + 1,
-                      status: 'outline'
-                    })
-                  }).then(() => {
-                    playSuccessSound();
-                    toast.success('Đã tạo chương mới');
-                    fetchData();
-                    pushSync().catch(() => {});
-                  });
-                }
-              }}
-              className="h-8 px-2.5 text-xs font-medium"
-            >
-              <Plus className="w-3.5 h-3.5 mr-1" />
-              <span>Chương</span>
-            </Button>
-            <Button variant="outline" size="sm" asChild className="h-8 w-8 p-0">
-              <Link href={`/ai-assistant?projectId=${projectId}`} title="Trợ lý AI">
-                <Sparkles className="w-4 h-4 text-primary" />
-              </Link>
-            </Button>
-          </div>
-
-          {/* Desktop Navigation Buttons */}
-          <div className="hidden md:flex gap-2 items-center shrink-0">
-            <SyncStatusButton />
-            <SoundToggleButton />
-            <Link href={`/export/${projectId}`}>
-              <Button variant="outline" size="sm" className="bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200/50">
-                <Download className="w-4 h-4 mr-1 text-emerald-500" /> Xuất bản
+    <DashboardLayout projectId={projectId} mode="project">
+      <div className="mx-auto max-w-6xl p-5 sm:p-8 lg:p-10">
+        <PageHeader
+          eyebrow="Phòng viết của bạn"
+          title={project.title}
+          description={
+            project.subtitle ||
+            'Từng chương một, câu chuyện của bạn đang thành hình.'
+          }
+          actions={
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setChapterParentId(null);
+                  setNewChapterTitle('');
+                  setShowChapterDialog(true);
+                }}
+              >
+                <Plus />
+                Thêm chương
               </Button>
-            </Link>
-            <Link href={`/ai-assistant?projectId=${projectId}`}>
-              <Button variant="outline" size="sm">
-                <Sparkles className="w-4 h-4 mr-1 text-purple-500" /> AI Trợ lý
-              </Button>
-            </Link>
-            {chapters.length > 0 && (
-              <Link href={`/editor/${projectId}/${chapters[0].id}`}>
-                <Button size="sm">
-                  <span>Vào viết →</span>
+              {chapters.length > 0 && (
+                <Button asChild>
+                  <Link href={'/editor/' + projectId + '/' + chapters[0].id}>
+                    Vào viết <ChevronRight />
+                  </Link>
                 </Button>
-              </Link>
+              )}
+            </>
+          }
+        />
+        <div className="mb-8 flex flex-col gap-5 rounded-2xl border bg-card p-5 sm:flex-row sm:p-6">
+          <BookCoverArt
+            title={project.title}
+            genre={project.genre}
+            coverUrl={project.coverUrl}
+            size="sm"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Badge variant="outline">
+                {genreLabels[project.genre] || 'Tác phẩm'}
+              </Badge>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openEditDialog(project)}
+              >
+                <Edit3 />
+                Sửa thông tin & bìa
+              </Button>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground break-words">
+              {project.description ||
+                'Thêm vài dòng giới thiệu cho câu chuyện của bạn.'}
+            </p>
+            <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+              <span>
+                <strong>{(project.wordCount || 0).toLocaleString()}</strong>{' '}
+                <span className="text-muted-foreground">từ đã viết</span>
+              </span>
+              <span>
+                <strong>{chapters.length}</strong>{' '}
+                <span className="text-muted-foreground">chương</span>
+              </span>
+              {project.wordCountGoal > 0 && (
+                <span className="text-primary">{goalProgress}% mục tiêu</span>
+              )}
+            </div>
+            {project.wordCountGoal > 0 && (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary"
+                  style={{ width: goalProgress + '%' }}
+                />
+              </div>
             )}
           </div>
         </div>
+        {/* Main Layout Area */}
+        <div className="studio-surface min-w-0 overflow-hidden">
+          {/* Chapters Section (Full-width on mobile when activeTab=chapters, sidebar on desktop) */}
+          <aside className="flex w-full min-w-0 flex-col">
+            <div className="p-3 sm:p-4 border-b space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold text-sm">
+                  Danh sách chương ({chapters.length})
+                </h2>
+                <span className="text-[11px] text-muted-foreground font-mono">
+                  {(project.wordCount || 0).toLocaleString()} từ
+                </span>
+              </div>
 
-        {/* Mobile Swipeable Feature Tool Bar */}
-        <div className="md:hidden flex items-center gap-1.5 px-3 py-2 border-t bg-muted/20 overflow-x-auto no-scrollbar scroll-smooth">
-          {chapters.length > 0 && (
-            <Link
-              href={`/editor/${projectId}/${chapters[0].id}`}
-              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-primary text-primary-foreground shadow-xs"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Vào soạn thảo</span>
-            </Link>
-          )}
-          <Link
-            href={`/export/${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-card hover:bg-accent border text-foreground shadow-xs"
-          >
-            <Download className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Xuất bản</span>
-          </Link>
-          <Link
-            href={`/ai-assistant?projectId=${projectId}`}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20 shadow-xs"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
-            <span>AI Trợ lý</span>
-          </Link>
-        </div>
+              {/* Word goal progress indicator */}
+              {project.wordCountGoal ? (
+                <div className="p-2.5 bg-muted/40 rounded-lg border space-y-1.5">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-muted-foreground">Mục tiêu:</span>
+                    <span className="font-semibold text-primary">
+                      {goalProgress}% (
+                      {(project.wordCount || 0).toLocaleString()} /{' '}
+                      {project.wordCountGoal.toLocaleString()} từ)
+                    </span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="bg-primary h-full rounded-full transition-all duration-300"
+                      style={{ width: `${goalProgress}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
 
-        {/* Mobile Segmented Tab Selector */}
-        <div className="md:hidden px-3 py-1.5 border-t bg-card">
-          <div className="grid grid-cols-2 gap-1 p-0.5 bg-muted rounded-lg text-xs font-medium">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('chapters');
-                playPopSound();
-              }}
-              className={`py-1.5 px-3 rounded-md transition-all flex items-center justify-center gap-1.5 ${
-                activeTab === 'chapters'
-                  ? 'bg-card text-foreground shadow-xs font-semibold'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Mục lục ({chapters.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('overview');
-                playPopSound();
-              }}
-              className={`py-1.5 px-3 rounded-md transition-all flex items-center justify-center gap-1.5 ${
-                activeTab === 'overview'
-                  ? 'bg-card text-foreground shadow-xs font-semibold'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>Tổng quan dự án</span>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Layout Area */}
-      <div className="flex-1 flex flex-col md:flex-row min-w-0 overflow-hidden">
-        {/* Chapters Section (Full-width on mobile when activeTab=chapters, sidebar on desktop) */}
-        <aside
-          className={`w-full md:w-80 md:border-r bg-card flex flex-col shrink-0 ${
-            activeTab === 'chapters' ? 'flex flex-1 min-h-0' : 'hidden md:flex'
-          }`}
-        >
-          <div className="p-3 sm:p-4 border-b space-y-2.5">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-sm">Danh sách chương ({chapters.length})</h2>
-              <span className="text-[11px] text-muted-foreground font-mono">
-                {(project.wordCount || 0).toLocaleString()} từ
-              </span>
+              {/* Search filter */}
+              {chapters.length > 3 && (
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    aria-label="Tìm chương"
+                    placeholder="Tìm chương..."
+                    value={searchChapter}
+                    onChange={(e) => setSearchChapter(e.target.value)}
+                    className="pl-8 h-8 text-xs bg-muted/30"
+                  />
+                </div>
+              )}
             </div>
 
-            {/* Word goal progress indicator */}
-            {project.wordCountGoal ? (
-              <div className="p-2.5 bg-muted/40 rounded-lg border space-y-1.5">
-                <div className="flex justify-between text-[11px]">
-                  <span className="text-muted-foreground">Mục tiêu:</span>
-                  <span className="font-semibold text-primary">
-                    {goalProgress}% ({(project.wordCount || 0).toLocaleString()} / {project.wordCountGoal.toLocaleString()} từ)
+            {/* Chapters and Subtabs Tree List */}
+            <div className="p-3 sm:p-5 space-y-2">
+              {chapters.length === 0 ? (
+                <div className="p-6 text-center text-xs text-muted-foreground">
+                  Chưa có chương nào. Chọn “Thêm chương” để bắt đầu câu chuyện.
+                </div>
+              ) : (
+                (() => {
+                  const tree = buildTabTree(chapters);
+                  const renderTreeItem = (node: TabTreeNode) => {
+                    const hasChildren =
+                      node.children && node.children.length > 0;
+                    const isExpanded = expandedIds[node.id] !== false;
+                    const isEditing = editingChapterId === node.id;
+
+                    return (
+                      <div key={node.id} className="space-y-1">
+                        <div className="group flex items-center gap-1.5 p-2 rounded-xl border border-border/60 bg-card hover:border-primary/50 hover:bg-accent/40 transition-all shadow-2xs">
+                          {hasChildren ? (
+                            <button
+                              type="button"
+                              onClick={(e) => toggleExpand(node.id, e)}
+                              className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors shrink-0"
+                              title={
+                                isExpanded
+                                  ? 'Thu gọn thẻ con'
+                                  : 'Mở rộng thẻ con'
+                              }
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          ) : (
+                            <span className="w-4 shrink-0" />
+                          )}
+
+                          <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+
+                          {isEditing ? (
+                            <div
+                              className="flex-1 min-w-0 flex items-center gap-1.5 py-0.5"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Input
+                                value={editingTitle}
+                                onChange={(e) =>
+                                  setEditingTitle(e.target.value)
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    saveChapterRename(node.id);
+                                  } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    cancelRename();
+                                  }
+                                }}
+                                className="h-8 text-xs font-medium py-1 px-2.5 flex-1 bg-background border-primary/50 focus-visible:ring-1"
+                                autoFocus
+                                aria-label="Sửa tên chương"
+                                placeholder="Nhập tên thẻ..."
+                              />
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 shrink-0"
+                                onClick={() => saveChapterRename(node.id)}
+                                title="Lưu (Enter)"
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
+                                onClick={cancelRename}
+                                title="Hủy (Esc)"
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <Link
+                                href={`/editor/${projectId}/${node.id}`}
+                                className="flex-1 min-w-0"
+                              >
+                                <div className="truncate text-sm font-medium text-foreground group-hover:text-primary transition-colors">
+                                  {node.title}
+                                </div>
+                                <div className="flex gap-2 items-center mt-0.5">
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-[10px] px-1.5 py-0 font-normal"
+                                  >
+                                    {node.status || 'draft'}
+                                  </Badge>
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {(node.wordCount || 0).toLocaleString()} từ
+                                  </span>
+                                  {hasChildren && (
+                                    <span className="text-[10px] text-primary font-medium">
+                                      ({node.children.length} thẻ con)
+                                    </span>
+                                  )}
+                                </div>
+                              </Link>
+
+                              {/* Actions */}
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                {node.depth < 2 && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                    onClick={() => {
+                                      setChapterParentId(node.id);
+                                      setNewChapterTitle(
+                                        node.title +
+                                          ' - Thẻ con ' +
+                                          ((node.children || []).length + 1)
+                                      );
+                                      setShowChapterDialog(true);
+                                    }}
+                                    title="Thêm thẻ con (+)"
+                                  >
+                                    <Plus className="w-3.5 h-3.5 text-primary" />
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    startRename(node);
+                                  }}
+                                  title="Sửa tên thẻ"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                  onClick={() => deleteChapter(node.id)}
+                                  title="Xóa thẻ"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Nested child subtabs */}
+                        {hasChildren && isExpanded && (
+                          <div className="ml-5 pl-2.5 border-l-2 border-border/70 hover:border-primary/40 transition-colors space-y-1 my-1">
+                            {node.children.map((child) =>
+                              renderTreeItem(child)
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
+
+                  return tree
+                    .filter((ch) =>
+                      (ch.title || '')
+                        .toLowerCase()
+                        .includes(searchChapter.toLowerCase())
+                    )
+                    .map((root) => renderTreeItem(root));
+                })()
+              )}
+            </div>
+
+            <div className="p-3 border-t text-[11px] text-muted-foreground hidden md:block">
+              <p>Chọn một chương để mở bản thảo và tiếp tục viết.</p>
+            </div>
+          </aside>
+        </div>
+
+        {/* Edit Project Dialog */}
+        <Dialog
+          open={showEditDialog}
+          onOpenChange={setShowEditDialog}
+          className="max-w-xl"
+        >
+          <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-primary" />
+                <span>Chỉnh sửa thông tin tác phẩm</span>
+              </DialogTitle>
+              <DialogDescription>
+                Tùy chỉnh tên tác phẩm, ảnh bìa, tóm tắt nội dung và thể loại.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              {/* Live Cover Preview & Upload Row */}
+              <div className="flex flex-col sm:flex-row gap-4 items-center sm:items-start p-3.5 bg-muted/30 border border-border/70 rounded-xl">
+                <div className="shrink-0 flex flex-col items-center">
+                  <BookCoverArt
+                    title={editForm.title || 'Tiêu đề tác phẩm'}
+                    genre={editForm.genre}
+                    coverUrl={editForm.coverUrl}
+                    wordCount={project?.wordCount || 0}
+                    size="sm"
+                    className="shadow-md"
+                  />
+                  <span className="text-[10px] text-muted-foreground mt-1.5 font-medium">
+                    Bìa xem trước
                   </span>
                 </div>
-                <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className="bg-primary h-full rounded-full transition-all duration-300"
-                    style={{ width: `${goalProgress}%` }}
+
+                <div className="flex-1 min-w-0 space-y-3 w-full">
+                  <div>
+                    <label className="text-xs font-semibold block mb-1.5 flex items-center justify-between">
+                      <span>Ảnh bìa tác phẩm</span>
+                      {editForm.coverUrl ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditForm((prev) => ({ ...prev, coverUrl: '' }))
+                          }
+                          className="text-[11px] text-destructive hover:underline flex items-center gap-1"
+                        >
+                          <X className="w-3 h-3" /> Gỡ ảnh bìa
+                        </button>
+                      ) : null}
+                    </label>
+
+                    <div className="flex gap-2 mb-2">
+                      <Input
+                        aria-label="Link ảnh bìa"
+                        placeholder="Dán link ảnh bìa (URL https://...)"
+                        value={
+                          editForm.coverUrl.startsWith('data:')
+                            ? '[Ảnh tải từ máy tính]'
+                            : editForm.coverUrl
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val.startsWith('[Ảnh')) {
+                            setEditForm((prev) => ({ ...prev, coverUrl: val }));
+                          }
+                        }}
+                        className="text-xs h-9"
+                      />
+                      <label className="shrink-0">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="h-9 px-3 text-xs gap-1.5 cursor-pointer"
+                          asChild
+                        >
+                          <span>
+                            <Upload className="w-3.5 h-3.5 text-primary" />
+                            <span>Tải ảnh</span>
+                          </span>
+                        </Button>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/jpg"
+                          className="hidden"
+                          onChange={handleImageUpload}
+                        />
+                      </label>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Hỗ trợ tệp PNG, JPG hoặc dán liên kết URL ảnh. Hệ thống sẽ
+                      tối ưu hóa để hiển thị 3D sắc nét.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Title & Subtitle */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold block mb-1">
+                    Tên tác phẩm *
+                  </label>
+                  <Input
+                    aria-label="Tên tác phẩm"
+                    value={editForm.title}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        title: e.target.value,
+                      }))
+                    }
+                    placeholder="Ví dụ: Thiên Mệnh Kỷ"
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold block mb-1">
+                    Tên phụ / Bút danh
+                  </label>
+                  <Input
+                    aria-label="Phụ đề / Bút danh"
+                    value={editForm.subtitle}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        subtitle: e.target.value,
+                      }))
+                    }
+                    placeholder="Ví dụ: Quyển 1: Khởi nguyên"
+                    className="h-9 text-sm"
                   />
                 </div>
               </div>
-            ) : null}
 
-            {/* Create chapter input */}
-            <div className="flex gap-2">
-              <Input
-                placeholder="Tên chương mới..."
-                value={newChapterTitle}
-                onChange={e => setNewChapterTitle(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && createChapter()}
-                className="h-9 text-xs"
-              />
-              <Button size="sm" className="h-9 px-3 shrink-0" onClick={createChapter}>
-                <Plus className="w-4 h-4 mr-1" />
-                <span>Thêm</span>
+              {/* Genre & Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold block mb-1">
+                    Thể loại
+                  </label>
+                  <select
+                    aria-label="Thể loại tác phẩm"
+                    value={editForm.genre}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        genre: e.target.value,
+                      }))
+                    }
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:ring-1 focus:ring-primary"
+                  >
+                    {Object.entries(genreLabels).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold block mb-1">
+                    Trạng thái
+                  </label>
+                  <select
+                    aria-label="Trạng thái sáng tác"
+                    value={editForm.status}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        status: e.target.value,
+                      }))
+                    }
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="planning">Đang lập dàn ý</option>
+                    <option value="drafting">Đang sáng tác</option>
+                    <option value="revising">Đang biên tập</option>
+                    <option value="completed">Đã hoàn thành</option>
+                    <option value="published">Đã xuất bản</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold block mb-1">
+                    Mục tiêu số từ
+                  </label>
+                  <Input
+                    type="number"
+                    aria-label="Mục tiêu số từ"
+                    value={editForm.wordCountGoal}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        wordCountGoal: Number(e.target.value) || 0,
+                      }))
+                    }
+                    className="h-9 text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Tóm tắt / Giới thiệu tác phẩm
+                </label>
+                <Textarea
+                  aria-label="Tóm tắt tác phẩm"
+                  value={editForm.description}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Tóm tắt bối cảnh thế giới, nhân vật chính, xung đột mở đầu..."
+                  rows={3}
+                  className="text-xs resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowEditDialog(false)}
+              >
+                Hủy
+              </Button>
+              <Button
+                size="sm"
+                onClick={saveProjectEdit}
+                disabled={savingEdit}
+                className="bg-primary hover:bg-primary/90"
+              >
+                {savingEdit ? 'Đang lưu...' : 'Lưu thay đổi'}
               </Button>
             </div>
+          </DialogContent>
+        </Dialog>
 
-            {/* Search filter */}
-            {chapters.length > 3 && (
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <Input
-                  placeholder="Tìm chương..."
-                  value={searchChapter}
-                  onChange={e => setSearchChapter(e.target.value)}
-                  className="pl-8 h-8 text-xs bg-muted/30"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Chapters and Subtabs Tree List */}
-          <div className="flex-1 overflow-y-auto p-2 sm:p-3 space-y-1.5">
-            {chapters.length === 0 ? (
-              <div className="p-6 text-center text-xs text-muted-foreground">
-                Chưa có thẻ nào. Nhập tên và bấm "Thêm" để bắt đầu viết.
-              </div>
-            ) : (() => {
-              const tree = buildTabTree(chapters);
-              const renderTreeItem = (node: TabTreeNode) => {
-                const hasChildren = node.children && node.children.length > 0;
-                const isExpanded = expandedIds[node.id] !== false;
-                const isEditing = editingChapterId === node.id;
-
-                return (
-                  <div key={node.id} className="space-y-1">
-                    <div className="group flex items-center gap-1.5 p-2 rounded-xl border border-border/60 bg-card hover:border-primary/50 hover:bg-accent/40 transition-all shadow-2xs">
-                      {hasChildren ? (
-                        <button
-                          type="button"
-                          onClick={(e) => toggleExpand(node.id, e)}
-                          className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors shrink-0"
-                          title={isExpanded ? "Thu gọn thẻ con" : "Mở rộng thẻ con"}
-                        >
-                          {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                        </button>
-                      ) : (
-                        <span className="w-4 shrink-0" />
-                      )}
-
-                      <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-
-                      {isEditing ? (
-                        <div className="flex-1 min-w-0 flex items-center gap-1.5 py-0.5" onClick={e => e.stopPropagation()}>
-                          <Input
-                            value={editingTitle}
-                            onChange={e => setEditingTitle(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                saveChapterRename(node.id);
-                              } else if (e.key === 'Escape') {
-                                e.preventDefault();
-                                cancelRename();
-                              }
-                            }}
-                            className="h-8 text-xs font-medium py-1 px-2.5 flex-1 bg-background border-primary/50 focus-visible:ring-1"
-                            autoFocus
-                            placeholder="Nhập tên thẻ..."
-                          />
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 shrink-0"
-                            onClick={() => saveChapterRename(node.id)}
-                            title="Lưu (Enter)"
-                          >
-                            <Check className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
-                            onClick={cancelRename}
-                            title="Hủy (Esc)"
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <>
-                          <Link href={`/editor/${projectId}/${node.id}`} className="flex-1 min-w-0">
-                            <div className="truncate text-sm font-medium text-foreground group-hover:text-primary transition-colors">
-                              {node.title}
-                            </div>
-                            <div className="flex gap-2 items-center mt-0.5">
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
-                                {node.status || 'draft'}
-                              </Badge>
-                              <span className="text-[11px] text-muted-foreground">
-                                {(node.wordCount || 0).toLocaleString()} từ
-                              </span>
-                              {hasChildren && (
-                                <span className="text-[10px] text-primary font-medium">
-                                  ({node.children.length} thẻ con)
-                                </span>
-                              )}
-                            </div>
-                          </Link>
-
-                          {/* Actions */}
-                          <div className="flex items-center gap-0.5 shrink-0">
-                            {node.depth < 2 && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                                onClick={async (e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  const childNum = (node.children || []).length + 1;
-                                  const promptTitle = prompt(`Nhập tên thẻ con dưới "${node.title}":`, `${node.title} - Thẻ con ${childNum}`);
-                                  if (promptTitle?.trim()) {
-                                    const maxOrder = chapters.length > 0 ? Math.max(...chapters.map(c => c.orderIndex || 0)) : 0;
-                                    await apiFetch(`/api/projects/${projectId}/chapters`, {
-                                      method: 'POST',
-                                      body: JSON.stringify({
-                                        title: promptTitle.trim(),
-                                        orderIndex: maxOrder + 1,
-                                        status: 'draft',
-                                        parentId: node.id
-                                      })
-                                    });
-                                    setExpandedIds(prev => ({ ...prev, [node.id]: true }));
-                                    playSuccessSound();
-                                    toast.success('Đã tạo thẻ con mới');
-                                    fetchData();
-                                    pushSync().catch(() => {});
-                                  }
-                                }}
-                                title="Thêm thẻ con (+)"
-                              >
-                                <Plus className="w-3.5 h-3.5 text-primary" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                startRename(node);
-                              }}
-                              title="Sửa tên thẻ"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                              onClick={() => deleteChapter(node.id)}
-                              title="Xóa thẻ"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Nested child subtabs */}
-                    {hasChildren && isExpanded && (
-                      <div className="ml-5 pl-2.5 border-l-2 border-border/70 hover:border-primary/40 transition-colors space-y-1 my-1">
-                        {node.children.map(child => renderTreeItem(child))}
-                      </div>
-                    )}
-                  </div>
-                );
-              };
-
-              return tree
-                .filter(ch => (ch.title || '').toLowerCase().includes(searchChapter.toLowerCase()))
-                .map(root => renderTreeItem(root));
-            })()}
-          </div>
-
-          <div className="p-3 border-t text-[11px] text-muted-foreground hidden md:block">
-            <p>💡 Click vào thẻ để mở trình soạn thảo chuyên dụng.</p>
-          </div>
-        </aside>
-
-        {/* Project Overview (Full-width on mobile when activeTab=overview, right panel on desktop) */}
-        <main
-          className={`flex-1 p-4 sm:p-6 md:p-8 max-w-4xl overflow-y-auto ${
-            activeTab === 'overview' ? 'block' : 'hidden md:block'
-          }`}
+        <Dialog
+          open={showChapterDialog}
+          onOpenChange={(open) => {
+            if (!creatingChapter) setShowChapterDialog(open);
+          }}
         >
-          <div className="space-y-6">
-            {/* Book showcase with 3D cover */}
-            <div className="flex flex-col sm:flex-row gap-5 items-start glass-card p-5 rounded-2xl border border-border/70">
-              <BookCoverArt
-                title={project.title}
-                genre={project.genre}
-                coverUrl={project.coverUrl}
-                wordCount={project.wordCount}
-                size="md"
-                className="shadow-xl shrink-0"
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {chapterParentId ? 'Thêm thẻ con' : 'Một chương mới'}
+              </DialogTitle>
+              <DialogDescription>
+                Đặt tên cho phần tiếp theo của câu chuyện.
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createChapter();
+              }}
+            >
+              <label
+                htmlFor="new-chapter"
+                className="mb-2 block text-sm font-medium"
+              >
+                Tên chương
+              </label>
+              <Input
+                id="new-chapter"
+                autoFocus
+                value={newChapterTitle}
+                onChange={(event) => setNewChapterTitle(event.target.value)}
+                placeholder="Ví dụ: Một khởi đầu mới"
+                disabled={creatingChapter}
               />
-              <div className="flex-1 min-w-0 space-y-2 py-1">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" className="text-xs border-primary/30 text-primary font-medium">
-                      {genreLabels[project.genre] || project.genre || 'Huyền Huyễn'}
-                    </Badge>
-                    <Badge variant="secondary" className="text-xs capitalize">
-                      {project.status || 'planning'}
-                    </Badge>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs gap-1.5 border-border/80 hover:border-primary/50"
-                    onClick={() => openEditDialog(project)}
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-primary" />
-                    <span>Sửa thông tin & ảnh bìa</span>
-                  </Button>
-                </div>
-                <h2 className="text-xl sm:text-2xl font-serif font-bold tracking-tight text-foreground">
-                  {project.title}
-                </h2>
-                {project.subtitle ? (
-                  <p className="text-xs text-muted-foreground italic -mt-1">{project.subtitle}</p>
-                ) : null}
-                <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                  {project.description || 'Chưa có mô tả cho tiểu thuyết này.'}
-                </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  disabled={creatingChapter}
+                  onClick={() => setShowChapterDialog(false)}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={creatingChapter || !newChapterTitle.trim()}
+                >
+                  {creatingChapter ? 'Đang tạo…' : 'Thêm chương'}
+                </Button>
               </div>
-            </div>
-
-            {/* Metrics cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <div className="glass-card glow-card border border-border/70 rounded-2xl p-4 shadow-xs">
-                <div className="text-2xl font-bold font-mono">{(project.wordCount || 0).toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Tổng số từ</div>
-                {project.wordCountGoal ? (
-                  <div className="mt-2.5 w-full bg-muted/60 rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-gradient-to-r from-primary to-indigo-500 h-1.5 rounded-full transition-all" style={{ width: `${goalProgress}%` }} />
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="glass-card glow-card border border-border/70 rounded-2xl p-4 shadow-xs">
-                <div className="text-2xl font-bold font-mono">{chapters.length}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Tổng số chương</div>
-              </div>
-
-              <div className="glass-card glow-card border border-border/70 rounded-2xl p-4 shadow-xs">
-                <div className="text-2xl font-bold capitalize">{project.status}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Trạng thái sáng tác</div>
-              </div>
-            </div>
-
-            {/* Quick chapter access section */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-sm sm:text-base">Các thẻ trong tài liệu</h3>
-                <span className="text-xs text-muted-foreground">Chọn thẻ để bắt đầu viết</span>
-              </div>
-
-              <div className="grid gap-2">
-                {flattenTabTree(buildTabTree(chapters)).map((ch: any) => (
-                  <Link
-                    key={ch.id}
-                    href={`/editor/${projectId}/${ch.id}`}
-                    className={`border rounded-xl p-3.5 hover:border-primary/50 hover:bg-accent/40 transition-colors flex justify-between items-center bg-card shadow-2xs ${ch.parentId ? 'ml-6 border-l-4 border-l-primary/40' : ''}`}
-                  >
-                    <div className="min-w-0 pr-3">
-                      <div className="font-medium text-sm truncate flex items-center gap-1.5">
-                        {ch.parentId ? <span className="text-primary font-bold">↳</span> : null}
-                        <span>{ch.title}</span>
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {(ch.wordCount || 0).toLocaleString()} từ • {ch.status || 'draft'}
-                      </div>
-                    </div>
-                    <Button size="sm" variant="ghost" className="shrink-0 h-8 text-xs text-primary font-medium">
-                      Viết →
-                    </Button>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          </div>
-        </main>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
-
-      {/* Edit Project Dialog */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Edit3 className="w-5 h-5 text-primary" />
-              <span>Chỉnh sửa thông tin tác phẩm</span>
-            </DialogTitle>
-            <DialogDescription>
-              Tùy chỉnh tên tác phẩm, ảnh bìa, tóm tắt nội dung và thể loại.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            {/* Live Cover Preview & Upload Row */}
-            <div className="flex flex-col sm:flex-row gap-4 items-center sm:items-start p-3.5 bg-muted/30 border border-border/70 rounded-xl">
-              <div className="shrink-0 flex flex-col items-center">
-                <BookCoverArt
-                  title={editForm.title || 'Tiêu đề tác phẩm'}
-                  genre={editForm.genre}
-                  coverUrl={editForm.coverUrl}
-                  wordCount={project?.wordCount || 0}
-                  size="sm"
-                  className="shadow-md"
-                />
-                <span className="text-[10px] text-muted-foreground mt-1.5 font-medium">Bìa xem trước</span>
-              </div>
-
-              <div className="flex-1 min-w-0 space-y-3 w-full">
-                <div>
-                  <label className="text-xs font-semibold block mb-1.5 flex items-center justify-between">
-                    <span>Ảnh bìa tác phẩm</span>
-                    {editForm.coverUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => setEditForm(prev => ({ ...prev, coverUrl: '' }))}
-                        className="text-[11px] text-rose-500 hover:underline flex items-center gap-1"
-                      >
-                        <X className="w-3 h-3" /> Gỡ ảnh bìa
-                      </button>
-                    ) : null}
-                  </label>
-
-                  <div className="flex gap-2 mb-2">
-                    <Input
-                      placeholder="Dán link ảnh bìa (URL https://...)"
-                      value={editForm.coverUrl.startsWith('data:') ? '[Ảnh tải từ máy tính]' : editForm.coverUrl}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (!val.startsWith('[Ảnh')) {
-                          setEditForm(prev => ({ ...prev, coverUrl: val }));
-                        }
-                      }}
-                      className="text-xs h-9"
-                    />
-                    <label className="shrink-0">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-9 px-3 text-xs gap-1.5 cursor-pointer"
-                        asChild
-                      >
-                        <span>
-                          <Upload className="w-3.5 h-3.5 text-primary" />
-                          <span>Tải ảnh</span>
-                        </span>
-                      </Button>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/jpg"
-                        className="hidden"
-                        onChange={handleImageUpload}
-                      />
-                    </label>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    Hỗ trợ tệp PNG, JPG hoặc dán liên kết URL ảnh. Hệ thống sẽ tối ưu hóa để hiển thị 3D sắc nét.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Title & Subtitle */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold block mb-1">Tên tác phẩm *</label>
-                <Input
-                  value={editForm.title}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, title: e.target.value }))}
-                  placeholder="Ví dụ: Thiên Mệnh Kỷ"
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold block mb-1">Tên phụ / Bút danh</label>
-                <Input
-                  value={editForm.subtitle}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, subtitle: e.target.value }))}
-                  placeholder="Ví dụ: Quyển 1: Khởi nguyên"
-                  className="h-9 text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Genre & Status */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs font-semibold block mb-1">Thể loại</label>
-                <select
-                  value={editForm.genre}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, genre: e.target.value }))}
-                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:ring-1 focus:ring-primary"
-                >
-                  {Object.entries(genreLabels).map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold block mb-1">Trạng thái</label>
-                <select
-                  value={editForm.status}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, status: e.target.value }))}
-                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:ring-1 focus:ring-primary"
-                >
-                  <option value="planning">Đang lập dàn ý</option>
-                  <option value="drafting">Đang sáng tác</option>
-                  <option value="revising">Đang biên tập</option>
-                  <option value="completed">Đã hoàn thành</option>
-                  <option value="published">Đã xuất bản</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold block mb-1">Mục tiêu số từ</label>
-                <Input
-                  type="number"
-                  value={editForm.wordCountGoal}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, wordCountGoal: Number(e.target.value) || 0 }))}
-                  className="h-9 text-xs"
-                />
-              </div>
-            </div>
-
-            {/* Description */}
-            <div>
-              <label className="text-xs font-semibold block mb-1">Tóm tắt / Giới thiệu tác phẩm</label>
-              <Textarea
-                value={editForm.description}
-                onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
-                placeholder="Tóm tắt bối cảnh thế giới, nhân vật chính, xung đột mở đầu..."
-                rows={3}
-                className="text-xs resize-none"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2 border-t">
-            <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>
-              Hủy
-            </Button>
-            <Button size="sm" onClick={saveProjectEdit} disabled={savingEdit} className="bg-primary hover:bg-primary/90">
-              {savingEdit ? 'Đang lưu...' : 'Lưu thay đổi'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+    </DashboardLayout>
   );
 }

@@ -4,20 +4,51 @@ import { getProjectChapterStats } from '@/lib/sync-core';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { apiFetch, formatRelativeTime } from '@/lib/utils';
 import { pullSync } from '@/lib/sync';
 import { toast } from 'sonner';
-import { Plus, BookOpen, Search, Trash2, Copy, FileText, Sparkles, Layers, Edit3, Upload, Image as ImageIcon, X } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  Plus,
+  BookOpen,
+  Search,
+  Trash2,
+  Copy,
+  FileText,
+  Sparkles,
+  Layers,
+  Edit3,
+  Upload,
+  Image as ImageIcon,
+  X,
+} from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { BookCoverArt } from '@/components/vfx/book-cover';
 import { fireConfetti } from '@/components/vfx/confetti';
-import { MagicSparkles, SparkleIcon, GlowingDot } from '@/components/vfx/magic-sparkles';
+import {
+  MagicSparkles,
+  SparkleIcon,
+  GlowingDot,
+} from '@/components/vfx/magic-sparkles';
 
+import { ActionMenu } from '@/components/studio/action-menu';
+import { PageHeader, StudioState } from '@/components/studio/page-header';
 import { deleteProjectWithSync } from '@/lib/delete-service';
 
 interface Project {
@@ -36,32 +67,54 @@ interface Project {
 }
 
 const genreLabels: Record<string, string> = {
-  fantasy: 'Huyền Huyễn', scifi: 'Khoa Huyễn', romance: 'Lãng Mạn', mystery: 'Trinh Thám',
-  thriller: 'Giật Gân', horror: 'Kinh Dị', literary: 'Văn Học', historical: 'Lịch Sử',
-  blank: 'Chung'
+  fantasy: 'Huyền Huyễn',
+  scifi: 'Khoa Huyễn',
+  romance: 'Lãng Mạn',
+  mystery: 'Trinh Thám',
+  thriller: 'Giật Gân',
+  horror: 'Kinh Dị',
+  literary: 'Văn Học',
+  historical: 'Lịch Sử',
+  blank: 'Chung',
 };
 
 const statusLabels: Record<string, { label: string; color: string }> = {
-  planning: { label: 'Đang lập dàn ý', color: 'bg-zinc-500/20 text-zinc-300 border-zinc-500/30' },
-  drafting: { label: 'Đang sáng tác', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
-  revising: { label: 'Đang biên tập', color: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
-  completed: { label: 'Đã hoàn thành', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
-  published: { label: 'Đã xuất bản', color: 'bg-purple-500/20 text-purple-300 border-purple-500/30' }
+  planning: {
+    label: 'Đang lập dàn ý',
+    color: 'bg-muted text-muted-foreground border-border',
+  },
+  drafting: { label: 'Đang sáng tác', color: 'studio-warning' },
+  revising: { label: 'Đang biên tập', color: 'studio-info' },
+  completed: { label: 'Đã hoàn thành', color: 'studio-success' },
+  published: {
+    label: 'Đã xuất bản',
+    color: 'bg-primary/10 text-primary border-primary/25',
+  },
 };
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [search, setSearch] = useState('');
   const [showNewDialog, setShowNewDialog] = useState(false);
-  const [newProject, setNewProject] = useState({ title: '', description: '', genre: 'fantasy', template: 'fantasy' });
+  const [newProject, setNewProject] = useState({
+    title: '',
+    description: '',
+    genre: 'fantasy',
+    template: 'fantasy',
+  });
 
   const fetchProjects = async () => {
+    setFetchError('');
     try {
       const res = await apiFetch('/api/projects');
-      const tombstones = typeof window !== 'undefined'
-        ? JSON.parse(localStorage.getItem('novelist_tombstones') || '{}')
-        : {};
+      const tombstones =
+        typeof window !== 'undefined'
+          ? JSON.parse(localStorage.getItem('novelist_tombstones') || '{}')
+          : {};
       const chapters = getCachedChapters();
       const reconciled = (res?.projects || [])
         .filter((p: any) => p?.id && !tombstones[p.id])
@@ -69,20 +122,24 @@ export default function ProjectsPage() {
           const localStats = getProjectChapterStats(chapters, p.id);
           return {
             ...p,
-            wordCount: localStats.chapterCount > 0 ? localStats.wordCount : p.wordCount,
-            chapterCount: localStats.chapterCount > 0 ? localStats.chapterCount : p.chapterCount
+            wordCount:
+              localStats.chapterCount > 0 ? localStats.wordCount : p.wordCount,
+            chapterCount:
+              localStats.chapterCount > 0
+                ? localStats.chapterCount
+                : p.chapterCount,
           };
         });
       setProjects(reconciled);
     } catch (e: any) {
-      toast.error(e.message);
+      setFetchError(e.message || 'Không thể tải tác phẩm');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { 
-    fetchProjects(); 
+  useEffect(() => {
+    fetchProjects();
     pullSync(true)
       .then(() => {
         fetchProjects();
@@ -93,15 +150,26 @@ export default function ProjectsPage() {
     const handleProjectDeleted = () => fetchProjects();
     const handleWorkspaceUpdated = () => {
       const chapters = getCachedChapters();
-      setProjects(prev => prev.map(p => ({ ...p, ...getProjectChapterStats(chapters, p.id) })));
+      setProjects((prev) =>
+        prev.map((p) => ({ ...p, ...getProjectChapterStats(chapters, p.id) }))
+      );
     };
     window.addEventListener('novelist-sync-updated', handleSyncUpdated);
     window.addEventListener('novelist-project-deleted', handleProjectDeleted);
-    window.addEventListener('novelist-workspace-updated', handleWorkspaceUpdated);
+    window.addEventListener(
+      'novelist-workspace-updated',
+      handleWorkspaceUpdated
+    );
     return () => {
       window.removeEventListener('novelist-sync-updated', handleSyncUpdated);
-      window.removeEventListener('novelist-project-deleted', handleProjectDeleted);
-      window.removeEventListener('novelist-workspace-updated', handleWorkspaceUpdated);
+      window.removeEventListener(
+        'novelist-project-deleted',
+        handleProjectDeleted
+      );
+      window.removeEventListener(
+        'novelist-workspace-updated',
+        handleWorkspaceUpdated
+      );
     };
   }, []);
 
@@ -115,7 +183,7 @@ export default function ProjectsPage() {
     genre: 'fantasy',
     coverUrl: '',
     wordCountGoal: 50000,
-    status: 'planning'
+    status: 'planning',
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -128,7 +196,7 @@ export default function ProjectsPage() {
       genre: proj.genre || 'fantasy',
       coverUrl: proj.coverUrl || '',
       wordCountGoal: proj.wordCountGoal || 50000,
-      status: proj.status || 'planning'
+      status: proj.status || 'planning',
     });
     setShowEditDialog(true);
   };
@@ -163,10 +231,10 @@ export default function ProjectsPage() {
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
           const compressed = canvas.toDataURL('image/jpeg', 0.82);
-          setEditForm(prev => ({ ...prev, coverUrl: compressed }));
+          setEditForm((prev) => ({ ...prev, coverUrl: compressed }));
           toast.success('Đã tải ảnh bìa lên thành công!');
         } else {
-          setEditForm(prev => ({ ...prev, coverUrl: dataUrl }));
+          setEditForm((prev) => ({ ...prev, coverUrl: dataUrl }));
         }
       };
       img.src = dataUrl;
@@ -191,8 +259,8 @@ export default function ProjectsPage() {
           genre: editForm.genre,
           coverUrl: editForm.coverUrl.trim(),
           wordCountGoal: Number(editForm.wordCountGoal) || 50000,
-          status: editForm.status
-        })
+          status: editForm.status,
+        }),
       });
       toast.success('Đã cập nhật thông tin tác phẩm thành công!');
       setShowEditDialog(false);
@@ -218,14 +286,21 @@ export default function ProjectsPage() {
           description: newProject.description,
           genre: newProject.genre,
           template: newProject.template,
-          status: 'planning'
-        })
+          status: 'planning',
+        }),
       });
-      toast.success('Tạo dự án thành công! Bạn có thể chỉnh sửa bìa và thông tin chi tiết ngay bây giờ.');
+      toast.success(
+        'Tạo dự án thành công! Bạn có thể chỉnh sửa bìa và thông tin chi tiết ngay bây giờ.'
+      );
       fireConfetti({ type: 'celebration' });
       setShowNewDialog(false);
       const created = res?.project;
-      setNewProject({ title: '', description: '', genre: 'fantasy', template: 'fantasy' });
+      setNewProject({
+        title: '',
+        description: '',
+        genre: 'fantasy',
+        template: 'fantasy',
+      });
       await fetchProjects();
       if (created) {
         openEditDialog(created);
@@ -247,68 +322,78 @@ export default function ProjectsPage() {
   };
 
   const deleteProject = async (id: string) => {
-    if (!confirm('Bạn có chắc muốn xóa dự án này? Thao tác này sẽ xóa tất cả chương và dữ liệu liên quan.')) return;
+    setDeleting(true);
     try {
       const res = await deleteProjectWithSync({ projectId: id });
       if (res.success) {
         toast.success('Đã xóa dự án');
+        setDeletingProject(null);
         fetchProjects();
       } else {
         toast.error(res.error || 'Lỗi khi xóa dự án');
       }
     } catch (e: any) {
       toast.error(e.message);
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const filtered = projects.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
+  const filtered = projects.filter((p) =>
+    p.title.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <DashboardLayout>
       <div className="p-4 sm:p-6 md:p-8 max-w-7xl mx-auto relative z-10">
-        {/* Header section */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl sm:text-3xl font-serif font-bold tracking-tight">Kệ Sách Sáng Tác</h1>
-              <Badge variant="outline" className="text-xs border-primary/30 text-primary font-mono">
-                {projects.length} tác phẩm
-              </Badge>
-            </div>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              Quản lý bản thảo, tiến độ từ ngữ và kiến thiết các vũ trụ truyện
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={() => setShowNewDialog(true)}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-md shadow-primary/25 btn-interactive flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Dự án mới</span>
+        <PageHeader
+          eyebrow="Thư viện cá nhân"
+          title="Những câu chuyện của bạn"
+          description="Một nơi cho bản thảo, ý tưởng và những chương còn dang dở."
+          actions={
+            <Button onClick={() => setShowNewDialog(true)}>
+              <Plus />
+              Tác phẩm mới
             </Button>
-          </div>
-        </div>
-
+          }
+        />
         {/* Search bar */}
         <div className="flex gap-4 mb-6">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Tìm kiếm tiểu thuyết..."
+              aria-label="Tìm tác phẩm"
+              placeholder="Tìm tên tác phẩm..."
               className="pl-9 bg-card/70 border-border/70 backdrop-blur-md rounded-xl text-sm"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
             />
           </div>
         </div>
 
         {/* Projects grid */}
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {[1, 2, 3].map(i => (
-              <Card key={i} className="animate-pulse glass-card p-4 rounded-2xl h-56 flex gap-4">
+        {fetchError ? (
+          <StudioState
+            title="Chưa thể tải tác phẩm"
+            description={fetchError}
+            action={
+              <Button
+                onClick={() => {
+                  setLoading(true);
+                  void fetchProjects();
+                }}
+              >
+                Thử lại
+              </Button>
+            }
+          />
+        ) : loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {[1, 2, 3].map((i) => (
+              <Card
+                key={i}
+                className="animate-pulse glass-card p-4 rounded-2xl h-56 flex gap-4"
+              >
                 <div className="w-32 bg-muted/60 rounded-xl shrink-0" />
                 <div className="flex-1 space-y-3 py-2">
                   <div className="h-5 bg-muted/80 rounded w-3/4" />
@@ -327,7 +412,9 @@ export default function ProjectsPage() {
                 <SparkleIcon size={32} color="currentColor" />
               </div>
               <h3 className="text-xl font-serif font-bold text-foreground">
-                {search ? 'Không tìm thấy tiểu thuyết phù hợp' : 'Kệ sách đang chờ tác phẩm đầu tay của bạn'}
+                {search
+                  ? 'Không tìm thấy tiểu thuyết phù hợp'
+                  : 'Kệ sách đang chờ tác phẩm đầu tay của bạn'}
               </h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
                 {search
@@ -342,7 +429,8 @@ export default function ProjectsPage() {
                       size="lg"
                       className="font-semibold shadow-lg shadow-primary/25 btn-interactive"
                     >
-                      <Plus className="w-4 h-4 mr-2" /> Bắt đầu cuốn sách đầu tiên
+                      <Plus className="w-4 h-4 mr-2" /> Bắt đầu cuốn sách đầu
+                      tiên
                     </Button>
                   </MagicSparkles>
                 </div>
@@ -350,16 +438,21 @@ export default function ProjectsPage() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filtered.map(project => {
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {filtered.map((project) => {
               const progress =
                 project.wordCountGoal && project.wordCount
-                  ? Math.min(100, Math.round(((project.wordCount || 0) / project.wordCountGoal) * 100))
+                  ? Math.min(
+                      100,
+                      Math.round(
+                        ((project.wordCount || 0) / project.wordCountGoal) * 100
+                      )
+                    )
                   : 0;
 
               const statusInfo = statusLabels[project.status] || {
                 label: project.status,
-                color: 'bg-zinc-500/20 text-zinc-300 border-zinc-500/30'
+                color: 'bg-muted text-muted-foreground border-border',
               };
 
               return (
@@ -369,7 +462,10 @@ export default function ProjectsPage() {
                 >
                   <div className="flex gap-4 items-start">
                     {/* 3D Artistic Procedural Book Cover */}
-                    <Link href={`/editor/${project.id}`} className="shrink-0 group/cover">
+                    <Link
+                      href={`/editor/${project.id}`}
+                      className="shrink-0 group/cover"
+                    >
                       <BookCoverArt
                         title={project.title}
                         genre={project.genre}
@@ -384,59 +480,66 @@ export default function ProjectsPage() {
                     <div className="flex-1 min-w-0 flex flex-col justify-between h-full">
                       <div className="space-y-1">
                         <div className="flex items-start justify-between gap-1">
-                          <Link href={`/editor/${project.id}`} className="block truncate">
+                          <Link
+                            href={`/editor/${project.id}`}
+                            className="block truncate"
+                          >
                             <h3 className="font-serif font-bold text-base text-foreground group-hover:text-primary transition-colors truncate tracking-tight">
                               {project.title}
                             </h3>
                           </Link>
-                          {/* Actions */}
-                          <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                          <ActionMenu label={`Thao tác với ${project.title}`}>
                             <Button
                               variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-muted-foreground hover:text-primary"
-                              title="Chỉnh sửa thông tin tác phẩm (Tên, Bìa, Thể loại, Tóm tắt...)"
                               onClick={() => openEditDialog(project)}
                             >
-                              <Edit3 className="w-3 h-3" />
+                              <Edit3 />
+                              Chỉnh sửa tác phẩm
                             </Button>
                             <Button
                               variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                              title="Nhân bản tiểu thuyết"
                               onClick={() => duplicateProject(project.id)}
                             >
-                              <Copy className="w-3 h-3" />
+                              <Copy />
+                              Tạo bản sao
                             </Button>
                             <Button
                               variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                              title="Xóa tiểu thuyết"
-                              onClick={() => deleteProject(project.id)}
+                              className="text-destructive"
+                              onClick={() => setDeletingProject(project)}
                             >
-                              <Trash2 className="w-3 h-3" />
+                              <Trash2 />
+                              Xóa tác phẩm
                             </Button>
-                          </div>
+                          </ActionMenu>
                         </div>
 
                         {project.subtitle && (
-                          <p className="text-xs text-muted-foreground truncate">{project.subtitle}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {project.subtitle}
+                          </p>
                         )}
 
                         <div className="flex flex-wrap gap-1.5 pt-1">
-                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-border/70 font-normal">
-                            {genreLabels[project.genre || 'blank'] || project.genre}
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] py-0 px-1.5 border-border/70 font-normal"
+                          >
+                            {genreLabels[project.genre || 'blank'] ||
+                              project.genre}
                           </Badge>
-                          <Badge variant="outline" className={`text-[10px] py-0 px-1.5 border ${statusInfo.color}`}>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] py-0 px-1.5 border ${statusInfo.color}`}
+                          >
                             {statusInfo.label}
                           </Badge>
                         </div>
                       </div>
 
                       <p className="text-xs text-muted-foreground line-clamp-2 mt-2 leading-relaxed">
-                        {project.description || 'Chưa có tóm tắt nội dung tác phẩm.'}
+                        {project.description ||
+                          'Chưa có tóm tắt nội dung tác phẩm.'}
                       </p>
                     </div>
                   </div>
@@ -445,7 +548,9 @@ export default function ProjectsPage() {
                   <div className="mt-4 pt-3 border-t border-border/50 space-y-2">
                     <div className="flex justify-between items-center text-xs">
                       <div className="flex items-center gap-2 text-muted-foreground font-mono text-[11px]">
-                        <span>{(project.wordCount || 0).toLocaleString()} từ</span>
+                        <span>
+                          {(project.wordCount || 0).toLocaleString()} từ
+                        </span>
                         <span>•</span>
                         <span>{project.chapterCount || 0} chương</span>
                       </div>
@@ -459,19 +564,24 @@ export default function ProjectsPage() {
                       <div className="space-y-1">
                         <div className="w-full bg-muted/60 rounded-full h-1.5 overflow-hidden">
                           <div
-                            className="bg-gradient-to-r from-primary to-indigo-500 h-1.5 rounded-full transition-all duration-500"
+                            className="bg-primary h-1.5 rounded-full transition-all duration-500"
                             style={{ width: `${progress}%` }}
                           />
                         </div>
                         <div className="flex justify-between text-[10px] text-muted-foreground">
                           <span>{progress}% mục tiêu</span>
-                          <span>{(project.wordCountGoal || 0).toLocaleString()} từ</span>
+                          <span>
+                            {(project.wordCountGoal || 0).toLocaleString()} từ
+                          </span>
                         </div>
                       </div>
                     ) : null}
 
                     <div className="pt-1 flex justify-end">
-                      <Link href={`/editor/${project.id}`} className="w-full sm:w-auto">
+                      <Link
+                        href={`/editor/${project.id}`}
+                        className="w-full sm:w-auto"
+                      >
                         <Button
                           size="sm"
                           className="w-full sm:w-auto h-7 text-xs font-semibold px-3 rounded-lg bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-all duration-200"
@@ -490,7 +600,10 @@ export default function ProjectsPage() {
 
       {/* Create Project Modal */}
       <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
-        <DialogContent onClose={() => setShowNewDialog(false)} className="glass-card sm:max-w-md">
+        <DialogContent
+          onClose={() => setShowNewDialog(false)}
+          className="glass-card sm:max-w-md"
+        >
           <DialogHeader>
             <DialogTitle className="font-serif text-xl flex items-center gap-2">
               <SparkleIcon size={18} color="currentColor" />
@@ -503,32 +616,47 @@ export default function ProjectsPage() {
 
           <div className="space-y-4 pt-2">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1">Tên tiểu thuyết *</label>
+              <label className="text-xs font-medium text-foreground block mb-1">
+                Tên tiểu thuyết *
+              </label>
               <Input
                 placeholder="Ví dụ: Thiên Mệnh Kỷ, Đêm Trăng Máu..."
+                aria-label="Tên tác phẩm"
                 value={newProject.title}
-                onChange={e => setNewProject({ ...newProject, title: e.target.value })}
+                onChange={(e) =>
+                  setNewProject({ ...newProject, title: e.target.value })
+                }
                 className="bg-card/70"
               />
             </div>
 
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1">Tóm tắt ngắn (Synopsis)</label>
+              <label className="text-xs font-medium text-foreground block mb-1">
+                Tóm tắt ngắn (Synopsis)
+              </label>
               <Textarea
                 placeholder="Ý tưởng hoặc tóm tắt ngắn về cốt truyện..."
+                aria-label="Tóm tắt tác phẩm"
                 value={newProject.description}
-                onChange={e => setNewProject({ ...newProject, description: e.target.value })}
+                onChange={(e) =>
+                  setNewProject({ ...newProject, description: e.target.value })
+                }
                 className="bg-card/70 h-20 text-xs"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-foreground block mb-1">Thể loại</label>
+                <label className="text-xs font-medium text-foreground block mb-1">
+                  Thể loại
+                </label>
                 <select
                   className="flex h-9 w-full rounded-lg border border-input bg-card/70 px-3 text-xs"
+                  aria-label="Thể loại tác phẩm"
                   value={newProject.genre}
-                  onChange={e => setNewProject({ ...newProject, genre: e.target.value })}
+                  onChange={(e) =>
+                    setNewProject({ ...newProject, genre: e.target.value })
+                  }
                 >
                   <option value="fantasy">Huyền Huyễn (Fantasy)</option>
                   <option value="scifi">Khoa Huyễn (Sci-Fi)</option>
@@ -543,26 +671,41 @@ export default function ProjectsPage() {
               </div>
 
               <div>
-                <label className="text-xs font-medium text-foreground block mb-1">Khung mẫu (Template)</label>
+                <label className="text-xs font-medium text-foreground block mb-1">
+                  Khung mẫu (Template)
+                </label>
                 <select
                   className="flex h-9 w-full rounded-lg border border-input bg-card/70 px-3 text-xs"
+                  aria-label="Khung mẫu"
                   value={newProject.template}
-                  onChange={e => setNewProject({ ...newProject, template: e.target.value })}
+                  onChange={(e) =>
+                    setNewProject({ ...newProject, template: e.target.value })
+                  }
                 >
                   <option value="fantasy">Fantasy (7 chương khởi đầu)</option>
                   <option value="scifi">Sci-Fi (Vũ trụ & thế giới)</option>
                   <option value="romance">Romance (Tuyến tình cảm)</option>
-                  <option value="mystery">Trinh thám (Nút thắt manh mối)</option>
+                  <option value="mystery">
+                    Trinh thám (Nút thắt manh mối)
+                  </option>
                   <option value="blank">Trống (1 chương tự do)</option>
                 </select>
               </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t">
-              <Button variant="outline" size="sm" onClick={() => setShowNewDialog(false)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowNewDialog(false)}
+              >
                 Hủy
               </Button>
-              <Button size="sm" onClick={createProject} className="bg-primary hover:bg-primary/90">
+              <Button
+                size="sm"
+                onClick={createProject}
+                className="bg-primary hover:bg-primary/90"
+              >
                 Tạo tiểu thuyết
               </Button>
             </div>
@@ -571,22 +714,32 @@ export default function ProjectsPage() {
       </Dialog>
 
       {/* Edit Project Modal */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent onClose={() => setShowEditDialog(false)} className="glass-card sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        className="max-w-2xl"
+      >
+        <DialogContent
+          onClose={() => setShowEditDialog(false)}
+          className="glass-card sm:max-w-2xl max-h-[90vh] overflow-y-auto"
+        >
           <DialogHeader>
             <DialogTitle className="font-serif text-xl flex items-center gap-2">
               <Edit3 className="w-5 h-5 text-primary" />
               <span>Chỉnh sửa thông tin tác phẩm</span>
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Tùy chỉnh tên, ảnh bìa, thể loại, thông tin tóm tắt và mục tiêu sáng tác
+              Tùy chỉnh tên, ảnh bìa, thể loại, thông tin tóm tắt và mục tiêu
+              sáng tác
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 pt-2">
             {/* Left: Live Book Cover Preview & Upload */}
             <div className="md:col-span-5 flex flex-col items-center text-center space-y-3 p-3 rounded-2xl bg-muted/20 border border-border/50">
-              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Xem trước bìa sách</span>
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Xem trước bìa sách
+              </span>
               <BookCoverArt
                 title={editForm.title}
                 genre={editForm.genre}
@@ -597,7 +750,7 @@ export default function ProjectsPage() {
               <div className="w-full space-y-2 pt-2">
                 <label
                   htmlFor="cover-upload-input"
-                  className="cursor-pointer flex items-center justify-center gap-1.5 w-full py-1.5 px-3 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-all duration-200"
+                  className="focus-within:ring-2 focus-within:ring-ring min-h-11 cursor-pointer flex items-center justify-center gap-1.5 w-full py-1.5 px-3 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-all duration-200"
                 >
                   <Upload className="w-3.5 h-3.5" />
                   <span>Tải ảnh từ máy tính</span>
@@ -605,8 +758,8 @@ export default function ProjectsPage() {
                     id="cover-upload-input"
                     type="file"
                     accept="image/*"
-                    className="hidden"
-                    onChange={e => {
+                    className="sr-only"
+                    onChange={(e) => {
                       if (e.target.files?.[0]) {
                         handleCoverImageFile(e.target.files[0]);
                         e.target.value = '';
@@ -621,13 +774,16 @@ export default function ProjectsPage() {
                     variant="ghost"
                     size="sm"
                     className="w-full text-xs text-muted-foreground hover:text-destructive h-7"
-                    onClick={() => setEditForm(prev => ({ ...prev, coverUrl: '' }))}
+                    onClick={() =>
+                      setEditForm((prev) => ({ ...prev, coverUrl: '' }))
+                    }
                   >
                     <X className="w-3.5 h-3.5 mr-1" /> Dùng bìa đồ họa mặc định
                   </Button>
                 )}
                 <p className="text-[10px] text-muted-foreground leading-relaxed px-1">
-                  💡 Hỗ trợ tải file ảnh trực tiếp hoặc dán đường dẫn link ảnh online bên cạnh.
+                  💡 Hỗ trợ tải file ảnh trực tiếp hoặc dán đường dẫn link ảnh
+                  online bên cạnh.
                 </p>
               </div>
             </div>
@@ -635,22 +791,32 @@ export default function ProjectsPage() {
             {/* Right: Metadata Form Fields */}
             <div className="md:col-span-7 space-y-3.5">
               <div>
-                <label className="text-xs font-medium text-foreground block mb-1">Tên tiểu thuyết *</label>
+                <label className="text-xs font-medium text-foreground block mb-1">
+                  Tên tiểu thuyết *
+                </label>
                 <Input
                   placeholder="Ví dụ: Thiên Mệnh Kỷ, Đêm Trăng Máu..."
+                  aria-label="Tên tác phẩm"
                   value={editForm.title}
-                  onChange={e => setEditForm({ ...editForm, title: e.target.value })}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, title: e.target.value })
+                  }
                   className="bg-card/70 font-semibold"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-foreground block mb-1">Thể loại tác phẩm</label>
+                  <label className="text-xs font-medium text-foreground block mb-1">
+                    Thể loại tác phẩm
+                  </label>
                   <select
                     className="flex h-9 w-full rounded-lg border border-input bg-card/70 px-3 text-xs"
+                    aria-label="Thể loại tác phẩm"
                     value={editForm.genre}
-                    onChange={e => setEditForm({ ...editForm, genre: e.target.value })}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, genre: e.target.value })
+                    }
                   >
                     <option value="fantasy">Huyền Huyễn (Fantasy)</option>
                     <option value="scifi">Khoa Huyễn (Sci-Fi)</option>
@@ -665,11 +831,16 @@ export default function ProjectsPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-foreground block mb-1">Trạng thái sáng tác</label>
+                  <label className="text-xs font-medium text-foreground block mb-1">
+                    Trạng thái sáng tác
+                  </label>
                   <select
                     className="flex h-9 w-full rounded-lg border border-input bg-card/70 px-3 text-xs"
+                    aria-label="Trạng thái sáng tác"
                     value={editForm.status}
-                    onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, status: e.target.value })
+                    }
                   >
                     <option value="planning">Đang lập dàn ý</option>
                     <option value="drafting">Đang sáng tác</option>
@@ -681,43 +852,70 @@ export default function ProjectsPage() {
               </div>
 
               <div>
-                <label className="text-xs font-medium text-foreground block mb-1">Link ảnh bìa online (URL)</label>
+                <label className="text-xs font-medium text-foreground block mb-1">
+                  Link ảnh bìa online (URL)
+                </label>
                 <Input
+                  aria-label="Link ảnh bìa"
                   placeholder="https://images.unsplash.com/... hoặc link ảnh"
-                  value={editForm.coverUrl.startsWith('data:') ? '(Ảnh đã tải lên từ máy tính)' : editForm.coverUrl}
+                  value={
+                    editForm.coverUrl.startsWith('data:')
+                      ? '(Ảnh đã tải lên từ máy tính)'
+                      : editForm.coverUrl
+                  }
                   disabled={editForm.coverUrl.startsWith('data:')}
-                  onChange={e => setEditForm({ ...editForm, coverUrl: e.target.value })}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, coverUrl: e.target.value })
+                  }
                   className="bg-card/70 text-xs"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-medium text-foreground block mb-1">Phụ đề / Bút danh tác giả</label>
+                <label className="text-xs font-medium text-foreground block mb-1">
+                  Phụ đề / Bút danh tác giả
+                </label>
                 <Input
                   placeholder="Ví dụ: Cuốn 1 - Bút danh tác giả..."
+                  aria-label="Phụ đề / Bút danh"
                   value={editForm.subtitle}
-                  onChange={e => setEditForm({ ...editForm, subtitle: e.target.value })}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, subtitle: e.target.value })
+                  }
                   className="bg-card/70 text-xs"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-medium text-foreground block mb-1">Tóm tắt tác phẩm (Synopsis)</label>
+                <label className="text-xs font-medium text-foreground block mb-1">
+                  Tóm tắt tác phẩm (Synopsis)
+                </label>
                 <Textarea
                   placeholder="Giới thiệu bối cảnh, nhân vật chính, xung đột mở đầu cốt truyện..."
+                  aria-label="Tóm tắt tác phẩm"
                   value={editForm.description}
-                  onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, description: e.target.value })
+                  }
                   className="bg-card/70 h-20 text-xs"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-medium text-foreground block mb-1">Mục tiêu số từ dự kiến</label>
+                <label className="text-xs font-medium text-foreground block mb-1">
+                  Mục tiêu số từ dự kiến
+                </label>
                 <Input
                   type="number"
                   placeholder="50000"
+                  aria-label="Mục tiêu số từ"
                   value={editForm.wordCountGoal}
-                  onChange={e => setEditForm({ ...editForm, wordCountGoal: parseInt(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setEditForm({
+                      ...editForm,
+                      wordCountGoal: parseInt(e.target.value) || 0,
+                    })
+                  }
                   className="bg-card/70 text-xs"
                 />
               </div>
@@ -725,7 +923,11 @@ export default function ProjectsPage() {
           </div>
 
           <div className="flex justify-end gap-2 pt-4 border-t mt-2">
-            <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowEditDialog(false)}
+            >
               Hủy
             </Button>
             <Button
@@ -735,6 +937,40 @@ export default function ProjectsPage() {
               className="bg-primary hover:bg-primary/90 font-semibold"
             >
               {savingEdit ? 'Đang lưu...' : 'Lưu thay đổi'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(deletingProject)}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeletingProject(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xóa tác phẩm?</DialogTitle>
+            <DialogDescription>
+              “{deletingProject?.title}” cùng các chương và dữ liệu liên quan sẽ
+              bị xóa. Thao tác này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="outline"
+              disabled={deleting}
+              onClick={() => setDeletingProject(null)}
+            >
+              Giữ tác phẩm
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleting}
+              onClick={() =>
+                deletingProject && void deleteProject(deletingProject.id)
+              }
+            >
+              {deleting ? 'Đang xóa…' : 'Xóa tác phẩm'}
             </Button>
           </div>
         </DialogContent>

@@ -7,26 +7,52 @@ import { ConfettiCanvas } from '@/components/vfx/confetti';
 import { SoundProvider } from '@/components/layout/sound-provider';
 import { SyncProvider } from '@/components/layout/sync-provider';
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
-const crimson = Crimson_Pro({ subsets: ['latin'], variable: '--font-crimson' });
+const inter = Inter({
+  subsets: ['latin', 'vietnamese'],
+  variable: '--font-inter',
+  display: 'swap',
+});
+const crimson = Crimson_Pro({
+  subsets: ['latin', 'vietnamese'],
+  variable: '--font-crimson',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'Novelist Studio - Viết tiểu thuyết chuyên nghiệp',
-  description: 'Web app viết tiểu thuyết chuyên nghiệp, tích hợp AI, chạy 24/7 miễn phí trên Cloudflare',
-  keywords: ['viết tiểu thuyết', 'novel writing', 'AI writing', 'scrivener', 'notion for writers'],
+  description:
+    'Web app viết tiểu thuyết chuyên nghiệp, tích hợp AI, chạy 24/7 miễn phí trên Cloudflare',
+  keywords: [
+    'viết tiểu thuyết',
+    'novel writing',
+    'AI writing',
+    'scrivener',
+    'notion for writers',
+  ],
   authors: [{ name: 'Novelist Studio' }],
   openGraph: {
     title: 'Novelist Studio',
     description: 'Công cụ viết tiểu thuyết chuyên nghiệp cho nhà văn Việt Nam',
-    type: 'website'
-  }
+    type: 'website',
+  },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="vi" suppressHydrationWarning>
-      <body className={`${inter.variable} ${crimson.variable} font-sans antialiased`}>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+      <body
+        className={`${inter.variable} ${crimson.variable} font-sans antialiased`}
+      >
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem
+          themes={['light', 'dark', 'sepia']}
+        >
           <SoundProvider>
             <SyncProvider>
               {children}
