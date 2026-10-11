@@ -200,9 +200,27 @@ function extractPureText(node: any): string {
   return '';
 }
 
+export function isRecoveryChapter(c: any): boolean {
+  if (!c) return false;
+  const id = String(c.id || '');
+  const title = String(c.title || '').trim();
+  const lowerTitle = title.toLowerCase();
+
+  // 1. Explicit recovery ID prefix
+  if (id.startsWith('recovery_') || id.includes('_recovery_')) return true;
+
+  // 2. Legacy server recovery card title pattern: "Khôi phục – [Title] – [Device] – [Timestamp]"
+  if (/^khôi phục\s*[–\-—]\s*.+/i.test(title)) return true;
+
+  // 3. Device recovery label in title: "... (Bản khôi phục ...)"
+  if (lowerTitle.includes('bản khôi phục') || lowerTitle.includes('thẻ khôi phục')) return true;
+
+  return false;
+}
+
 /** Derive statistics from the same active chapter list used by document tabs. */
 export function getActiveChapters(chapters: any[], tombstones: Record<string, number> = {}): any[] {
-  return chapters.filter(c => c?.id && !tombstones[c.id] && !tombstones[c.projectId])
+  return chapters.filter(c => c?.id && !tombstones[c.id] && !tombstones[c.projectId] && !isRecoveryChapter(c))
     .map(c => ({ ...c, wordCount: c.content !== undefined && c.content !== null
       ? countWords(c.content) : Math.max(0, Number(c.wordCount) || 0) }));
 }
@@ -392,6 +410,11 @@ export function mergeWorkspaces(
   const chapterMap = new Map<string, any>();
   for (const c of localChapters) {
     if (!c?.id) continue;
+    if (isRecoveryChapter(c)) {
+      mergedTombstones[c.id] = Math.max(mergedTombstones[c.id] || 0, now);
+      hasLocalChanges = true;
+      continue;
+    }
     const cUp = Number(c.updatedAt || c.createdAt || 0);
     if (isDeleted(c.id, c.projectId, cUp)) {
       hasLocalChanges = true;
@@ -402,6 +425,11 @@ export function mergeWorkspaces(
 
   for (const rc of remoteChapters) {
     if (!rc?.id) continue;
+    if (isRecoveryChapter(rc)) {
+      mergedTombstones[rc.id] = Math.max(mergedTombstones[rc.id] || 0, now);
+      hasRemoteChanges = true;
+      continue;
+    }
     const remoteUpdated = Number(rc.updatedAt || rc.createdAt || 0);
     if (isDeleted(rc.id, rc.projectId, remoteUpdated)) {
       hasRemoteChanges = true;

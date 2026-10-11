@@ -73,6 +73,19 @@ async function rejectIfAnyChangedChapterIsLocked(c: any, chapterIds: string[]) {
   return null;
 }
 
+export function isRecoveryChapter(c: any): boolean {
+  if (!c) return false;
+  const id = String(c.id || '');
+  const title = String(c.title || '').trim();
+  const lowerTitle = title.toLowerCase();
+
+  if (id.startsWith('recovery_') || id.includes('_recovery_')) return true;
+  if (/^khôi phục\s*[–\-—]\s*.+/i.test(title)) return true;
+  if (lowerTitle.includes('bản khôi phục') || lowerTitle.includes('thẻ khôi phục')) return true;
+
+  return false;
+}
+
 chapters.use('*', authMiddleware);
 
 // GET /api/projects/:projectId/chapters
@@ -87,7 +100,26 @@ chapters.get('/projects/:projectId/chapters', async (c) => {
 
   const { chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, user.userId, projectId);
   const result = await db.select().from(schema.chapters).where(eq(schema.chapters.projectId, projectId)).orderBy(asc(schema.chapters.orderIndex));
-  const activeChapters = result.filter((ch: any) => !tombstonedChapters.has(ch.id));
+
+  // Purge and durable tombstone any recovery chapters stored in D1
+  const recoveryChapters = result.filter((ch: any) => isRecoveryChapter(ch));
+  if (recoveryChapters.length > 0) {
+    const now = nowTimestamp();
+    for (const rch of recoveryChapters) {
+      await db.delete(schema.chapters).where(eq(schema.chapters.id, rch.id)).catch(() => {});
+      await db.insert(schema.entityTombstones).values({
+        id: generateId(),
+        userId: user.userId,
+        projectId: rch.projectId,
+        entityType: 'chapter',
+        entityId: rch.id,
+        deletedAt: now,
+        deleteOperationId: `purge_recovery_${rch.id}`
+      }).catch(() => {});
+    }
+  }
+
+  const activeChapters = result.filter((ch: any) => !tombstonedChapters.has(ch.id) && !isRecoveryChapter(ch));
   const enriched = activeChapters.map((ch: any) => ({
     ...ch,
     charactersPresent: ch.charactersPresent ? JSON.parse(ch.charactersPresent) : []
@@ -102,6 +134,10 @@ chapters.post('/projects/:projectId/chapters', async (c) => {
   const user = c.get('user');
   const projectId = c.req.param('projectId');
   const body = await c.req.json();
+
+  if (isRecoveryChapter(body)) {
+    return c.json({ error: 'Không thể tạo thẻ khôi phục' }, 400);
+  }
 
   const project = await db.select().from(schema.projects).where(and(eq(schema.projects.id, projectId), eq(schema.projects.userId, user.userId))).limit(1);
   if (project.length === 0) return c.json({ error: 'Project not found' }, 404);

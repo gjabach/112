@@ -1,4 +1,4 @@
-import { getActiveChapters, getProjectChapterStats, mergeWorkspaces } from './sync-core';
+import { getActiveChapters, getProjectChapterStats, mergeWorkspaces, isRecoveryChapter } from './sync-core';
 
 const chapterLayouts = new Map<string, { revision: number; pending: boolean }>();
 
@@ -44,7 +44,13 @@ export function readWorkspaceCache(key: string, fallback: any = []) {
 
 export function getCachedChapters(projectId?: string): any[] {
   const chapters = readWorkspaceCache('novelist_chapters');
-  const active = getActiveChapters(Array.isArray(chapters) ? chapters : [], readWorkspaceCache('novelist_tombstones', {}));
+  const tombstones = readWorkspaceCache('novelist_tombstones', {});
+  const rawList = Array.isArray(chapters) ? chapters : [];
+  const cleanList = rawList.filter(c => !isRecoveryChapter(c));
+  if (cleanList.length !== rawList.length) {
+    localStorage.setItem('novelist_chapters', JSON.stringify(cleanList));
+  }
+  const active = getActiveChapters(cleanList, tombstones);
   const list = projectId ? active.filter(c => c.projectId === projectId) : active;
   if (projectId) {
     return list.slice().sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0) || (a.createdAt ?? 0) - (b.createdAt ?? 0));
@@ -75,10 +81,29 @@ export function notifyWorkspaceChanged() {
 export function cacheChapterList(projectId: string, incoming: any[], authoritativeOrder = false, preserveLayout = false): any[] {
   const local = getCachedChapters(projectId);
   const tombstones = readWorkspaceCache('novelist_tombstones', {});
-  const { merged } = mergeWorkspaces({ chapters: local, tombstones }, { chapters: incoming, tombstones });
+  const now = Date.now();
+  let tombstonesChanged = false;
+  for (const c of incoming) {
+    if (isRecoveryChapter(c)) {
+      tombstones[c.id] = Math.max(tombstones[c.id] || 0, now);
+      tombstonesChanged = true;
+    }
+  }
+  for (const c of local) {
+    if (isRecoveryChapter(c)) {
+      tombstones[c.id] = Math.max(tombstones[c.id] || 0, now);
+      tombstonesChanged = true;
+    }
+  }
+  if (tombstonesChanged) {
+    localStorage.setItem('novelist_tombstones', JSON.stringify(tombstones));
+  }
+  const filteredIncoming = incoming.filter(c => !isRecoveryChapter(c));
+  const filteredLocal = local.filter(c => !isRecoveryChapter(c));
+  const { merged } = mergeWorkspaces({ chapters: filteredLocal, tombstones }, { chapters: filteredIncoming, tombstones });
   const pending = readWorkspaceCache('novelist_pending_chapter_drafts', {});
-  const localById = new Map(local.map(c => [c.id, c]));
-  const incomingById = new Map(incoming.map(c => [c.id, c]));
+  const localById = new Map(filteredLocal.map(c => [c.id, c]));
+  const incomingById = new Map(filteredIncoming.map(c => [c.id, c]));
   const keepLayout = !authoritativeOrder && (preserveLayout || preserveChapterLayout(projectId));
   const chapters = getActiveChapters(merged.chapters.map((c: any) => {
     // A list refresh must never overwrite an editor's pending draft.
@@ -99,7 +124,7 @@ export function cacheChapterList(projectId: string, incoming: any[], authoritati
     const cached = keepLayout ? localById.get(c.id) : undefined;
     return cached ? { ...c, parentId: cached.parentId ?? null, orderIndex: cached.orderIndex } : c;
   });
-  const all = [...getCachedChapters().filter(c => c.projectId !== projectId), ...chapters];
+  const all = [...getCachedChapters().filter(c => c.projectId !== projectId && !isRecoveryChapter(c)), ...chapters.filter(c => !isRecoveryChapter(c))];
   const next = JSON.stringify(all);
   if (localStorage.getItem('novelist_chapters') !== next) {
     localStorage.setItem('novelist_chapters', next);
@@ -116,6 +141,9 @@ export function cacheChapterApiResponse(path: string, data: any, readRevisions?:
       preserveChapterLayout(listMatch[1], readRevisions)) };
   }
   if (data?.chapter?.id && data.chapter.projectId && !path.endsWith('/lock')) {
+    if (isRecoveryChapter(data.chapter)) {
+      return data;
+    }
     // A single chapter snapshot cannot establish the relative project order.
     // Server preorder indexes differ from normalized sibling indexes; even a
     // fresh read/save would otherwise create collisions and move existing rows.

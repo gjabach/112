@@ -12,6 +12,7 @@ import {
   deduplicateConflictBlocks,
   getActiveChapters,
   getProjectChapterStats,
+  isRecoveryChapter,
   type SyncStats,
   type SyncStatus,
   type CloudAccountKeys
@@ -141,12 +142,27 @@ export function exportFullWorkspace() {
   const lastModified = lastModifiedStr ? parseInt(lastModifiedStr, 10) : Date.now();
 
   const rawChapters = getStoredJson('novelist_chapters', []);
-  const sanitizedChapters = getActiveChapters(Array.isArray(rawChapters) ? rawChapters : [], getStoredJson('novelist_tombstones', {})).map((c: any) => ({
+  const tombstones = getStoredJson('novelist_tombstones', {});
+  const now = Date.now();
+  let hasRecovery = false;
+  if (Array.isArray(rawChapters)) {
+    for (const c of rawChapters) {
+      if (isRecoveryChapter(c)) {
+        tombstones[c.id] = Math.max(tombstones[c.id] || 0, now);
+        hasRecovery = true;
+      }
+    }
+  }
+  if (hasRecovery) {
+    localStorage.setItem('novelist_tombstones', JSON.stringify(tombstones));
+    localStorage.setItem('novelist_chapters', JSON.stringify(rawChapters.filter((c: any) => !isRecoveryChapter(c))));
+  }
+
+  const sanitizedChapters = getActiveChapters(Array.isArray(rawChapters) ? rawChapters : [], tombstones).map((c: any) => ({
     ...c,
     updatedAt: Number(c.updatedAt || c.createdAt || lastModified)
   }));
 
-  const tombstones = getStoredJson('novelist_tombstones', {});
   const rawProjects = getStoredJson('novelist_projects', []);
   const sanitizedProjects = Array.isArray(rawProjects) ? rawProjects
     .filter((p: any) => p?.id && !tombstones[p.id])
@@ -192,6 +208,24 @@ export function importFullWorkspace(data: any, merge: boolean = true, layoutRead
     const localTombstones = getStoredJson('novelist_tombstones', {});
     const incomingTombstones = (finalData.tombstones && typeof finalData.tombstones === 'object') ? finalData.tombstones : {};
     const allTombstones: Record<string, number> = { ...localTombstones, ...incomingTombstones };
+    const now = Date.now();
+
+    // Permanently purge any recovery chapters from incoming or local data
+    if (Array.isArray(finalData.chapters)) {
+      for (const ch of finalData.chapters) {
+        if (isRecoveryChapter(ch)) {
+          allTombstones[ch.id] = Math.max(allTombstones[ch.id] || 0, now);
+        }
+      }
+    }
+    const localRawChapters = getStoredJson('novelist_chapters', []);
+    if (Array.isArray(localRawChapters)) {
+      for (const ch of localRawChapters) {
+        if (isRecoveryChapter(ch)) {
+          allTombstones[ch.id] = Math.max(allTombstones[ch.id] || 0, now);
+        }
+      }
+    }
     localStorage.setItem('novelist_tombstones', JSON.stringify(allTombstones));
     finalData.tombstones = allTombstones;
 
@@ -213,7 +247,7 @@ export function importFullWorkspace(data: any, merge: boolean = true, layoutRead
     if (protectedChapterIds.size > 0 && Array.isArray(finalData.chapters)) {
       const localChapters = getStoredJson('novelist_chapters', []);
       const localById = new Map((Array.isArray(localChapters) ? localChapters : [])
-        .filter((c: any) => c?.id && !allTombstones[c.id])
+        .filter((c: any) => c?.id && !allTombstones[c.id] && !isRecoveryChapter(c))
         .map((chapter: any) => [chapter.id, chapter]));
       const seen = new Set<string>();
       finalData = { ...finalData };
@@ -231,7 +265,10 @@ export function importFullWorkspace(data: any, merge: boolean = true, layoutRead
       });
       for (const chapterId of protectedChapterIds) {
         if (!allTombstones[chapterId] && !seen.has(chapterId) && localById.has(chapterId)) {
-          finalData.chapters.push(localById.get(chapterId));
+          const ch = localById.get(chapterId);
+          if (!isRecoveryChapter(ch)) {
+            finalData.chapters.push(ch);
+          }
         }
       }
     }
@@ -283,7 +320,8 @@ export function importFullWorkspace(data: any, merge: boolean = true, layoutRead
       localStorage.setItem('novelist_projects', JSON.stringify(finalData.projects));
     }
     if (Array.isArray(finalData.chapters)) {
-      localStorage.setItem('novelist_chapters', JSON.stringify(finalData.chapters));
+      const cleanChapters = finalData.chapters.filter((c: any) => !isRecoveryChapter(c));
+      localStorage.setItem('novelist_chapters', JSON.stringify(cleanChapters));
     }
     if (Array.isArray(finalData.characters)) {
       localStorage.setItem('novelist_characters', JSON.stringify(finalData.characters));

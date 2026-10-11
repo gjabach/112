@@ -3,8 +3,8 @@ import { eq, inArray, and } from 'drizzle-orm';
 import { schema } from '../lib/db';
 import type { Env } from '../index';
 import { authMiddleware, type AuthUser } from '../middleware/auth';
-import { nowTimestamp } from '../lib/auth';
-import { readActiveLock, publicLock } from './chapters';
+import { nowTimestamp, generateId } from '../lib/auth';
+import { readActiveLock, publicLock, isRecoveryChapter } from './chapters';
 import { countWords } from '../utils/validation';
 import { getAuthoritativeTombstones, getWorkspaceRevision, sha256 } from '../services/lifecycle';
 
@@ -38,11 +38,24 @@ function mergeSyncSnapshots(existingRaw: any, incomingRaw: any) {
   const existing = unwrapWorkspace(existingRaw);
   const incoming = unwrapWorkspace(incomingRaw);
   const chapterMap = new Map<string, any>();
+  const mergedTombstones = { ...(existing.tombstones || {}), ...(incoming.tombstones || {}) };
+  const now = nowTimestamp();
+
   for (const chapter of Array.isArray(existing.chapters) ? existing.chapters : []) {
-    if (chapter?.id) chapterMap.set(chapter.id, { ...chapter });
+    if (chapter?.id) {
+      if (isRecoveryChapter(chapter)) {
+        mergedTombstones[chapter.id] = Math.max(Number(mergedTombstones[chapter.id] || 0), now);
+        continue;
+      }
+      chapterMap.set(chapter.id, { ...chapter });
+    }
   }
   for (const chapter of Array.isArray(incoming.chapters) ? incoming.chapters : []) {
     if (!chapter?.id) continue;
+    if (isRecoveryChapter(chapter)) {
+      mergedTombstones[chapter.id] = Math.max(Number(mergedTombstones[chapter.id] || 0), now);
+      continue;
+    }
     const current = chapterMap.get(chapter.id);
     if (!current) {
       chapterMap.set(chapter.id, { ...chapter });
@@ -66,18 +79,16 @@ function mergeSyncSnapshots(existingRaw: any, incomingRaw: any) {
       updatedAt: Math.max(currentUpdated, incomingUpdated)
     });
   }
-  const mergedTombstones = { ...(existing.tombstones || {}), ...(incoming.tombstones || {}) };
   for (const id of Object.keys(mergedTombstones)) {
     mergedTombstones[id] = Math.max(Number(existing.tombstones?.[id] || 0), Number(incoming.tombstones?.[id] || 0));
     // Tombstones are authoritative: once tombstoned, ID is removed unconditionally (timestamp never resurrects)
     if (chapterMap.has(id)) chapterMap.delete(id);
   }
-  const now = nowTimestamp();
   return {
     ...existing,
     ...incoming,
     projects: mergeList(existing.projects, incoming.projects).filter((p: any) => p?.id && !mergedTombstones[p.id]),
-    chapters: Array.from(chapterMap.values()).filter((c: any) => c?.id && !mergedTombstones[c.id] && !mergedTombstones[c.projectId]),
+    chapters: Array.from(chapterMap.values()).filter((c: any) => c?.id && !mergedTombstones[c.id] && !mergedTombstones[c.projectId] && !isRecoveryChapter(c)),
     characters: mergeList(existing.characters, incoming.characters).filter((c: any) => c?.id && !mergedTombstones[c.id] && !mergedTombstones[c.projectId]),
     entities: mergeList(existing.entities || existing.worldbuilding, incoming.entities || incoming.worldbuilding).filter((e: any) => e?.id && !mergedTombstones[e.id] && !mergedTombstones[e.projectId]),
     timeline: mergeList(existing.timeline || existing.timelineEvents, incoming.timeline || incoming.timelineEvents).filter((t: any) => t?.id && !mergedTombstones[t.id] && !mergedTombstones[t.projectId]),
@@ -106,6 +117,26 @@ const getSyncHandler = async (c: any) => {
   const authoritativeTombstones = await getAuthoritativeTombstones(db, user.userId);
   const workspaceRevision = await getWorkspaceRevision(db, user.userId);
 
+  // Purge any recovery chapter in D1 immediately
+  const recoveryInDb = dbChapters.filter((ch: any) => isRecoveryChapter(ch));
+  if (recoveryInDb.length > 0) {
+    const now = nowTimestamp();
+    for (const rch of recoveryInDb) {
+      await db.delete(schema.chapters).where(eq(schema.chapters.id, rch.id)).catch(() => {});
+      await db.insert(schema.entityTombstones).values({
+        id: generateId(),
+        userId: user.userId,
+        projectId: rch.projectId,
+        entityType: 'chapter',
+        entityId: rch.id,
+        deletedAt: now,
+        deleteOperationId: `purge_recovery_${rch.id}`
+      }).catch(() => {});
+      authoritativeTombstones.chapters.set(rch.id, now);
+      authoritativeTombstones.allMap[rch.id] = now;
+    }
+  }
+
   const rawKv = kv ? await kv.get(`sync:${user.userId}`, 'json') : null;
   const kvData = unwrapWorkspace((rawKv as any)?.data || rawKv);
 
@@ -120,9 +151,9 @@ const getSyncHandler = async (c: any) => {
     });
   }
 
-  // Filter out any chapter in D1 that has a tombstone (defense in depth)
+  // Filter out any chapter in D1 that has a tombstone or is a recovery chapter
   const canonicalChapters = dbChapters
-    .filter((ch: any) => !authoritativeTombstones.chapters.has(ch.id))
+    .filter((ch: any) => !authoritativeTombstones.chapters.has(ch.id) && !isRecoveryChapter(ch))
     .map((ch: any) => ({
       ...ch,
       charactersPresent: ch.charactersPresent ? JSON.parse(ch.charactersPresent) : []
@@ -192,6 +223,26 @@ const postSyncHandler = async (c: any) => {
   const rejectedEntities: Array<{ id: string; type: 'chapter' | 'project'; reason: string }> = [];
   const acceptedOperations: string[] = [];
 
+  // Ingest client tombstones into D1 so client deletions and purges are durable
+  if (data.tombstones && typeof data.tombstones === 'object') {
+    for (const [tombId, tombTime] of Object.entries(data.tombstones)) {
+      if (tombId && !authoritativeTombstones.allMap[tombId]) {
+        const deletedAt = Number(tombTime) || now;
+        await db.insert(schema.entityTombstones).values({
+          id: generateId(),
+          userId: user.userId,
+          projectId: 'unknown',
+          entityType: 'chapter',
+          entityId: tombId,
+          deletedAt,
+          deleteOperationId: `client_tomb_${tombId}`
+        }).catch(() => {});
+        authoritativeTombstones.chapters.set(tombId, deletedAt);
+        authoritativeTombstones.allMap[tombId] = deletedAt;
+      }
+    }
+  }
+
   // 2. Fetch user's existing projects and chapters from D1
   const existingProjects = await db.select().from(schema.projects).where(eq(schema.projects.userId, user.userId));
   const existingProjectMap = new Map<string, any>(existingProjects.map((p: any) => [p.id, p]));
@@ -242,7 +293,29 @@ const postSyncHandler = async (c: any) => {
   for (const chapter of incomingChapters) {
     if (!chapter?.id) continue;
 
-    // A. Tombstone check: DO NOT RE-INSERT OR UPDATE DELETED CHAPTERS!
+    // A. Recovery chapter check: NEVER INSERT, UPDATE, OR KEEP RECOVERY CARDS IN D1!
+    if (isRecoveryChapter(chapter)) {
+      if (existingChapterMap.has(chapter.id)) {
+        await db.delete(schema.chapters).where(eq(schema.chapters.id, chapter.id)).catch(() => {});
+        existingChapterMap.delete(chapter.id);
+        hasMutations = true;
+      }
+      await db.insert(schema.entityTombstones).values({
+        id: generateId(),
+        userId: user.userId,
+        projectId: chapter.projectId || 'unknown',
+        entityType: 'chapter',
+        entityId: chapter.id,
+        deletedAt: now,
+        deleteOperationId: `purge_recovery_${chapter.id}`
+      }).catch(() => {});
+      authoritativeTombstones.chapters.set(chapter.id, now);
+      authoritativeTombstones.allMap[chapter.id] = now;
+      rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: 'RECOVERY_DISABLED' });
+      continue;
+    }
+
+    // B. Tombstone check: DO NOT RE-INSERT OR UPDATE DELETED CHAPTERS!
     if (authoritativeTombstones.chapters.has(chapter.id)) {
       rejectedEntities.push({ id: chapter.id, type: 'chapter', reason: 'CHAPTER_DELETED' });
       continue;
@@ -366,7 +439,26 @@ const postSyncHandler = async (c: any) => {
     ? await db.select().from(schema.chapters).where(inArray(schema.chapters.projectId, finalProjectIds))
     : [];
 
-  const finalChapters = rawFinalChapters.filter((ch: any) => !authoritativeTombstones.chapters.has(ch.id));
+  // Purge any lingering recovery chapter from D1
+  const recoveryInFinal = rawFinalChapters.filter((ch: any) => isRecoveryChapter(ch));
+  if (recoveryInFinal.length > 0) {
+    for (const rch of recoveryInFinal) {
+      await db.delete(schema.chapters).where(eq(schema.chapters.id, rch.id)).catch(() => {});
+      await db.insert(schema.entityTombstones).values({
+        id: generateId(),
+        userId: user.userId,
+        projectId: rch.projectId,
+        entityType: 'chapter',
+        entityId: rch.id,
+        deletedAt: now,
+        deleteOperationId: `purge_recovery_${rch.id}`
+      }).catch(() => {});
+      authoritativeTombstones.chapters.set(rch.id, now);
+      authoritativeTombstones.allMap[rch.id] = now;
+    }
+  }
+
+  const finalChapters = rawFinalChapters.filter((ch: any) => !authoritativeTombstones.chapters.has(ch.id) && !isRecoveryChapter(ch));
 
   const canonicalChapters = finalChapters.map((ch: any) => ({
     ...ch,

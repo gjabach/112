@@ -25,6 +25,7 @@ import {
   readWorkspaceCache,
   setChapterLayoutPending,
 } from '@/lib/workspace-cache';
+import { isRecoveryChapter } from '@/lib/sync-core';
 import { createTabDropQueue } from '@/lib/tab-drop-queue';
 import { executeAIChat } from '@/lib/ai';
 import { toast } from 'sonner';
@@ -137,8 +138,9 @@ export default function ChapterEditorPage() {
     (next: any[] | ((current: any[]) => any[])) => {
       const chapters =
         typeof next === 'function' ? next(allChaptersRef.current) : next;
-      allChaptersRef.current = chapters;
-      setAllChaptersState(chapters);
+      const clean = Array.isArray(chapters) ? chapters.filter((c: any) => !isRecoveryChapter(c)) : [];
+      allChaptersRef.current = clean;
+      setAllChaptersState(clean);
     },
     []
   );

@@ -51,6 +51,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { playPopSound, playSuccessSound, playDeleteSound } from '@/lib/sound';
+import { isRecoveryChapter } from '@/lib/sync-core';
+import { recordTombstone, pushSync } from '@/lib/sync';
 
 export interface ChapterTab {
   id: string;
@@ -576,19 +578,40 @@ export function DocumentTabsSidebar({
     }
   });
 
-  const effectiveChapters = chapters;
+  const effectiveChapters = useMemo(
+    () => (chapters || []).filter((c) => !isRecoveryChapter(c)),
+    [chapters]
+  );
 
   const recoveryTabs = useMemo(
-    () =>
-      effectiveChapters.filter(
-        (c) =>
-          c.id.startsWith('recovery_') ||
-          c.title.toLowerCase().includes('khôi phục') ||
-          c.title.toLowerCase().includes('bản khôi phục')
-      ),
-    [effectiveChapters]
+    () => (chapters || []).filter((c) => isRecoveryChapter(c)),
+    [chapters]
   );
   const [cleaningUp, setCleaningUp] = useState(false);
+
+  // Instantly and permanently purge any lingering recovery tabs
+  useEffect(() => {
+    if (recoveryTabs.length > 0) {
+      for (const tab of recoveryTabs) {
+        recordTombstone(tab.id);
+        void onDeleteTab(tab.id).catch(() => {});
+      }
+      try {
+        const raw = localStorage.getItem('novelist_chapters');
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const clean = list.filter((c: any) => !isRecoveryChapter(c));
+            if (clean.length !== list.length) {
+              localStorage.setItem('novelist_chapters', JSON.stringify(clean));
+              window.dispatchEvent(new CustomEvent('novelist-workspace-updated'));
+            }
+          }
+        }
+      } catch {}
+      void pushSync().catch(() => {});
+    }
+  }, [recoveryTabs, onDeleteTab]);
 
   const toggleOutlineVisibility = (tabId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();

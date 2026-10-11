@@ -123,6 +123,19 @@ function unwrapWorkspace(data: any): any {
   return data;
 }
 
+function isRecoveryChapter(c: any): boolean {
+  if (!c) return false;
+  const id = String(c.id || '');
+  const title = String(c.title || '').trim();
+  const lowerTitle = title.toLowerCase();
+
+  if (id.startsWith('recovery_') || id.includes('_recovery_')) return true;
+  if (/^khôi phục\s*[–\-—]\s*.+/i.test(title)) return true;
+  if (lowerTitle.includes('bản khôi phục') || lowerTitle.includes('thẻ khôi phục')) return true;
+
+  return false;
+}
+
 function mergeWorkspaces(
   local: any, 
   remote: any
@@ -201,6 +214,11 @@ function mergeWorkspaces(
   const chapterMap = new Map<string, any>();
   for (const c of localChapters) {
     if (!c?.id) continue;
+    if (isRecoveryChapter(c)) {
+      mergedTombstones[c.id] = Math.max(mergedTombstones[c.id] || 0, now);
+      hasLocalChanges = true;
+      continue;
+    }
     const cUp = Number(c.updatedAt || c.createdAt || 0);
     if (isDeleted(c.id, c.projectId, cUp)) {
       hasLocalChanges = true;
@@ -211,6 +229,11 @@ function mergeWorkspaces(
 
   for (const rc of remoteChapters) {
     if (!rc?.id) continue;
+    if (isRecoveryChapter(rc)) {
+      mergedTombstones[rc.id] = Math.max(mergedTombstones[rc.id] || 0, now);
+      hasRemoteChanges = true;
+      continue;
+    }
     const remoteUpdated = Number(rc.updatedAt || rc.createdAt || 0);
     if (isDeleted(rc.id, rc.projectId, remoteUpdated)) {
       hasRemoteChanges = true;
@@ -512,6 +535,17 @@ export async function onRequestGet({ request }: { request: Request }) {
       unifiedRemote = merged;
     }
 
+    if (Array.isArray(unifiedRemote.chapters)) {
+      const cleanChapters = unifiedRemote.chapters.filter((c: any) => !isRecoveryChapter(c));
+      for (const ch of unifiedRemote.chapters) {
+        if (isRecoveryChapter(ch)) {
+          if (!unifiedRemote.tombstones) unifiedRemote.tombstones = {};
+          unifiedRemote.tombstones[ch.id] = Math.max(Number(unifiedRemote.tombstones[ch.id] || 0), Date.now());
+        }
+      }
+      unifiedRemote.chapters = cleanChapters;
+    }
+
     return new Response(JSON.stringify({
       success: true,
       lastModified: unifiedRemote.lastModified || Date.now(),
@@ -570,6 +604,17 @@ export async function onRequestPost({ request }: { request: Request }) {
     if (existingCloudData) {
       const { merged } = mergeWorkspaces(existingCloudData, data);
       finalDataToStore = merged;
+    }
+
+    if (Array.isArray(finalDataToStore.chapters)) {
+      const cleanChapters = finalDataToStore.chapters.filter((c: any) => !isRecoveryChapter(c));
+      for (const ch of finalDataToStore.chapters) {
+        if (isRecoveryChapter(ch)) {
+          if (!finalDataToStore.tombstones) finalDataToStore.tombstones = {};
+          finalDataToStore.tombstones[ch.id] = Math.max(Number(finalDataToStore.tombstones[ch.id] || 0), now);
+        }
+      }
+      finalDataToStore.chapters = cleanChapters;
     }
 
     finalDataToStore.lastModified = Math.max(Number(data.lastModified || 0), Number(existingCloudData?.lastModified || 0), now);
