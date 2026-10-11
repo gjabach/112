@@ -72,6 +72,7 @@ projects.post('/', async (c) => {
 
   // If template, create initial chapters based on template
   const template = parsed.data.template;
+  let createdChapterCount = 1;
   if (template && template !== 'blank') {
     const templates: Record<string, string[]> = {
       'fantasy': ['Mở đầu - Lời tiên tri', 'Thế giới mới', 'Thử thách đầu tiên', 'Đồng minh & Kẻ thù', 'Bí mật cổ xưa', 'Trận chiến quyết định', 'Kết thúc & Khởi đầu mới'],
@@ -80,6 +81,7 @@ projects.post('/', async (c) => {
       'mystery': ['Vụ án', 'Hiện trường', 'Nghi phạm', 'Manh mối', 'Bẻ lái', 'Sự thật', 'Công lý'],
     };
     const chapterTitles = templates[template] || ['Chương 1'];
+    createdChapterCount = chapterTitles.length;
     for (let i = 0; i < chapterTitles.length; i++) {
       await db.insert(schema.chapters).values({
         id: generateId(),
@@ -114,7 +116,7 @@ projects.post('/', async (c) => {
     });
   }
 
-  return c.json({ project: { ...newProject, settings: JSON.parse(newProject.settings), wordCount: 0, chapterCount: 1 } }, 201);
+  return c.json({ project: { ...newProject, settings: JSON.parse(newProject.settings), wordCount: 0, chapterCount: createdChapterCount } }, 201);
 });
 
 // GET /api/projects/:id

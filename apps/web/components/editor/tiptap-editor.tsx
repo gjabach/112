@@ -43,6 +43,7 @@ interface TiptapEditorProps {
   placeholder?: string;
   editable?: boolean;
   onHeadingsChange?: (headings: EditorHeading[]) => void;
+  zenTyping?: boolean;
 }
 
 function formatPlainTextToHtml(text: string): string {
@@ -139,6 +140,7 @@ export function TiptapEditor({
   placeholder = 'Bắt đầu viết...',
   editable = true,
   onHeadingsChange,
+  zenTyping = false,
 }: TiptapEditorProps) {
   const lastEmittedContentRef = useRef<string | null>(null);
   const lastUserTypingTimeRef = useRef<number>(0);
@@ -501,7 +503,11 @@ export function TiptapEditor({
     <div className="flex flex-col h-full min-h-0 overflow-hidden relative">
       {/* Docked Formatting Toolbar */}
       <div
-        className={`studio-editor-toolbar shrink-0 border-b bg-card px-2 sm:px-3 py-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar flex-nowrap z-10 shadow-xs ${!editable ? 'opacity-60 pointer-events-none' : ''}`}
+        className={`studio-editor-toolbar shrink-0 border-b bg-card px-2 sm:px-3 py-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar flex-nowrap z-10 shadow-xs transition-opacity duration-300 ${
+          zenTyping
+            ? 'opacity-10 hover:opacity-100 pointer-events-none hover:pointer-events-auto'
+            : 'opacity-100'
+        } ${!editable ? 'opacity-60 pointer-events-none' : ''}`}
         aria-disabled={!editable}
       >
         <Button
@@ -650,11 +656,22 @@ export function TiptapEditor({
       </div>
 
       {/* Independently Scrollable Manuscript Canvas */}
-      <div className="flex-1 overflow-y-auto p-0 md:p-8 min-h-0">
+      <div className="flex-1 overflow-y-auto p-0 md:p-8 min-h-0 relative">
         <EditorContent
           editor={editor}
-          className="studio-manuscript mx-auto focus:outline-none min-h-[60vh] text-base sm:text-lg"
+          className="studio-manuscript mx-auto focus:outline-none min-h-[60vh] text-base sm:text-lg font-serif leading-relaxed"
         />
+
+        {/* Floating Zen Writing Metrics Badge */}
+        <div
+          className={`hidden sm:flex items-center gap-2 fixed sm:absolute bottom-3 right-4 px-3 py-1 rounded-full border border-border/60 bg-background/80 backdrop-blur-md shadow-xs text-[11px] font-mono text-muted-foreground transition-opacity duration-300 select-none z-10 ${
+            zenTyping ? 'opacity-15 hover:opacity-100 hover:pointer-events-auto' : 'opacity-85'
+          }`}
+        >
+          <span>{(editor.storage?.characterCount?.words?.() ?? 0).toLocaleString()} từ</span>
+          <span className="opacity-40">•</span>
+          <span>~{Math.max(1, Math.round((editor.storage?.characterCount?.words?.() ?? 0) / 220))} phút đọc</span>
+        </div>
       </div>
 
       {/* Google Docs Style Find & Replace Floating Dialog */}

@@ -308,6 +308,11 @@
   border: 1px solid hsl(var(--border) / 0.7);
   box-shadow: 0 8px 36px hsl(var(--foreground) / 0.03);
   border-radius: 8px;
+  font-family: var(--font-crimson), Georgia, serif;
+}
+.studio-manuscript .ProseMirror {
+  font-family: var(--font-crimson), Georgia, serif;
+  line-height: 1.85;
 }
 .studio-editor {
   height: 100dvh;

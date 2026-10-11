@@ -95,6 +95,8 @@ export const useAuthStore = create<AuthState>()(
           localStorage.removeItem('novelist_outlines');
           localStorage.removeItem('novelist_tombstones');
           localStorage.removeItem('novelist_wiki_articles');
+          localStorage.removeItem('novelist_pending_chapter_drafts');
+          localStorage.removeItem('novelist_pending_recoveries');
           localStorage.removeItem('novelist_last_modified');
           localStorage.removeItem('novelist_last_synced');
 

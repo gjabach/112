@@ -122,11 +122,15 @@ app.get('/api/stats/overview', async (c) => {
   const { eq } = await import('drizzle-orm');
   const { schema } = await import('./lib/db');
 
+  const { getAuthoritativeTombstones } = await import('./services/lifecycle');
+  const { projects: tombstonedProjects, chapters: tombstonedChapters } = await getAuthoritativeTombstones(db, payload.userId);
+
   const projects = await db.select().from(schema.projects).where(eq(schema.projects.userId, payload.userId));
+  const activeProjects = projects.filter((p: any) => !tombstonedProjects.has(p.id));
   
   let totalWords = 0;
   let totalChapters = 0;
-  const projectIds = projects.map((p: any) => p.id);
+  const projectIds = activeProjects.map((p: any) => p.id);
 
   if (projectIds.length > 0) {
     const { inArray } = await import('drizzle-orm');
@@ -135,13 +139,14 @@ app.get('/api/stats/overview', async (c) => {
       wordCount: schema.chapters.wordCount
     }).from(schema.chapters).where(inArray(schema.chapters.projectId, projectIds));
 
-    totalChapters = chs.length;
-    totalWords = chs.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
+    const activeChapters = chs.filter((ch: any) => !tombstonedChapters.has(ch.id));
+    totalChapters = activeChapters.length;
+    totalWords = activeChapters.reduce((sum: number, ch: any) => sum + (ch.wordCount || 0), 0);
   }
 
   return c.json({
     stats: {
-      totalProjects: projects.length,
+      totalProjects: activeProjects.length,
       totalWords,
       totalChapters
     }

@@ -45,7 +45,13 @@ import {
   LockKeyhole,
   WifiOff,
   RefreshCw,
+  SlidersHorizontal,
+  Feather,
+  Moon,
+  Sun,
+  BookOpen,
 } from 'lucide-react';
+import { StudioInspector } from '@/components/studio/studio-inspector';
 import {
   DocumentTabsSidebar,
   buildTabTree,
@@ -280,6 +286,84 @@ export default function ChapterEditorPage() {
       return next;
     });
   };
+
+  const [showInspector, setShowInspector] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('novelist_inspector_open');
+      if (saved !== null) return saved === 'true';
+      return window.innerWidth >= 1280;
+    }
+    return true;
+  });
+
+  const toggleInspector = () => {
+    setShowInspector((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('novelist_inspector_open', String(next));
+      }
+      return next;
+    });
+  };
+
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+
+  // Zen Mode state (distraction-free focus writing)
+  const [zenModeEnabled, setZenModeEnabled] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('novelist_zen_mode_enabled');
+      if (saved !== null) return saved === 'true';
+    }
+    return true;
+  });
+
+  const toggleZenMode = () => {
+    setZenModeEnabled((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('novelist_zen_mode_enabled', String(next));
+      }
+      toast.info(next ? 'Đã bật Zen Mode (tự làm mờ công cụ khi gõ)' : 'Đã tắt Zen Mode');
+      return next;
+    });
+  };
+
+  const [isZenTyping, setIsZenTyping] = useState(false);
+  const zenTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const triggerZenTyping = useCallback(() => {
+    if (!zenModeEnabled) return;
+    setIsZenTyping(true);
+    if (zenTypingTimerRef.current) clearTimeout(zenTypingTimerRef.current);
+    zenTypingTimerRef.current = setTimeout(() => {
+      setIsZenTyping(false);
+    }, 2500);
+  }, [zenModeEnabled]);
+
+  const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!lastMousePosRef.current) {
+        lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      const dx = Math.abs(e.clientX - lastMousePosRef.current.x);
+      const dy = Math.abs(e.clientY - lastMousePosRef.current.y);
+      if (dx < 6 && dy < 6) return;
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+
+      if (isZenTyping) {
+        setIsZenTyping(false);
+        if (zenTypingTimerRef.current) clearTimeout(zenTypingTimerRef.current);
+      }
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      if (zenTypingTimerRef.current) clearTimeout(zenTypingTimerRef.current);
+    };
+  }, [isZenTyping]);
 
   const [mobileTabsOpen, setMobileTabsOpen] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
@@ -663,6 +747,7 @@ export default function ChapterEditorPage() {
     chapterId,
     fetchChapterData,
     projectId,
+    router,
     tabDropQueue,
     transitionLockState,
   ]);
@@ -920,7 +1005,7 @@ export default function ChapterEditorPage() {
       saveChainRef.current = queued;
       await queued;
     },
-    [chapterId, fetchChapterData, handleLockLost, transitionLockState]
+    [chapterId, fetchChapterData, handleLockLost, projectId, transitionLockState]
   );
   saveChapterRef.current = saveChapter;
 
@@ -967,7 +1052,7 @@ export default function ChapterEditorPage() {
         )
       );
     }
-  }, [liveHeadings, chapterId]);
+  }, [liveHeadings, chapterId, setAllChapters]);
 
   // Global Ctrl+S / Cmd+S save shortcut
   useEffect(() => {
@@ -1435,7 +1520,11 @@ export default function ChapterEditorPage() {
     <MechKeyboardProvider>
       <div className="studio-editor overflow-hidden bg-background flex flex-col">
         {/* Top Header */}
-        <header className="shrink-0 border-b bg-card z-30">
+        <header
+          className={`shrink-0 border-b bg-card z-30 transition-opacity duration-300 ${
+            isZenTyping ? 'opacity-10 hover:opacity-100 pointer-events-none hover:pointer-events-auto' : 'opacity-100'
+          }`}
+        >
           <div className="flex items-center gap-2 px-3 py-2 sm:px-5">
             <Button
               variant="ghost"
@@ -1487,6 +1576,50 @@ export default function ChapterEditorPage() {
             />
             <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
               <Button
+                variant={zenModeEnabled ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={toggleZenMode}
+                className={`h-7 sm:h-8 px-2 sm:px-2.5 text-xs gap-1.5 transition-all ${
+                  zenModeEnabled
+                    ? 'border-primary/40 text-primary bg-primary/10'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                title={
+                  zenModeEnabled
+                    ? 'Zen Mode đang BẬT: Thanh công cụ tự động làm mờ khi gõ'
+                    : 'Bật Zen Mode siêu tập trung'
+                }
+              >
+                <Feather className="w-3.5 h-3.5" />
+                <span className="hidden xl:inline">Zen Mode</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const nextTheme = theme === 'dark' ? 'light' : theme === 'light' ? 'sepia' : 'dark';
+                  setTheme(nextTheme);
+                  toast.info(
+                    nextTheme === 'dark'
+                      ? 'Giao diện: Mực đêm (Deep Obsidian)'
+                      : nextTheme === 'sepia'
+                        ? 'Giao diện: Sepia (Bản thảo Parchment)'
+                        : 'Giao diện: Giấy ấm (Classic Paper)'
+                  );
+                }}
+                className="h-7 sm:h-8 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground hidden sm:inline-flex"
+                title={`Đổi chủ đề giấy/mực (Hiện tại: ${theme === 'dark' ? 'Mực đêm' : theme === 'sepia' ? 'Sepia Parchment' : 'Giấy ấm'})`}
+              >
+                {theme === 'dark' ? (
+                  <Moon className="w-3.5 h-3.5 text-sky-400" />
+                ) : theme === 'sepia' ? (
+                  <BookOpen className="w-3.5 h-3.5 text-amber-500" />
+                ) : (
+                  <Sun className="w-3.5 h-3.5 text-amber-400" />
+                )}
+                <span className="hidden 2xl:inline capitalize">{theme === 'dark' ? 'Mực đêm' : theme === 'sepia' ? 'Sepia' : 'Giấy ấm'}</span>
+              </Button>
+              <Button
                 variant="outline"
                 size="sm"
                 onClick={handleAIContinue}
@@ -1508,6 +1641,34 @@ export default function ChapterEditorPage() {
               >
                 <Save />
                 <span className="hidden sm:inline">Lưu</span>
+              </Button>
+              <Button
+                variant={showInspector ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={toggleInspector}
+                className={`h-7 sm:h-8 px-2 sm:px-2.5 text-xs gap-1.5 hidden md:inline-flex transition-all ${
+                  showInspector
+                    ? 'border-primary/40 text-primary bg-primary/10'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                title={
+                  showInspector
+                    ? 'Thu gọn Studio Inspector'
+                    : 'Mở Studio Inspector (Codex Wiki, Scene Beats, AI)'
+                }
+                aria-expanded={showInspector}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span className="hidden xl:inline">Inspector</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden"
+                onClick={() => setMobileInspectorOpen(true)}
+                title="Mở Studio Inspector"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
               </Button>
               <ActionMenu label="Công cụ phòng viết">
                 <div
@@ -1576,7 +1737,11 @@ export default function ChapterEditorPage() {
               </ActionMenu>
             </div>
           </div>
-          <div className="flex min-h-8 items-center justify-between gap-3 border-t border-border/50 px-5 py-1 text-[11px]">
+          <div
+            className={`flex min-h-8 items-center justify-between gap-3 border-t border-border/50 px-5 py-1 text-[11px] transition-opacity duration-300 ${
+              isZenTyping ? 'opacity-10 hover:opacity-100' : 'opacity-100'
+            }`}
+          >
             <div role="status" aria-live="polite" className="min-w-0">
               {' '}
               {saveStatus === 'uploading' || saving ? (
@@ -1898,7 +2063,11 @@ export default function ChapterEditorPage() {
             isMovingTab={isMovingTab}
             onReparentTab={handleReparentTab}
             onUpdateEmoji={handleUpdateTabEmoji}
-            className="hidden md:flex"
+            className={`hidden md:flex transition-opacity duration-300 ${
+              isZenTyping
+                ? 'opacity-15 hover:opacity-100 pointer-events-none hover:pointer-events-auto'
+                : 'opacity-100'
+            }`}
           />
 
           {/* Central Editor Canvas */}
@@ -1920,6 +2089,7 @@ export default function ChapterEditorPage() {
                 editable={canEdit}
                 onChange={(newContent) => {
                   if (!canEdit) return;
+                  triggerZenTyping();
                   isDirtyRef.current = true;
                   hasUnsyncedDraftRef.current = true;
                   setSaveStatus('dirty');
@@ -1935,6 +2105,7 @@ export default function ChapterEditorPage() {
                   content={content}
                   onChange={(newContent) => {
                     if (!canEdit) return;
+                    triggerZenTyping();
                     isDirtyRef.current = true;
                     hasUnsyncedDraftRef.current = true;
                     setSaveStatus('dirty');
@@ -1944,6 +2115,7 @@ export default function ChapterEditorPage() {
                     setContent(newContent);
                   }}
                   editable={canEdit}
+                  zenTyping={isZenTyping}
                   onHeadingsChange={setLiveHeadings}
                   placeholder="Bắt đầu viết những dòng văn bản đầu tiên cho thẻ này..."
                 />
@@ -1976,6 +2148,26 @@ export default function ChapterEditorPage() {
               </div>
             )}
           </main>
+
+          {/* Right Sidebar: Studio Inspector (Novelcrafter x Linear 3-Pane Workspace) */}
+          <StudioInspector
+            projectId={projectId}
+            chapterId={chapterId}
+            chapterTitle={title}
+            chapterContent={content}
+            isOpen={showInspector}
+            onToggle={toggleInspector}
+            onInsertText={(insertedText) => {
+              window.dispatchEvent(
+                new CustomEvent('novelist-insert-text', {
+                  detail: { text: insertedText },
+                })
+              );
+            }}
+            className={`hidden md:flex transition-opacity duration-300 ${
+              isZenTyping ? 'opacity-15 hover:opacity-100 pointer-events-none hover:pointer-events-auto' : 'opacity-100'
+            }`}
+          />
 
           {/* Mobile Document Tabs Drawer / Sheet */}
           <Dialog
@@ -2014,6 +2206,33 @@ export default function ChapterEditorPage() {
               onReparentTab={handleReparentTab}
               onUpdateEmoji={handleUpdateTabEmoji}
               className="w-full border-r-0 h-dvh max-h-dvh"
+            />
+          </Dialog>
+
+          {/* Mobile Studio Inspector Drawer */}
+          <Dialog
+            open={mobileInspectorOpen}
+            onOpenChange={setMobileInspectorOpen}
+            drawer
+            className="bg-card"
+          >
+            <DialogTitle className="sr-only">Studio Inspector</DialogTitle>
+            <StudioInspector
+              projectId={projectId}
+              chapterId={chapterId}
+              chapterTitle={title}
+              chapterContent={content}
+              isOpen={true}
+              onToggle={() => setMobileInspectorOpen(false)}
+              onInsertText={(insertedText) => {
+                window.dispatchEvent(
+                  new CustomEvent('novelist-insert-text', {
+                    detail: { text: insertedText },
+                  })
+                );
+                setMobileInspectorOpen(false);
+              }}
+              className="w-full border-l-0 h-dvh max-h-dvh"
             />
           </Dialog>
         </div>

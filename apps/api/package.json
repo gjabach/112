@@ -11,7 +11,7 @@
     "db:migrate": "wrangler d1 migrations apply novelist-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply novelist-db --remote",
     "type-check": "tsc --noEmit",
-    "test": "node --test ../web/lib/sync-pc-mobile-integration.test.mjs"
+    "test": "node --experimental-loader ../../test-loader.mjs --test test/cleanup-dryrun.test.mjs test/regression-chapter-delete.test.mjs ../web/lib/sync-pc-mobile-integration.test.mjs"
   },
   "dependencies": {
     "@novelist/ai-core": "workspace:*",

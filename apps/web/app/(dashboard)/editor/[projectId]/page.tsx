@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,8 @@ import {
   Upload,
   Image as ImageIcon,
   BookOpen,
+  Target,
+  Clock,
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { PageHeader, StudioState } from '@/components/studio/page-header';
@@ -265,6 +267,33 @@ export default function ProjectEditorPage() {
 
   const fetchGenerationRef = useRef(0);
 
+  const fetchData = useCallback(async () => {
+    setFetchError('');
+    const gen = ++fetchGenerationRef.current;
+    try {
+      const [projRes] = await Promise.all([
+        apiFetch(`/api/projects/${projectId}`),
+        apiFetch(`/api/projects/${projectId}/chapters`),
+      ]);
+      if (gen !== fetchGenerationRef.current) return;
+
+      const activeChapters = getCachedChapters(projectId);
+      setProject({
+        ...projRes.project,
+        ...getProjectChapterStats(activeChapters, projectId),
+      });
+      setChapters(activeChapters);
+    } catch (e: any) {
+      if (gen === fetchGenerationRef.current) {
+        setFetchError(e.message || 'Không thể tải dự án');
+      }
+    } finally {
+      if (gen === fetchGenerationRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [projectId]);
+
   useEffect(() => {
     setCurrentProjectId(projectId);
     fetchData();
@@ -298,34 +327,7 @@ export default function ProjectEditorPage() {
       );
       window.removeEventListener('novelist-workspace-updated', handleWorkspace);
     };
-  }, [projectId]);
-
-  const fetchData = async () => {
-    setFetchError('');
-    const gen = ++fetchGenerationRef.current;
-    try {
-      const [projRes] = await Promise.all([
-        apiFetch(`/api/projects/${projectId}`),
-        apiFetch(`/api/projects/${projectId}/chapters`),
-      ]);
-      if (gen !== fetchGenerationRef.current) return;
-
-      const activeChapters = getCachedChapters(projectId);
-      setProject({
-        ...projRes.project,
-        ...getProjectChapterStats(activeChapters, projectId),
-      });
-      setChapters(activeChapters);
-    } catch (e: any) {
-      if (gen === fetchGenerationRef.current) {
-        setFetchError(e.message || 'Không thể tải dự án');
-      }
-    } finally {
-      if (gen === fetchGenerationRef.current) {
-        setLoading(false);
-      }
-    }
-  };
+  }, [projectId, fetchData, setCurrentProjectId]);
 
   const createChapter = async () => {
     if (!newChapterTitle.trim() || creatingChapter) return;
@@ -445,96 +447,165 @@ export default function ProjectEditorPage() {
                 Thêm chương
               </Button>
               {chapters.length > 0 && (
-                <Button asChild>
+                <Button
+                  size="default"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-md gap-2"
+                  asChild
+                >
                   <Link href={'/editor/' + projectId + '/' + chapters[0].id}>
-                    Vào viết <ChevronRight />
+                    <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                    <span>Vào phòng sáng tác</span>
+                    <ChevronRight className="w-4 h-4" />
                   </Link>
                 </Button>
               )}
             </>
           }
         />
-        <div className="mb-8 flex flex-col gap-5 rounded-2xl border bg-card p-5 sm:flex-row sm:p-6">
-          <BookCoverArt
-            title={project.title}
-            genre={project.genre}
-            coverUrl={project.coverUrl}
-            size="sm"
+
+        {/* Book Hero Card with Luxury Radial Glow */}
+        <div className="relative mb-8 rounded-2xl border border-border/80 bg-card p-5 sm:p-6 backdrop-blur-md overflow-hidden shadow-xs">
+          {/* Ambient radial glow background */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-24 -left-24 w-96 h-96 bg-gradient-to-br from-primary/15 via-amber-500/5 to-transparent blur-3xl opacity-50 dark:opacity-40"
           />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Badge variant="outline">
-                {genreLabels[project.genre] || 'Tác phẩm'}
-              </Badge>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => openEditDialog(project)}
-              >
-                <Edit3 />
-                Sửa thông tin & bìa
-              </Button>
-            </div>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground break-words">
-              {project.description ||
-                'Thêm vài dòng giới thiệu cho câu chuyện của bạn.'}
-            </p>
-            <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              <span>
-                <strong>{(project.wordCount || 0).toLocaleString()}</strong>{' '}
-                <span className="text-muted-foreground">từ đã viết</span>
-              </span>
-              <span>
-                <strong>{chapters.length}</strong>{' '}
-                <span className="text-muted-foreground">chương</span>
-              </span>
-              {project.wordCountGoal > 0 && (
-                <span className="text-primary">{goalProgress}% mục tiêu</span>
-              )}
-            </div>
-            {project.wordCountGoal > 0 && (
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full bg-primary"
-                  style={{ width: goalProgress + '%' }}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -bottom-24 -right-24 w-96 h-96 bg-gradient-to-tl from-primary/15 to-transparent blur-3xl opacity-30 dark:opacity-30"
+          />
+
+          <div className="relative flex flex-col gap-6 sm:flex-row items-center sm:items-start">
+            {/* Book Cover Art with 3D shadow and glow spotlight */}
+            <div className="relative group shrink-0">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-2 rounded-xl bg-gradient-to-r from-primary/25 to-amber-500/15 blur-xl opacity-75 group-hover:opacity-100 transition-opacity duration-300"
+              />
+              <div className="relative shadow-2xl rounded-r-lg rounded-l-sm overflow-hidden transform group-hover:scale-[1.02] transition-transform duration-200">
+                <BookCoverArt
+                  title={project.title}
+                  genre={project.genre}
+                  coverUrl={project.coverUrl}
+                  size="md"
                 />
               </div>
-            )}
-          </div>
-        </div>
-        {/* Main Layout Area */}
-        <div className="studio-surface min-w-0 overflow-hidden">
-          {/* Chapters Section (Full-width on mobile when activeTab=chapters, sidebar on desktop) */}
-          <aside className="flex w-full min-w-0 flex-col">
-            <div className="p-3 sm:p-4 border-b space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-sm">
-                  Danh sách chương ({chapters.length})
-                </h2>
-                <span className="text-[11px] text-muted-foreground font-mono">
-                  {(project.wordCount || 0).toLocaleString()} từ
-                </span>
+            </div>
+
+            {/* Project Details & Metric Grid */}
+            <div className="min-w-0 flex-1 space-y-4 w-full">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className="text-xs px-2.5 py-0.5 border-primary/40 text-primary bg-primary/10 font-medium"
+                  >
+                    {genreLabels[project.genre] || 'Tác phẩm'}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="text-xs px-2.5 py-0.5 text-muted-foreground capitalize"
+                  >
+                    {project.status || 'planning'}
+                  </Badge>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => openEditDialog(project)}
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  Sửa thông tin & bìa
+                </Button>
               </div>
 
-              {/* Word goal progress indicator */}
-              {project.wordCountGoal ? (
-                <div className="p-2.5 bg-muted/40 rounded-lg border space-y-1.5">
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-muted-foreground">Mục tiêu:</span>
-                    <span className="font-semibold text-primary">
-                      {goalProgress}% (
-                      {(project.wordCount || 0).toLocaleString()} /{' '}
-                      {project.wordCountGoal.toLocaleString()} từ)
+              <p className="text-sm leading-relaxed text-muted-foreground break-words font-serif">
+                {project.description ||
+                  'Thêm vài dòng giới thiệu cho câu chuyện của bạn.'}
+              </p>
+
+              {/* Luxury Metrics Matrix */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                <div className="p-3.5 rounded-xl border border-border/70 bg-muted/40 hover:bg-muted/60 hover:border-border transition-colors shadow-2xs">
+                  <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block mb-1">
+                    Số từ đã viết
+                  </span>
+                  <span className="text-lg font-bold text-foreground font-mono">
+                    {(project.wordCount || 0).toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl border border-border/70 bg-muted/40 hover:bg-muted/60 hover:border-border transition-colors shadow-2xs">
+                  <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block mb-1">
+                    Mục tiêu tác phẩm
+                  </span>
+                  <span className="text-lg font-bold text-primary font-mono">
+                    {project.wordCountGoal
+                      ? project.wordCountGoal.toLocaleString()
+                      : '50,000'}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl border border-border/70 bg-muted/40 hover:bg-muted/60 hover:border-border transition-colors shadow-2xs">
+                  <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block mb-1">
+                    Tổng số chương
+                  </span>
+                  <span className="text-lg font-bold text-foreground font-mono">
+                    {chapters.length}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl border border-border/70 bg-muted/40 hover:bg-muted/60 hover:border-border transition-colors shadow-2xs">
+                  <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block mb-1">
+                    Thời gian đọc
+                  </span>
+                  <span className="text-lg font-bold text-amber-600 dark:text-amber-400 font-mono">
+                    ~{Math.max(1, Math.round((project.wordCount || 0) / 220))} phút
+                  </span>
+                </div>
+              </div>
+
+              {/* Overall Word Goal Progress Bar */}
+              {project.wordCountGoal > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">Tiến độ mục tiêu:</span>
+                    <span className="font-semibold text-primary font-mono">
+                      {goalProgress}%
                     </span>
                   </div>
-                  <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                  <div className="w-full bg-muted/80 rounded-full h-2 overflow-hidden border border-border/60">
                     <div
                       className="bg-primary h-full rounded-full transition-all duration-300"
                       style={{ width: `${goalProgress}%` }}
                     />
                   </div>
                 </div>
-              ) : null}
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Main Layout Area */}
+        <div className="studio-surface min-w-0 overflow-hidden">
+          {/* Chapters Section */}
+          <aside className="flex w-full min-w-0 flex-col">
+            <div className="p-3 sm:p-4 border-b space-y-2.5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  <h2 className="text-sm font-semibold text-foreground">
+                    Mục lục tác phẩm
+                  </h2>
+                  <Badge variant="secondary" className="text-[10px] px-2 py-0.5 font-mono">
+                    {chapters.length} chương
+                  </Badge>
+                </div>
+                <span className="text-xs text-muted-foreground font-mono">
+                  {(project.wordCount || 0).toLocaleString()} từ đã viết
+                </span>
+              </div>
 
               {/* Search filter */}
               {chapters.length > 3 && (
@@ -545,16 +616,16 @@ export default function ProjectEditorPage() {
                     placeholder="Tìm chương..."
                     value={searchChapter}
                     onChange={(e) => setSearchChapter(e.target.value)}
-                    className="pl-8 h-8 text-xs bg-muted/30"
+                    className="pl-8 h-8 text-xs bg-muted/30 border-border/60"
                   />
                 </div>
               )}
             </div>
 
-            {/* Chapters and Subtabs Tree List */}
-            <div className="p-3 sm:p-5 space-y-2">
+            {/* Chapters Table of Contents */}
+            <div className="p-3 sm:p-5 space-y-4">
               {chapters.length === 0 ? (
-                <div className="p-6 text-center text-xs text-muted-foreground">
+                <div className="p-8 text-center text-xs text-muted-foreground border border-dashed rounded-xl">
                   Chưa có chương nào. Chọn “Thêm chương” để bắt đầu câu chuyện.
                 </div>
               ) : (
