@@ -27,8 +27,8 @@ const app = new Hono<{ Bindings: Env; Variables: { db: any } }>();
 // Global middleware
 app.use('*', corsMiddleware);
 app.use('*', async (c, next) => {
-  // Enforce foreign key constraints in D1
-  if (c.env?.DB) {
+  // Enforce foreign key constraints in D1 (mutating operations only)
+  if (c.env?.DB && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
     try {
       await c.env.DB.prepare('PRAGMA foreign_keys = ON;').run();
     } catch {}

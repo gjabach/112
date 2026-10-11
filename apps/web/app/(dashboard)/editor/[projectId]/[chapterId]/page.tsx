@@ -81,6 +81,7 @@ import {
   resumeAutoSync,
   protectChapterFromSync,
   unprotectChapterFromSync,
+  isAutoSyncPaused,
   registerSyncFlushHandler,
 } from '@/lib/sync';
 import { deduplicateConflictBlocks } from '@/lib/sync-core';
@@ -205,6 +206,10 @@ export default function ChapterEditorPage() {
   const latestSaveRevisionRef = useRef(0);
   const queuedSaveCountRef = useRef(0);
   const lockAcquireInFlightRef = useRef(false);
+  const consecutiveSaveErrorsRef = useRef(0);
+  const consecutiveHeartbeatErrorsRef = useRef(0);
+  const retrySaveTimerRef = useRef<any>(null);
+  const lastOfflineReconnectAttemptRef = useRef(0);
   const saveChapterRef = useRef<
     (
       newContent?: string,
@@ -229,20 +234,35 @@ export default function ChapterEditorPage() {
         getChapters: () => allChaptersRef.current,
         setChapters: setAllChapters,
         saveDrop: async (drop: TabDrop) => {
-          const res = await apiFetch(
-            `/api/projects/${projectId}/chapters/reorder`,
-            {
-              method: 'POST',
-              headers: ownedLockRef.current?.token
-                ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
-                : undefined,
-              body: JSON.stringify({
-                chapterIds: drop.chapterIds,
-                move: { chapterId: drop.chapterId, parentId: drop.parentId },
-              }),
+          let lastError: any;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const res = await apiFetch(
+                `/api/projects/${projectId}/chapters/reorder`,
+                {
+                  method: 'POST',
+                  headers: ownedLockRef.current?.token
+                    ? { 'X-Chapter-Lock-Token': ownedLockRef.current.token }
+                    : undefined,
+                  body: JSON.stringify({
+                    chapterIds: drop.chapterIds,
+                    move: { chapterId: drop.chapterId, parentId: drop.parentId },
+                  }),
+                }
+              );
+              return Array.isArray(res?.chapters) ? res.chapters : undefined;
+            } catch (err: any) {
+              lastError = err;
+              const status = err?.status || (err instanceof RemoteApiError ? err.status : 0);
+              if (status >= 400 && status < 500) {
+                throw err;
+              }
+              if (attempt < 3) {
+                await new Promise((r) => setTimeout(r, 600 * attempt));
+              }
             }
-          );
-          return Array.isArray(res?.chapters) ? res.chapters : undefined;
+          }
+          throw lastError;
         },
         onPendingChange: (pending) => {
           setChapterLayoutPending(projectId, pending);
@@ -261,7 +281,9 @@ export default function ChapterEditorPage() {
           );
         },
         onIdle: () => {
-          void pushSync().catch(() => {});
+          if (!isAutoSyncPaused()) {
+            void pushSync().catch(() => {});
+          }
         },
       }),
     [projectId, setAllChapters]
@@ -531,12 +553,27 @@ export default function ChapterEditorPage() {
             serverVersionRef.current
           );
         }
-        const result = await acquireChapterLock(
-          chapterId,
-          identity,
-          force,
-          force ? visibleLock?.version || '' : ''
-        );
+        let result: any;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            result = await acquireChapterLock(
+              chapterId,
+              identity,
+              force,
+              force ? visibleLock?.version || '' : ''
+            );
+            break;
+          } catch (acqErr: any) {
+            if (acqErr instanceof RemoteApiError && acqErr.status < 500 && acqErr.status !== 0) {
+              throw acqErr;
+            }
+            if (attempt < 2) {
+              await new Promise((r) => setTimeout(r, 600));
+            } else {
+              throw acqErr;
+            }
+          }
+        }
         if (activeChapterIdRef.current !== chapterId) {
           await releaseChapterLock(chapterId, result.lock.token);
           return;
@@ -587,10 +624,13 @@ export default function ChapterEditorPage() {
         } else {
           const probeCheck = await probeApiCapabilities(false);
           setConnectionStatus(probeCheck.status);
-          if (!offlineBaseVersionRef.current)
-            offlineBaseVersionRef.current = { ...serverVersionRef.current };
-          transitionLockState('offline');
-          protectChapterFromSync(chapterId);
+          const lockStillValid = ownedLockRef.current && (ownedLockRef.current.expiresAt > Date.now());
+          if (!lockStillValid) {
+            if (!offlineBaseVersionRef.current)
+              offlineBaseVersionRef.current = { ...serverVersionRef.current };
+            transitionLockState('offline');
+            protectChapterFromSync(chapterId);
+          }
         }
       } finally {
         lockAcquireInFlightRef.current = false;
@@ -620,13 +660,13 @@ export default function ChapterEditorPage() {
       toast.error('Cần đăng nhập lại để tiếp tục đồng bộ');
       return;
     }
-    if (!probe.available) {
-      toast.error('Vẫn chưa kết nối được máy chủ');
-      return;
+    try {
+      await tryAcquireLockRef.current(false);
+      await fetchChapterData(false);
+      toast.success('Đã kết nối lại thành công');
+    } catch {
+      toast.error('Chưa thể kết nối lại máy chủ');
     }
-    toast.success('Đã kết nối máy chủ!');
-    await fetchChapterData(false);
-    await tryAcquireLockRef.current(false);
   }, [fetchChapterData]);
 
   useEffect(() => {
@@ -741,6 +781,12 @@ export default function ChapterEditorPage() {
         );
       }
       if (token) void releaseChapterLock(chapterId, token);
+      if (retrySaveTimerRef.current) {
+        clearTimeout(retrySaveTimerRef.current);
+        retrySaveTimerRef.current = null;
+      }
+      consecutiveSaveErrorsRef.current = 0;
+      consecutiveHeartbeatErrorsRef.current = 0;
       ownedLockRef.current = null;
       resumeAutoSync(chapterId);
       unprotectChapterFromSync(chapterId);
@@ -758,7 +804,7 @@ export default function ChapterEditorPage() {
     if (lockState !== 'offline' || !hasRemoteChapterApi()) return;
     const timer = window.setInterval(() => {
       void tryAcquireLockRef.current(false);
-    }, CHAPTER_LOCK_HEARTBEAT_MS);
+    }, 8000);
     return () => window.clearInterval(timer);
   }, [lockState]);
 
@@ -779,16 +825,21 @@ export default function ChapterEditorPage() {
         const result = await heartbeatChapterLock(chapterId, token);
         if (ownedLockRef.current)
           ownedLockRef.current.expiresAt = result.expiresAt;
+        consecutiveHeartbeatErrorsRef.current = 0;
       } catch (error: any) {
         if (error instanceof RemoteApiError && error.status === 423) {
           await handleLockLost(error.data?.lock || null);
         } else {
-          if (!offlineBaseVersionRef.current)
-            offlineBaseVersionRef.current = { ...serverVersionRef.current };
-          transitionLockState('offline');
-          hasUnsyncedDraftRef.current =
-            hasUnsyncedDraftRef.current || isDirtyRef.current;
-          protectChapterFromSync(chapterId);
+          consecutiveHeartbeatErrorsRef.current = (consecutiveHeartbeatErrorsRef.current || 0) + 1;
+          const isExpired = ownedLockRef.current ? Date.now() >= ownedLockRef.current.expiresAt : true;
+          if (consecutiveHeartbeatErrorsRef.current >= 3 || isExpired) {
+            if (!offlineBaseVersionRef.current)
+              offlineBaseVersionRef.current = { ...serverVersionRef.current };
+            transitionLockState('offline');
+            hasUnsyncedDraftRef.current =
+              hasUnsyncedDraftRef.current || isDirtyRef.current;
+            protectChapterFromSync(chapterId);
+          }
         }
       }
     }, CHAPTER_LOCK_HEARTBEAT_MS);
@@ -897,6 +948,13 @@ export default function ChapterEditorPage() {
               offlineBaseVersionRef.current = { ...serverVersionRef.current };
             setLastSaved(Date.now());
             setSaveStatus('local-saved');
+
+            // Auto-recovery: if remote API is available, silently attempt to reconnect in background
+            const now = Date.now();
+            if (hasRemoteChapterApi() && now - lastOfflineReconnectAttemptRef.current > 5000) {
+              lastOfflineReconnectAttemptRef.current = now;
+              void tryAcquireLockRef.current(false).catch(() => {});
+            }
             return;
           }
           const activeLock = ownedLockRef.current;
@@ -916,6 +974,12 @@ export default function ChapterEditorPage() {
               baseTitleUpdatedAt: serverVersionRef.current.titleUpdatedAt,
             }),
           });
+
+          consecutiveSaveErrorsRef.current = 0;
+          if (retrySaveTimerRef.current) {
+            clearTimeout(retrySaveTimerRef.current);
+            retrySaveTimerRef.current = null;
+          }
 
           const saved = response?.chapter || {};
           const nextVersion = {
@@ -965,7 +1029,9 @@ export default function ChapterEditorPage() {
 
           if (isManual && revision === latestSaveRevisionRef.current)
             pushSync().catch(() => {});
-          else triggerAutoPush(1000);
+          else if (!isAutoSyncPaused()) {
+            triggerAutoPush(15000);
+          }
         } catch (error: any) {
           if (activeChapterIdRef.current !== chapterId) return;
           if (
@@ -984,15 +1050,28 @@ export default function ChapterEditorPage() {
               await fetchChapterData(false);
             }
           } else {
-            if (!offlineBaseVersionRef.current)
-              offlineBaseVersionRef.current = { ...serverVersionRef.current };
-            transitionLockState('offline');
+            consecutiveSaveErrorsRef.current = (consecutiveSaveErrorsRef.current || 0) + 1;
             setSaveStatus('local-saved');
             protectChapterFromSync(chapterId);
-            toast.warning(
-              'Mất kết nối. Bản nháp đang được lưu trên thiết bị này.',
-              { id: 'editor-offline-save' }
-            );
+
+            const lockStillValid = ownedLockRef.current && (ownedLockRef.current.expiresAt > Date.now());
+
+            if (consecutiveSaveErrorsRef.current < 3 && lockStillValid) {
+              if (retrySaveTimerRef.current) clearTimeout(retrySaveTimerRef.current);
+              retrySaveTimerRef.current = setTimeout(() => {
+                if (activeChapterIdRef.current === chapterId && lockStateRef.current === 'owned') {
+                  void saveChapterRef.current(contentRef.current, titleRef.current, false);
+                }
+              }, 2500);
+            } else {
+              if (!offlineBaseVersionRef.current)
+                offlineBaseVersionRef.current = { ...serverVersionRef.current };
+              transitionLockState('offline');
+              toast.warning(
+                'Mất kết nối. Bản nháp đang được lưu trên thiết bị này.',
+                { id: 'editor-offline-save' }
+              );
+            }
           }
         } finally {
           queuedSaveCountRef.current = Math.max(

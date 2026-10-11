@@ -47,38 +47,63 @@ export async function proxyToWorker(req: NextRequest, targetPath: string): Promi
     } catch {}
   }
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+  let workerRes: Response | null = null;
+  let lastErr: any = null;
+  const maxAttempts = 2;
 
-    const workerRes = await fetch(targetUrl, {
-      cache: 'no-store',
-      method: req.method,
-      headers,
-      body,
-      signal: controller.signal,
-      redirect: 'manual'
-    });
-    clearTimeout(timeoutId);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const resHeaders = new Headers();
-    const copyHeaders = ['content-type', 'cache-control', 'etag', 'set-cookie', 'x-request-id'];
-    for (const h of copyHeaders) {
-      const v = workerRes.headers.get(h);
-      if (v) resHeaders.set(h, v);
+      workerRes = await fetch(targetUrl, {
+        cache: 'no-store',
+        method: req.method,
+        headers,
+        body,
+        signal: controller.signal,
+        redirect: 'manual'
+      });
+      clearTimeout(timeoutId);
+
+      // If response is successful, or client error (4xx), or final attempt, break
+      if (workerRes.status < 500 || attempt === maxAttempts) {
+        break;
+      }
+      // On 502/503/504 from upstream worker, wait briefly and retry
+      await new Promise(r => setTimeout(r, 500));
+    } catch (err: any) {
+      lastErr = err;
+      if (attempt === maxAttempts) {
+        const isTimeout = err?.name === 'AbortError';
+        return NextResponse.json({
+          error: isTimeout ? 'Yêu cầu máy chủ backend quá thời gian chờ (timeout)' : 'Không thể kết nối máy chủ backend: ' + (err?.message || 'Lỗi mạng'),
+          code: isTimeout ? 'TIMEOUT' : 'UNREACHABLE'
+        }, { status: isTimeout ? 504 : 502 });
+      }
+      await new Promise(r => setTimeout(r, 500));
     }
+  }
 
-    const resBody = await workerRes.arrayBuffer();
-    return new NextResponse(resBody, {
-      status: workerRes.status,
-      statusText: workerRes.statusText,
-      headers: resHeaders
-    });
-  } catch (err: any) {
-    const isTimeout = err?.name === 'AbortError';
+  if (!workerRes) {
+    const isTimeout = lastErr?.name === 'AbortError';
     return NextResponse.json({
-      error: isTimeout ? 'Yêu cầu máy chủ backend quá thời gian chờ (timeout)' : 'Không thể kết nối máy chủ backend: ' + (err?.message || 'Lỗi mạng'),
+      error: isTimeout ? 'Yêu cầu máy chủ backend quá thời gian chờ (timeout)' : 'Không thể kết nối máy chủ backend',
       code: isTimeout ? 'TIMEOUT' : 'UNREACHABLE'
     }, { status: isTimeout ? 504 : 502 });
   }
+
+  const resHeaders = new Headers();
+  const copyHeaders = ['content-type', 'cache-control', 'etag', 'set-cookie', 'x-request-id'];
+  for (const h of copyHeaders) {
+    const v = workerRes.headers.get(h);
+    if (v) resHeaders.set(h, v);
+  }
+
+  const resBody = await workerRes.arrayBuffer();
+  return new NextResponse(resBody, {
+    status: workerRes.status,
+    statusText: workerRes.statusText,
+    headers: resHeaders
+  });
 }

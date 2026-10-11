@@ -230,11 +230,25 @@ export async function apiFetchRemote(path: string, options: RequestInit = {}): P
   };
   if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`;
 
-  let response: Response;
-  try {
-    response = await fetch(`${base}${normalizedPath}`, { cache: 'no-store', ...options, headers });
-  } catch (error: any) {
-    throw new RemoteApiError(error?.message || 'Không thể kết nối máy chủ', 0, { network: true });
+  let response: Response | null = null;
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      response = await fetch(`${base}${normalizedPath}`, { cache: 'no-store', ...options, headers });
+      if (response.ok || (response.status < 500 && response.status !== 429) || attempt === maxAttempts) {
+        break;
+      }
+      await new Promise(r => setTimeout(r, 400 * Math.pow(1.5, attempt - 1)));
+    } catch (error: any) {
+      if (attempt === maxAttempts) {
+        throw new RemoteApiError(error?.message || 'Không thể kết nối máy chủ', 0, { network: true });
+      }
+      await new Promise(r => setTimeout(r, 400 * Math.pow(1.5, attempt - 1)));
+    }
+  }
+
+  if (!response) {
+    throw new RemoteApiError('Không thể kết nối máy chủ', 0, { network: true });
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -1647,11 +1661,33 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
       const normalizedBase = customApiUrl.replace(/\/+$/, '');
       const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-      const res = await fetch(`${normalizedBase}${normalizedPath}`, { cache: 'no-store', ...options, headers });
-      if (res.ok) return isBrowser ? cacheChapterApiResponse(path, await res.json(), layoutRevisions) : await res.json();
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
+
+      let res: Response | null = null;
+      let ct = '';
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          res = await fetch(`${normalizedBase}${normalizedPath}`, { cache: 'no-store', ...options, headers });
+          ct = res.headers.get('content-type') || '';
+          if (res.ok || (res.status < 500 && res.status !== 429) || attempt === maxAttempts) {
+            break;
+          }
+          await new Promise(r => setTimeout(r, 400 * Math.pow(1.5, attempt - 1)));
+        } catch (fetchErr: any) {
+          if (attempt === maxAttempts) throw fetchErr;
+          await new Promise(r => setTimeout(r, 400 * Math.pow(1.5, attempt - 1)));
+        }
+      }
+
+      if (res && res.ok) return isBrowser ? cacheChapterApiResponse(path, await res.json(), layoutRevisions) : await res.json();
+      if (res) {
+        const errData = ct.includes('application/json') ? await res.json().catch(() => ({})) : {};
+        throw new RemoteApiError(errData.error || errData.message || `Lỗi máy chủ (${res.status})`, res.status, errData);
+      }
     } catch (e: any) {
+      if (e instanceof RemoteApiError && (e.status < 500 || e.status === 429)) {
+        throw e;
+      }
       if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('NetworkError')) {
         throw e;
       }
@@ -1669,12 +1705,29 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       };
       if (token && !headers['Authorization']) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(path, {
-        cache: 'no-store',
-        ...options,
-        headers
-      });
-      const ct = res.headers.get('content-type') || '';
+      let res: Response | null = null;
+      let ct = '';
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          res = await fetch(path, {
+            cache: 'no-store',
+            ...options,
+            headers
+          });
+          ct = res.headers.get('content-type') || '';
+          if (res.ok || (res.status < 500 && res.status !== 429) || attempt === maxAttempts) {
+            break;
+          }
+          await new Promise(r => setTimeout(r, 400 * Math.pow(1.5, attempt - 1)));
+        } catch (fetchErr: any) {
+          if (attempt === maxAttempts) throw fetchErr;
+          await new Promise(r => setTimeout(r, 400 * Math.pow(1.5, attempt - 1)));
+        }
+      }
+
+      if (!res) throw new RemoteApiError('Không thể kết nối máy chủ', 0, { network: true });
+
       if (res.ok && ct.includes('application/json')) {
         return cacheChapterApiResponse(path, await res.json(), layoutRevisions);
       }
@@ -1682,13 +1735,13 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       // Do NOT silently fall back to local fake user
       if ([400, 401, 403, 409, 410, 423].includes(res.status)) {
         const errData = ct.includes('application/json') ? await res.json().catch(() => ({})) : {};
-        throw new Error(errData.error || errData.message || `Lỗi yêu cầu (${res.status})`);
+        throw new RemoteApiError(errData.error || errData.message || `Lỗi yêu cầu (${res.status})`, res.status, errData);
       }
       if (res.status === 404 || (res.ok && ct.includes('text/html'))) {
         // Fall back to local API handler if the route does not exist or returned SPA index.html
         const localRes = await handleLocalApi(path, options);
         if (localRes && typeof localRes === 'object' && localRes.error) {
-          throw new Error(localRes.error);
+          throw new RemoteApiError(localRes.error, 404);
         }
         return localRes;
       }
@@ -1697,11 +1750,11 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         // Backend unconfigured on server, fall back to local handling
         const localRes = await handleLocalApi(path, options);
         if (localRes && typeof localRes === 'object' && localRes.error) {
-          throw new Error(localRes.error);
+          throw new RemoteApiError(localRes.error, 503);
         }
         return localRes;
       }
-      throw new Error(errData.error || errData.message || `Lỗi máy chủ (${res.status})`);
+      throw new RemoteApiError(errData.error || errData.message || `Lỗi máy chủ (${res.status})`, res.status, errData);
     } catch (e: any) {
       if (e instanceof SyntaxError || e.message?.includes('JSON') || !e.message || e.message.includes('fetch') || e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
         // proceed to local fallback

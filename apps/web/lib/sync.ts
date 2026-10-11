@@ -449,25 +449,39 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      let res: Response | null = null;
+      const maxAttempts = 2;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const res = await fetch('/api/sync', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          key: dataKey,
-          dataKey: dataKey,
-          email,
-          lastModified: workspace.lastModified,
-          data: workspace
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+          res = await fetch('/api/sync', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              key: dataKey,
+              dataKey: dataKey,
+              email,
+              lastModified: workspace.lastModified,
+              data: workspace
+            }),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
 
-      const ct = res.headers.get('content-type') || '';
-      if (res.ok && ct.includes('application/json')) {
+          if (res.ok || (res.status < 500 && res.status !== 429) || attempt === maxAttempts) {
+            break;
+          }
+          await new Promise(r => setTimeout(r, 800));
+        } catch (fetchErr: any) {
+          if (attempt === maxAttempts) throw fetchErr;
+          await new Promise(r => setTimeout(r, 800));
+        }
+      }
+
+      const ct = res?.headers.get('content-type') || '';
+      if (res && res.ok && ct.includes('application/json')) {
         const json = await res.json().catch(() => null);
         if (json && json.success) {
           anySuccess = true;
@@ -512,7 +526,7 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
     activePushPromise = null;
     if (pushQueued) {
       pushQueued = false;
-      setTimeout(() => pushSync().catch(() => {}), 50);
+      setTimeout(() => pushSync().catch(() => {}), 1500);
     }
   }
 }
@@ -555,30 +569,59 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       }
     };
 
+    let primaryFailed = false;
+    let serverConfirmedEmpty = false;
+
     // 1. PRIMARY: Query same-origin server API route /api/sync
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
       const headers: Record<string, string> = { 'Accept': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}&email=${encodeURIComponent(email)}`, {
-        headers,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      const ct = res.headers.get('content-type') || '';
-      if (res.ok && ct.includes('application/json')) {
-        const json = await res.json().catch(() => null);
-        if (json && json.success && json.data) {
-          addCandidate(json.data, 'same-origin-/api/sync');
+
+      let res: Response | null = null;
+      const maxAttempts = 2;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+          res = await fetch(`/api/sync?key=${encodeURIComponent(dataKey)}&email=${encodeURIComponent(email)}`, {
+            headers,
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          if (res.ok || (res.status < 500 && res.status !== 429) || attempt === maxAttempts) {
+            break;
+          }
+          await new Promise(r => setTimeout(r, 600));
+        } catch (fetchErr: any) {
+          if (attempt === maxAttempts) throw fetchErr;
+          await new Promise(r => setTimeout(r, 600));
         }
       }
+
+      const ct = res?.headers.get('content-type') || '';
+      if (res && res.ok && ct.includes('application/json')) {
+        const json = await res.json().catch(() => null);
+        if (json && json.success) {
+          if (json.data) {
+            addCandidate(json.data, 'same-origin-/api/sync');
+          } else {
+            serverConfirmedEmpty = true;
+          }
+        } else {
+          primaryFailed = true;
+        }
+      } else {
+        primaryFailed = true;
+      }
     } catch (e) {
+      primaryFailed = true;
       console.warn('[Sync Pull] /api/sync primary fetch failed, trying direct:', e);
     }
 
     // 2. BACKUP: Direct cloud store lookup (KVDB) across candidate keys only if primary API didn't return candidates
-    if (candidates.length === 0) {
+    if (candidates.length === 0 && !primaryFailed) {
       const keysToCheck = Array.from(new Set([dataKey, legacyKey, rawLegacyKey, ...candidateKeys].filter(Boolean)));
       const kvdbFetches = keysToCheck.map(k => {
         const controller = new AbortController();
@@ -607,17 +650,25 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     }
 
     if (candidates.length === 0) {
-      const local = exportFullWorkspace();
-      const hasLocalData = local && ((Array.isArray(local.projects) && local.projects.length > 0) || (Array.isArray(local.chapters) && local.chapters.length > 0));
-      if (hasLocalData) {
-        const pushRes = await pushSync();
-        if (pushRes.success) {
-          broadcastSyncStatus('synced', 'Đã khởi tạo bản lưu đám mây');
-          return { success: true, updated: false };
-        } else {
-          broadcastSyncStatus('error', pushRes.error || 'Chưa thể lưu lên đám mây');
-          return { success: false, updated: false, error: pushRes.error };
+      // ONLY initialize cloud if the server explicitly confirmed the account is empty and healthy
+      // NEVER trigger pushSync when the primary API failed with a server/network error!
+      if (!primaryFailed && serverConfirmedEmpty) {
+        const local = exportFullWorkspace();
+        const hasLocalData = local && ((Array.isArray(local.projects) && local.projects.length > 0) || (Array.isArray(local.chapters) && local.chapters.length > 0));
+        if (hasLocalData) {
+          const pushRes = await pushSync();
+          if (pushRes.success) {
+            broadcastSyncStatus('synced', 'Đã khởi tạo bản lưu đám mây');
+            return { success: true, updated: false };
+          } else {
+            broadcastSyncStatus('error', pushRes.error || 'Chưa thể lưu lên đám mây');
+            return { success: false, updated: false, error: pushRes.error };
+          }
         }
+      }
+      if (primaryFailed) {
+        broadcastSyncStatus('error', 'Không thể kết nối máy chủ để đồng bộ');
+        return { success: false, updated: false, error: 'Máy chủ phản hồi lỗi' };
       }
       broadcastSyncStatus('idle');
       return { success: true, updated: false };
@@ -645,8 +696,9 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
     }
 
     // If local had changes that cloud didn't have, push the canonical merged state up
-    if (hasLocalChanges) {
-      pushSync().catch(() => {});
+    // Avoid triggering full workspace push while an editor has an active chapter protected
+    if (hasLocalChanges && !isAutoSyncPaused()) {
+      triggerAutoPush(10000);
     }
 
     localStorage.setItem('novelist_last_synced', String(Date.now()));
@@ -712,12 +764,14 @@ export async function syncBidirectional(): Promise<BidirectionalSyncResult> {
 }
 
 let debouncePushTimer: any = null;
-export function triggerAutoPush(delayMs: number = 1000) {
-  if (typeof window === 'undefined' || !isAutoSyncEnabled()) return;
+export function triggerAutoPush(delayMs: number = 15000) {
+  if (typeof window === 'undefined' || !isAutoSyncEnabled() || isAutoSyncPaused()) return;
 
   if (debouncePushTimer) clearTimeout(debouncePushTimer);
   debouncePushTimer = setTimeout(() => {
-    pushSync().catch(() => {});
+    if (!isAutoSyncPaused()) {
+      pushSync().catch(() => {});
+    }
   }, delayMs);
 }
 
@@ -801,12 +855,14 @@ export function initAutoSync(): () => void {
   window.addEventListener('storage', handleStorage);
   autoSyncCleanups.push(() => window.removeEventListener('storage', handleStorage));
 
-  // 4. Real-time active polling interval: every 8 seconds when active
+  // 4. Real-time active polling interval: every 30 seconds when active
   autoSyncIntervalId = setInterval(() => {
     if (document.visibilityState === 'visible' && isAutoSyncEnabled()) {
-      pullSync().catch(() => {});
+      if (!isAutoSyncPaused()) {
+        pullSync().catch(() => {});
+      }
     }
-  }, 8000);
+  }, 30000);
 
   return resetAutoSyncState;
 }

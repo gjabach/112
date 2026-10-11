@@ -179,8 +179,8 @@ const getSyncHandler = async (c: any) => {
     tombstones: allTombstones
   };
 
-  // Cache to KV
-  if (kv) {
+  // Cache to KV only if not already populated in KV
+  if (kv && !rawKv) {
     await kv.put(`sync:${user.userId}`, JSON.stringify({
       userId: user.userId,
       lastModified,
@@ -423,13 +423,15 @@ const postSyncHandler = async (c: any) => {
   if (hasMutations) {
     finalRevision = currentWorkspaceRevision + 1;
     const d1 = c.env.DB;
-    await d1.prepare(`
-      INSERT INTO workspace_sync_state (user_id, revision, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET
-        revision = excluded.revision,
-        updated_at = excluded.updated_at
-    `).bind(user.userId, finalRevision, now).run();
+    try {
+      await d1.prepare(`
+        INSERT INTO workspace_sync_state (user_id, revision, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          revision = excluded.revision,
+          updated_at = excluded.updated_at
+      `).bind(user.userId, finalRevision, now).run();
+    } catch {}
   }
 
   // 5. Read back latest canonical D1 chapters & projects (excluding any tombstoned entities)

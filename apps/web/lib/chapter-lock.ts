@@ -88,8 +88,13 @@ export async function probeApiCapabilities(force = false): Promise<{ available: 
     }
 
     if (res.status === 503) {
-      cachedConnectionStatus = 'unconfigured';
-      return { available: false, status: 'unconfigured', message: 'Dịch vụ đồng bộ chưa sẵn sàng' };
+      const errData = await res.json().catch(() => ({}));
+      if (errData?.code === 'UNCONFIGURED') {
+        cachedConnectionStatus = 'unconfigured';
+        return { available: false, status: 'unconfigured', message: 'Dịch vụ đồng bộ chưa sẵn sàng' };
+      }
+      cachedConnectionStatus = 'server-error';
+      return { available: false, status: 'server-error', message: 'Máy chủ tạm thời bận (503)' };
     }
 
     if (res.status >= 500) {
