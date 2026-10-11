@@ -77,29 +77,40 @@ export function sha256(str: string): string {
 }
 
 export async function getWorkspaceRevision(db: any, userId: string): Promise<number> {
-  const rows = await db.select().from(schema.workspaceSyncState).where(eq(schema.workspaceSyncState.userId, userId)).limit(1);
-  return rows.length > 0 ? Number(rows[0].revision || 1) : 1;
+  try {
+    const rows = await db.select().from(schema.workspaceSyncState).where(eq(schema.workspaceSyncState.userId, userId)).limit(1);
+    return rows.length > 0 ? Number(rows[0].revision || 1) : 1;
+  } catch {
+    return 1;
+  }
 }
 
 export async function getAuthoritativeTombstones(db: any, userId: string, projectId?: string) {
-  const conditions = [eq(schema.entityTombstones.userId, userId)];
-  if (projectId) {
-    conditions.push(eq(schema.entityTombstones.projectId, projectId));
-  }
-  const rows = await db.select().from(schema.entityTombstones).where(and(...conditions));
-  
   const chapters = new Map<string, number>();
   const projects = new Map<string, number>();
   const allMap: Record<string, number> = {};
+  const rows: any[] = [];
 
-  for (const row of rows) {
-    const time = Number(row.deletedAt || 0);
-    allMap[row.entityId] = time;
-    if (row.entityType === 'chapter') {
-      chapters.set(row.entityId, time);
-    } else if (row.entityType === 'project') {
-      projects.set(row.entityId, time);
+  try {
+    const conditions = [eq(schema.entityTombstones.userId, userId)];
+    if (projectId) {
+      conditions.push(eq(schema.entityTombstones.projectId, projectId));
     }
+    const dbRows = await db.select().from(schema.entityTombstones).where(and(...conditions));
+    if (Array.isArray(dbRows)) {
+      for (const row of dbRows) {
+        rows.push(row);
+        const time = Number(row.deletedAt || 0);
+        allMap[row.entityId] = time;
+        if (row.entityType === 'chapter') {
+          chapters.set(row.entityId, time);
+        } else if (row.entityType === 'project') {
+          projects.set(row.entityId, time);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[lifecycle] entity_tombstones table query safe fallback:', err?.message || err);
   }
 
   return { chapters, projects, allMap, rows };

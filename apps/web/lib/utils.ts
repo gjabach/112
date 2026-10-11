@@ -1688,7 +1688,9 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       if (e instanceof RemoteApiError && (e.status < 500 || e.status === 429)) {
         throw e;
       }
-      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('NetworkError')) {
+      if (e instanceof RemoteApiError && e.status >= 500) {
+        console.warn(`[apiFetch] Remote API 5xx error (${e.status}), falling back:`, e.message);
+      } else if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('NetworkError')) {
         throw e;
       }
       // fallback
@@ -1753,6 +1755,13 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
           throw new RemoteApiError(localRes.error, 503);
         }
         return localRes;
+      }
+      if (res.status >= 500) {
+        // Backend returned 5xx server error, fall back to local storage handler so user never loses UI access
+        const localRes = await handleLocalApi(path, options);
+        if (localRes && typeof localRes === 'object' && !localRes.error) {
+          return localRes;
+        }
       }
       throw new RemoteApiError(errData.error || errData.message || `Lỗi máy chủ (${res.status})`, res.status, errData);
     } catch (e: any) {

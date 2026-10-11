@@ -14,7 +14,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
-import { apiFetch, formatRelativeTime } from '@/lib/utils';
+import { apiFetch, formatRelativeTime, handleLocalApi } from '@/lib/utils';
 import { pullSync } from '@/lib/sync';
 import { toast } from 'sonner';
 import {
@@ -132,6 +132,33 @@ export default function ProjectsPage() {
         });
       setProjects(reconciled);
     } catch (e: any) {
+      try {
+        const localRes = await handleLocalApi('/api/projects');
+        if (localRes?.projects && Array.isArray(localRes.projects) && localRes.projects.length > 0) {
+          const tombstones =
+            typeof window !== 'undefined'
+              ? JSON.parse(localStorage.getItem('novelist_tombstones') || '{}')
+              : {};
+          const chapters = getCachedChapters();
+          const reconciled = localRes.projects
+            .filter((p: any) => p?.id && !tombstones[p.id])
+            .map((p: any) => {
+              const localStats = getProjectChapterStats(chapters, p.id);
+              return {
+                ...p,
+                wordCount:
+                  localStats.chapterCount > 0 ? localStats.wordCount : p.wordCount,
+                chapterCount:
+                  localStats.chapterCount > 0
+                    ? localStats.chapterCount
+                    : p.chapterCount,
+              };
+            });
+          setProjects(reconciled);
+          setFetchError('');
+          return;
+        }
+      } catch {}
       setFetchError(e.message || 'Không thể tải tác phẩm');
     } finally {
       setLoading(false);
