@@ -147,6 +147,7 @@ export function TiptapEditor({
   const isApplyingRemoteUpdateRef = useRef<boolean>(false);
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [initialSearchQuery, setInitialSearchQuery] = useState('');
+  const [findFocusTrigger, setFindFocusTrigger] = useState(0);
 
   const initialContent = (() => {
     if (!content) return '';
@@ -209,6 +210,7 @@ export function TiptapEditor({
       }
     }
     setIsFindOpen(true);
+    setFindFocusTrigger((prev) => prev + 1);
   }, [editor, editable]);
 
   useEffect(() => {
@@ -534,7 +536,13 @@ export function TiptapEditor({
           variant={isFindOpen ? 'secondary' : 'ghost'}
           size="sm"
           className={`h-7 px-2 shrink-0 ${isFindOpen ? 'bg-primary/20 text-primary' : ''}`}
-          onClick={openFindReplace}
+          onClick={() => {
+            if (isFindOpen) {
+              setIsFindOpen(false);
+            } else {
+              openFindReplace();
+            }
+          }}
           title="Tìm và thay thế (Ctrl+F)"
         >
           <Search className="w-3.5 h-3.5" />
@@ -680,6 +688,7 @@ export function TiptapEditor({
         isOpen={isFindOpen}
         onClose={() => setIsFindOpen(false)}
         initialSearch={initialSearchQuery}
+        focusTrigger={findFocusTrigger}
       />
     </div>
   );
