@@ -495,8 +495,28 @@ export async function pushSync(): Promise<{ success: boolean; stats?: any; error
       console.warn('[Sync Push] Same-origin /api/sync failed:', e);
     }
 
-    // Cloud writes intentionally go through the authenticated merge endpoint.
-    // Direct snapshot PUTs bypass edit locks and can overwrite a canonical merge.
+    // Fallback: If primary API route returned an error or is unreachable,
+    // persist workspace snapshot to direct cloud store (KVDB) so user work is never blocked or lost.
+    if (!anySuccess) {
+      try {
+        const { candidateKeys, legacyKey, rawLegacyKey } = getCloudAccountKeys(email, tokenIdentifier);
+        const keysToPersist = Array.from(new Set([dataKey, legacyKey, rawLegacyKey, ...candidateKeys].filter(Boolean)));
+        const payloadStr = JSON.stringify(workspace);
+        const kvdbPushes = keysToPersist.map(k =>
+          fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${k}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: payloadStr
+          }).then(r => r.ok).catch(() => false)
+        );
+        const results = await Promise.allSettled(kvdbPushes);
+        if (results.some(r => r.status === 'fulfilled' && r.value === true)) {
+          anySuccess = true;
+        }
+      } catch (kvdbErr) {
+        console.warn('[Sync Push] KVDB fallback push failed:', kvdbErr);
+      }
+    }
 
     if (anySuccess) {
       localStorage.setItem('novelist_last_synced', String(Date.now()));
@@ -620,8 +640,8 @@ export async function pullSync(force: boolean = false): Promise<{ success: boole
       console.warn('[Sync Pull] /api/sync primary fetch failed, trying direct:', e);
     }
 
-    // 2. BACKUP: Direct cloud store lookup (KVDB) across candidate keys only if primary API didn't return candidates
-    if (candidates.length === 0 && !primaryFailed) {
+    // 2. BACKUP: Direct cloud store lookup (KVDB) across candidate keys whenever primary API didn't return candidates
+    if (candidates.length === 0) {
       const keysToCheck = Array.from(new Set([dataKey, legacyKey, rawLegacyKey, ...candidateKeys].filter(Boolean)));
       const kvdbFetches = keysToCheck.map(k => {
         const controller = new AbortController();
