@@ -620,8 +620,8 @@ export async function handleLocalApi(path: string, options: RequestInit = {}): P
       setStorage('novelist_projects', migrated);
     }
 
-    // Isolate projects strictly by active user
-    const userProjects = migrated.filter((p: any) => p.userId === currentUser.id);
+    // In local storage, preserve all projects so the author's work is never hidden
+    const userProjects = (migrated.length > 0 ? migrated : raw);
 
     const sanitized = userProjects.map((p: any) => ({
       ...p,

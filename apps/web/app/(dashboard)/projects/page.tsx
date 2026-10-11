@@ -110,55 +110,98 @@ export default function ProjectsPage() {
   const fetchProjects = async () => {
     setFetchError('');
     try {
-      const res = await apiFetch('/api/projects');
       const tombstones =
         typeof window !== 'undefined'
           ? JSON.parse(localStorage.getItem('novelist_tombstones') || '{}')
           : {};
+      const localProjects =
+        typeof window !== 'undefined'
+          ? JSON.parse(localStorage.getItem('novelist_projects') || '[]')
+          : [];
       const chapters = getCachedChapters();
-      const reconciled = (res?.projects || [])
-        .filter((p: any) => p?.id && !tombstones[p.id])
-        .map((p: any) => {
-          const localStats = getProjectChapterStats(chapters, p.id);
-          return {
-            ...p,
-            wordCount:
-              localStats.chapterCount > 0 ? localStats.wordCount : p.wordCount,
-            chapterCount:
-              localStats.chapterCount > 0
-                ? localStats.chapterCount
-                : p.chapterCount,
-          };
-        });
-      setProjects(reconciled);
-    } catch (e: any) {
-      try {
-        const localRes = await handleLocalApi('/api/projects');
-        if (localRes?.projects && Array.isArray(localRes.projects) && localRes.projects.length > 0) {
-          const tombstones =
-            typeof window !== 'undefined'
-              ? JSON.parse(localStorage.getItem('novelist_tombstones') || '{}')
-              : {};
-          const chapters = getCachedChapters();
-          const reconciled = localRes.projects
-            .filter((p: any) => p?.id && !tombstones[p.id])
-            .map((p: any) => {
-              const localStats = getProjectChapterStats(chapters, p.id);
-              return {
-                ...p,
-                wordCount:
-                  localStats.chapterCount > 0 ? localStats.wordCount : p.wordCount,
-                chapterCount:
-                  localStats.chapterCount > 0
-                    ? localStats.chapterCount
-                    : p.chapterCount,
-              };
-            });
-          setProjects(reconciled);
-          setFetchError('');
-          return;
+
+      const projectMap = new Map<string, any>();
+      // 1. Luôn nạp tác phẩm cục bộ đang có trong máy trước
+      if (Array.isArray(localProjects)) {
+        for (const p of localProjects) {
+          if (p?.id && !tombstones[p.id]) {
+            projectMap.set(p.id, p);
+          }
         }
-      } catch {}
+      }
+
+      // 2. Cứu hộ tự động: nếu chapters có chương truyện của tác phẩm nào chưa nằm trong projectMap
+      if (Array.isArray(chapters)) {
+        for (const ch of chapters) {
+          if (ch?.projectId && !tombstones[ch.projectId] && !projectMap.has(ch.projectId)) {
+            projectMap.set(ch.projectId, {
+              id: ch.projectId,
+              title: ch.projectTitle || 'Thần Tự',
+              genre: 'fantasy',
+              status: 'planning',
+              createdAt: ch.createdAt || Date.now(),
+              updatedAt: ch.updatedAt || Date.now(),
+            });
+          }
+        }
+      }
+
+      // 3. Gọi API và gộp thêm các tác phẩm từ máy chủ
+      try {
+        const res = await apiFetch('/api/projects');
+        if (Array.isArray(res?.projects)) {
+          for (const rp of res.projects) {
+            if (rp?.id && !tombstones[rp.id]) {
+              const existing = projectMap.get(rp.id);
+              projectMap.set(rp.id, { ...(existing || {}), ...rp });
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[fetchProjects] API fetch failed, preserving local projects:', err);
+      }
+
+      // 4. Nếu vẫn rỗng, tìm kiếm từ sao lưu KVDB
+      if (projectMap.size === 0 && typeof window !== 'undefined') {
+        try {
+          const userStr = localStorage.getItem('novelist_current_user');
+          const email = userStr ? JSON.parse(userStr)?.email : 'giabach0508@gmail.com';
+          if (email) {
+            const clean = email.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+            const kvRes = await fetch(`https://kvdb.io/GqLhqEZUoDJhURKzLQaYaH/${clean}`);
+            if (kvRes.ok) {
+              const kvData = await kvRes.json();
+              const unwrapped = kvData.data || kvData;
+              if (Array.isArray(unwrapped.projects)) {
+                for (const p of unwrapped.projects) {
+                  if (p?.id && !tombstones[p.id]) projectMap.set(p.id, p);
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const reconciled = Array.from(projectMap.values()).map((p: any) => {
+        const localStats = getProjectChapterStats(chapters, p.id);
+        return {
+          ...p,
+          wordCount:
+            localStats.chapterCount > 0 ? localStats.wordCount : (p.wordCount || 0),
+          chapterCount:
+            localStats.chapterCount > 0
+              ? localStats.chapterCount
+              : (p.chapterCount || 0),
+        };
+      });
+
+      setProjects(reconciled);
+
+      // Đảm bảo novelist_projects trong localStorage lưu giữ các tác phẩm này
+      if (typeof window !== 'undefined' && reconciled.length > 0) {
+        localStorage.setItem('novelist_projects', JSON.stringify(reconciled));
+      }
+    } catch (e: any) {
       setFetchError(e.message || 'Không thể tải tác phẩm');
     } finally {
       setLoading(false);
