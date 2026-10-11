@@ -117,11 +117,10 @@ export function downloadDeviceBackup(deviceLabel: string): void {
 }
 
 /**
- * Reconciles two device backups without silently deleting either version.
- * When two different contents for the same chapter exist without enough base version info:
- * - One version is preserved as the chapter.
- * - The second version is preserved as a dedicated recovery chapter.
- * - Both contents and their hashes are completely preserved.
+ * Reconciles two device backups without creating redundant recovery chapters.
+ * When two different contents for the same chapter exist:
+ * - The canonical (newer) version is preserved as the active chapter.
+ * - Recovery chapters are deprecated and never generated.
  */
 export function reconcileDeviceBackups(backupA: DeviceBackup, backupB: DeviceBackup): {
   reconciledChapters: any[];

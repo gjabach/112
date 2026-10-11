@@ -583,7 +583,8 @@ export function DocumentTabsSidebar({
       effectiveChapters.filter(
         (c) =>
           c.id.startsWith('recovery_') ||
-          c.title.toLowerCase().startsWith('khôi phục')
+          c.title.toLowerCase().includes('khôi phục') ||
+          c.title.toLowerCase().includes('bản khôi phục')
       ),
     [effectiveChapters]
   );
